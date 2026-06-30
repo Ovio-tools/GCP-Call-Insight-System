@@ -1,0 +1,21 @@
+# gitleaks configuration. Extends the bundled default ruleset (the maintained set
+# of secret-detection rules) and adds project-specific allowlisting.
+#
+# gitleaks runs in two places (build plan §3):
+#   - locally as a pre-commit hook (.husky/pre-commit)
+#   - in CI on every pull request (.github/workflows/ci.yml)
+
+title = "gcp-call-insights gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Project allowlist"
+paths = [
+  '''\.env\.example$''',
+]
+# Placeholder credentials in the example env file are not real secrets.
+regexes = [
+  '''user:password@''',
+]
