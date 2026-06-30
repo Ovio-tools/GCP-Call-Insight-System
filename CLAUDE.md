@@ -238,3 +238,13 @@ gitleaks`); `npm run prepare` installs the pre-commit hook.
 - The build plan (`gcp-call-insight-execution-plan-v8.md`) is the source of truth;
   it is excluded from `prettier` via `.prettierignore` so spec formatting stays
   stable.
+
+## 7. Git workflow
+
+- Never push directly to `main`.
+- Each build-plan task gets its own branch and pull request.
+- Use branch names like `codex/task-0-2-scaffold`, `codex/task-1-1-schema`, etc.
+- Before opening a PR, run `npm run lint`, `npm run typecheck`, `npm run test`,
+  `npm run build`, `npm run format:check`, and `npm audit --audit-level=high`.
+- Open PRs into `main`; merge only after review and green CI.
+- Do not add, remove, or change git remotes unless explicitly instructed.
