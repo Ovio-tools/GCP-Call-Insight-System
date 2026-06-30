@@ -243,7 +243,8 @@ gitleaks`); `npm run prepare` installs the pre-commit hook.
 
 - Never push directly to `main`.
 - Each build-plan task gets its own branch and pull request.
-- Use branch names like `codex/task-0-2-scaffold`, `codex/task-1-1-schema`, etc.
+- Name branches `task/<id>-<slug>` after the build-plan task, e.g.
+  `task/0.2-scaffold`, `task/1.1-schema`.
 - Before opening a PR, run `npm run lint`, `npm run typecheck`, `npm run test`,
   `npm run build`, `npm run format:check`, and `npm audit --audit-level=high`.
 - Open PRs into `main`; merge only after review and green CI.
