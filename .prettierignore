@@ -1,0 +1,10 @@
+# The build/execution plan is the review and spec source of truth. Prettier must
+# never reformat it — table churn makes task PRs hard to audit.
+gcp-call-insight-execution-plan-v8.md
+
+# Generated / vendored — not ours to format.
+dist/
+coverage/
+node_modules/
+package-lock.json
+.husky/_/
