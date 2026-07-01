@@ -16,6 +16,11 @@ function cfg(overrides: Partial<Config> = {}): Config {
     CRYPTO_KEY_PROVIDER: 'local',
     CRYPTO_ACTIVE_KEY_VERSION: 1,
     CRYPTO_LOCAL_MASTER_KEY: VALID_KEY,
+    WORKER_QUEUE_NAME: 'call-pipeline',
+    WORKER_CONCURRENCY: 5,
+    WORKER_MAX_ATTEMPTS: 5,
+    WORKER_BACKOFF_MS: 1000,
+    WORKER_KILL_SWITCH: false,
     ...overrides,
   };
 }
