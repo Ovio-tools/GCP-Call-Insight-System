@@ -15,6 +15,8 @@ describe('runMigrations', () => {
     expect(opts?.count).toBe(Infinity);
     expect(opts?.databaseUrl).toBe('postgres://user:pw@localhost:5432/db');
     expect(opts?.dir).toBe('migrations');
+    // README.md / dotfiles must be ignored, else node-pg-migrate imports them and crashes.
+    expect(opts?.ignorePattern).toBe('(\\..*|.*\\.md)');
   });
 
   it('passes count 1 on down', async () => {

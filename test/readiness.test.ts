@@ -13,6 +13,8 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     LOG_LEVEL: 'silent',
     SERVICE_NAME: 'test',
     PORT: 8080,
+    CRYPTO_KEY_PROVIDER: 'local',
+    CRYPTO_ACTIVE_KEY_VERSION: 1,
     ...overrides,
   };
 }
