@@ -26,8 +26,14 @@ export interface WebhookRouteOptions {
   verifySignature: SignatureVerifier;
   /** The provider's unique event id, used as the replay key. */
   extractEventId: (rawBody: Buffer, headers: IncomingHttpHeaders) => string;
-  /** The event's timestamp in epoch milliseconds, for the freshness check. */
-  extractTimestamp: (rawBody: Buffer, headers: IncomingHttpHeaders) => number;
+  /**
+   * The event's timestamp in epoch milliseconds, for the freshness check. OPTIONAL: omit ONLY
+   * for a provider that does not sign a timestamp — the requirement is to validate the timestamp
+   * *where supported*. When omitted the freshness gate is skipped and replay protection + the
+   * body-size limit remain the guards. Every existing webhook supplies this, so their behavior
+   * is unchanged.
+   */
+  extractTimestamp?: (rawBody: Buffer, headers: IncomingHttpHeaders) => number;
   /** Runs only after signature, timestamp, and replay all pass. */
   handler: (request: FastifyRequest, reply: FastifyReply) => unknown;
 }
@@ -82,15 +88,18 @@ export function registerWebhook(
         throw webhookFailure('WEBHOOK_SIGNATURE_INVALID', deps);
       }
 
-      // 2. Freshness — reject stale/future (or unparseable) timestamps.
-      let timestampMs: number;
-      try {
-        timestampMs = opts.extractTimestamp(rawBody, request.headers);
-      } catch {
-        throw webhookFailure('WEBHOOK_TIMESTAMP_INVALID', deps);
-      }
-      if (!isTimestampFresh(timestampMs, deps.clock.now(), deps.timestampSkewMs)) {
-        throw webhookFailure('WEBHOOK_TIMESTAMP_INVALID', deps);
+      // 2. Freshness — reject stale/future (or unparseable) timestamps. Skipped only when the
+      //    provider signs no timestamp (extractTimestamp omitted): validate where supported.
+      if (opts.extractTimestamp) {
+        let timestampMs: number;
+        try {
+          timestampMs = opts.extractTimestamp(rawBody, request.headers);
+        } catch {
+          throw webhookFailure('WEBHOOK_TIMESTAMP_INVALID', deps);
+        }
+        if (!isTimestampFresh(timestampMs, deps.clock.now(), deps.timestampSkewMs)) {
+          throw webhookFailure('WEBHOOK_TIMESTAMP_INVALID', deps);
+        }
       }
 
       // 3. Replay reserve — only after the request is proven authentic and fresh.

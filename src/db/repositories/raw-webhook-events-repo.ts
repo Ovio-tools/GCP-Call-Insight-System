@@ -18,10 +18,16 @@ export async function insertWebhookEvent(
   const v = parseOrThrow(TABLE, rawWebhookEventInsertSchema, input);
   const rows = await query<RawWebhookEventRow>(
     pool,
-    `INSERT INTO raw_webhook_events (source, payload, signature_status)
-     VALUES ($1, COALESCE($2::jsonb, '{}'::jsonb), $3)
+    `INSERT INTO raw_webhook_events (source, payload, signature_status, received_at, retention_eligible_at)
+     VALUES ($1, COALESCE($2::jsonb, '{}'::jsonb), $3, COALESCE($4::timestamptz, now()), $5::timestamptz)
      RETURNING *`,
-    [v.source, toJsonParam(v.payload), v.signatureStatus],
+    [
+      v.source,
+      toJsonParam(v.payload),
+      v.signatureStatus,
+      v.receivedAt ?? null,
+      v.retentionEligibleAt ?? null,
+    ],
   );
   return parseOrThrow(TABLE, rawWebhookEventRowSchema, rows[0]);
 }

@@ -137,6 +137,30 @@ export const configSchema = z.object({
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
   OIDC_REDIRECT_URI: z.string().url().optional(),
   OIDC_SCOPES: z.string().min(1).default('openid profile email'),
+
+  // --- Dialpad webhook receiver (Task 3.2) ---
+
+  /** Shared secret Dialpad signs each webhook JWT with (HS256). Optional here (like
+   * SESSION_SECRET); `registerDialpadWebhook` REQUIRES it in every environment — the
+   * verifier cannot authenticate anything without it — and throws
+   * CONFIG_MISSING_OR_INVALID if absent. Never a real value in the repo. */
+  DIALPAD_WEBHOOK_SECRET: z.string().min(16).optional(),
+
+  /** Previous signing secret, accepted alongside the primary during a zero-downtime
+   * rotation overlap. Present only while rotating; removed once Dialpad has cut over. */
+  DIALPAD_WEBHOOK_SECRET_PREVIOUS: z.string().min(16).optional(),
+
+  /** Secret keying the one-way HMAC that hashes any phone/name found in a payload before
+   * it is stored in the (purgeable) audit row. Optional here so unrelated tests boot, but
+   * `registerDialpadWebhook` REQUIRES it in every environment — the route must never have a
+   * plaintext-phone/name fallback. Never a real value in the repo. */
+  DIALPAD_PII_HASH_SECRET: z.string().min(16).optional(),
+
+  /** How long (ms) a `raw_webhook_events` audit row is retained before the retention cron
+   * (Task 8.1) may purge it. Consumed by that cron; the receiver stamps
+   * `retention_eligible_at = received_at` at ingest, and the cron applies this window.
+   * Default 7 days. */
+  RAW_WEBHOOK_RETENTION_MS: z.coerce.number().int().positive().default(604_800_000),
 });
 
 /** Validated, typed configuration object. */
