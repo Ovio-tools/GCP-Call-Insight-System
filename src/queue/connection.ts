@@ -9,7 +9,8 @@ import type { Config } from '../config/schema.js';
  * the readiness probe, which caps retries so a boot check fails fast instead of hanging.
  */
 export function createQueueConnection(url: string, options: RedisOptions = {}): Redis {
-  return new Redis(url, { maxRetriesPerRequest: null, ...options });
+  // Force maxRetriesPerRequest LAST: BullMQ requires null, so a caller's override can't break it.
+  return new Redis(url, { ...options, maxRetriesPerRequest: null });
 }
 
 /**

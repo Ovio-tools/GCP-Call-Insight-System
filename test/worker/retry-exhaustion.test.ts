@@ -83,4 +83,43 @@ describe.skipIf(!hasTestDb || !hasTestRedis)('retry exhaustion → dead_letter',
     );
     expect(failed.rowCount ?? 0).toBeGreaterThan(0);
   });
+
+  it("dead-letters per the JOB's attempts even when the worker's config differs", async () => {
+    // Job enqueued with attempts=2, but the worker (h.config) runs with a higher max (3).
+    // Exhaustion must follow the job's own attempts — otherwise a job that outlived a config
+    // change would either never dead-letter or dead-letter too early.
+    const callId = 'test-wk-exhaust-cfg';
+    await h.seedCall(callId);
+    await enqueueCall(h.queue, callId, { ...h.config, WORKER_MAX_ATTEMPTS: 2 });
+    expect(h.config.WORKER_MAX_ATTEMPTS).toBeGreaterThan(2); // precondition: configs differ
+
+    const handlers: StageHandlers = {
+      ...defaultStageHandlers,
+      classify: () => Promise.reject(new Error('permanent classify failure')),
+    };
+
+    const worker = h.buildWorker(handlers);
+    void worker.run();
+    try {
+      await waitFor(
+        async () => {
+          const res = await h.owner.query('SELECT 1 FROM dead_letter WHERE call_id = $1', [callId]);
+          return (res.rowCount ?? 0) > 0;
+        },
+        { label: 'dead_letter honoring job attempts', timeoutMs: 8000 },
+      );
+    } finally {
+      await worker.close();
+    }
+
+    const dl = await h.owner.query('SELECT failure_snapshot FROM dead_letter WHERE call_id = $1', [
+      callId,
+    ]);
+    expect(dl.rowCount).toBe(1);
+    // Dead-lettered on the job's 2nd (final) attempt, not the worker's 3rd.
+    expect(
+      (dl.rows[0] as { failure_snapshot: { attempts_made: number } }).failure_snapshot
+        .attempts_made,
+    ).toBe(2);
+  });
 });
