@@ -602,7 +602,9 @@ export async function assertDependenciesReady(
     await checkRedis(config, deps);
   } catch (err) {
     if (err instanceof FatalBootError) {
-      failBoot(logger, err, { exit: deps.exit });
+      // Conditional spread: `exactOptionalPropertyTypes` forbids passing
+      // `{ exit: undefined }` to an optional `exit?` field.
+      failBoot(logger, err, { ...(deps.exit ? { exit: deps.exit } : {}) });
       return;
     }
     throw err;
@@ -637,24 +639,50 @@ git commit -m "feat(0.3): boot readiness check for Postgres and Redis"
 Create `test/keepalive.test.ts`:
 
 ```ts
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { keepAlive } from '../src/boot/keepalive.js';
 
 describe('keepAlive', () => {
-  it('stays pending until a shutdown signal, then resolves', async () => {
+  it('acquires a keepalive hold and releases it on shutdown', async () => {
     let fire: () => void = () => {};
-    const promise = keepAlive({ onShutdown: (handler) => (fire = handler) });
+    const release = vi.fn();
+    const hold = vi.fn(() => release);
+
+    const promise = keepAlive({ register: (handler) => (fire = handler), hold });
 
     let resolved = false;
     void promise.then(() => (resolved = true));
 
-    // Give any queued microtasks a chance to run; it must still be pending.
+    // Hold is acquired immediately and not yet released; promise still pending.
     await Promise.resolve();
+    expect(hold).toHaveBeenCalledTimes(1);
+    expect(release).not.toHaveBeenCalled();
     expect(resolved).toBe(false);
 
     fire();
     await promise;
+    expect(release).toHaveBeenCalledTimes(1); // the ref'd handle is cleared
     expect(resolved).toBe(true);
+  });
+
+  it('default hold creates and clears a timer so the event loop stays alive', async () => {
+    // Proves the DEFAULT implementation refs a timer (not just that an injected
+    // callback can resolve): a pending promise + signal listener alone would NOT
+    // keep Node's event loop alive.
+    const setSpy = vi.spyOn(globalThis, 'setInterval');
+    const clearSpy = vi.spyOn(globalThis, 'clearInterval');
+    let fire: () => void = () => {};
+
+    const promise = keepAlive({ register: (handler) => (fire = handler) });
+    await Promise.resolve();
+    expect(setSpy).toHaveBeenCalled();
+
+    fire();
+    await promise;
+    expect(clearSpy).toHaveBeenCalled();
+
+    setSpy.mockRestore();
+    clearSpy.mockRestore();
   });
 });
 ```
@@ -669,24 +697,42 @@ Expected: FAIL — `../src/boot/keepalive.js` does not exist.
 ```ts
 export interface KeepAliveDeps {
   /** Register a shutdown handler. Injectable so tests drive it without real signals. */
-  onShutdown?: (handler: () => void) => void;
+  register?: (handler: () => void) => void;
+  /** Acquire something that refs the event loop; returns a release fn. Injectable. */
+  hold?: () => () => void;
 }
 
 /**
  * Hold the process open until a shutdown signal arrives, then resolve so the caller
- * can exit gracefully. No busy loop — it parks on signal handlers. Long-running
- * services (webhook-receiver, worker) await this after boot until real work lands;
- * crons never call it.
+ * can exit gracefully. Long-running services (webhook-receiver, worker) await this
+ * after boot until real work lands; crons never call it.
+ *
+ * A pending Promise plus `process.once('SIGTERM', ...)` does NOT keep Node's event
+ * loop alive — the process would exit right after boot. So the default `hold` refs
+ * a timer (`setInterval` with the max non-clamped delay, 2^31-1 ms) and clears it on
+ * shutdown, which is what actually keeps the loop alive. No busy loop: the empty
+ * callback effectively never fires.
  */
 export function keepAlive(deps: KeepAliveDeps = {}): Promise<void> {
-  return new Promise((resolve) => {
-    const onShutdown =
-      deps.onShutdown ??
-      ((handler: () => void): void => {
-        process.once('SIGTERM', handler);
-        process.once('SIGINT', handler);
-      });
-    onShutdown(() => resolve());
+  const register =
+    deps.register ??
+    ((handler: () => void): void => {
+      process.once('SIGTERM', handler);
+      process.once('SIGINT', handler);
+    });
+  const hold =
+    deps.hold ??
+    ((): (() => void) => {
+      const handle = setInterval(() => {}, 2 ** 31 - 1);
+      return () => clearInterval(handle);
+    });
+
+  return new Promise<void>((resolve) => {
+    const release = hold();
+    register(() => {
+      release();
+      resolve();
+    });
   });
 }
 ```
@@ -720,7 +766,6 @@ Create `test/migrate.test.ts`:
 ```ts
 import { describe, expect, it, vi } from 'vitest';
 import { runMigrations } from '../src/boot/migrate-runner.js';
-import { FatalBootError } from '../src/boot/codes.js';
 
 describe('runMigrations', () => {
   it('invokes the runner with advisoryLockMode "wait" and count Infinity on up', async () => {
@@ -757,10 +802,18 @@ describe('runMigrations', () => {
   });
 
   it('throws MIGRATION_FAILED when DATABASE_URL is absent', async () => {
+    // Omit databaseUrl (exactOptionalPropertyTypes forbids passing `undefined`) and
+    // clear the env fallback so the real "no target" path is exercised.
     const runner = vi.fn(async () => []);
-    await expect(runMigrations('up', { runner, databaseUrl: undefined })).rejects.toBeInstanceOf(
-      FatalBootError,
-    );
+    const prev = process.env.DATABASE_URL;
+    delete process.env.DATABASE_URL;
+    try {
+      await expect(runMigrations('up', { runner })).rejects.toMatchObject({
+        code: 'MIGRATION_FAILED',
+      });
+    } finally {
+      if (prev !== undefined) process.env.DATABASE_URL = prev;
+    }
     expect(runner).not.toHaveBeenCalled();
   });
 });
@@ -847,7 +900,7 @@ Expected: PASS (all four cases).
 
 ```ts
 import { createBootLogger } from '../boot/logger.js';
-import { FatalBootError, failBoot } from '../boot/codes.js';
+import { MIGRATION_FAILED, FatalBootError, failBoot } from '../boot/codes.js';
 import { runMigrations, type MigrationDirection } from '../boot/migrate-runner.js';
 
 /**
@@ -862,19 +915,31 @@ async function main(): Promise<void> {
     await runMigrations(direction);
     logger.info({ direction }, 'migrations complete');
   } catch (err) {
-    if (err instanceof FatalBootError) {
-      failBoot(logger, err);
-      return;
-    }
-    throw err;
+    // Every failure — including a non-FatalBootError from deep in the runner —
+    // becomes a structured MIGRATION_FAILED via failBoot. No raw stack traces as
+    // alerts (build plan §5); node-pg-migrate already logs its own detail.
+    const fatal =
+      err instanceof FatalBootError
+        ? err
+        : new FatalBootError(
+            MIGRATION_FAILED,
+            `${MIGRATION_FAILED}: ${(err as Error)?.message ?? String(err)}`,
+          );
+    failBoot(logger, fatal);
   }
 }
 
 main().catch((err: unknown) => {
-  process.stderr.write(`MIGRATION_FAILED: ${String(err)}\n`);
+  // Last resort only: a failure before the logger exists (e.g. logger construction
+  // itself). Still tagged with the stable code, never a bare trace.
+  process.stderr.write(`${MIGRATION_FAILED}: ${String(err)}\n`);
   process.exit(1);
 });
 ```
+
+> `main().catch` cannot reference `MIGRATION_FAILED` unless it's imported — it is
+> (see the import line above). Keep this last-resort branch minimal; it exists only
+> for the narrow window before `createBootLogger` returns.
 
 - [ ] **Step 6: Add npm scripts**
 
@@ -1199,4 +1264,5 @@ gh pr create --base main --title "Task 0.3: Railway deploy config + migration ru
 
 - **Spec coverage:** config (`REDIS_URL` + timeouts, store URLs optional) → Task 1; error contract + flush → Task 2; readiness → Task 3; keepAlive → Task 4; migration runner + `advisoryLockMode: 'wait'` + TS→`dist` execution → Task 5; entrypoints (webhook no-listener, crons terminate) → Task 6; Railway config (builder omitted, array `preDeployCommand`, schedules) + migrations dir + dashboard README → Task 7; verification gate → Task 8. All spec §2–§11 items map to a task.
 - **Manual-only QA (not automatable in CI):** live Postgres/Redis reachability, real concurrent-lock serialization, per-service deploy success, and the worker-has-no-public-domain check are done by hand during the deploy, per the spec.
-- **Type consistency:** `FatalBootError(code, message, context)`, `failBoot(logger, error, { exit })`, `assertDependenciesReady(config, logger, deps)`, `PgProbe`/`RedisProbe`, `runMigrations(direction, deps)`, `keepAlive({ onShutdown })`, `createBootLogger({ level, name })` are used identically across every task that references them.
+- **Type consistency:** `FatalBootError(code, message, context)`, `failBoot(logger, error, { exit })`, `assertDependenciesReady(config, logger, deps)`, `PgProbe`/`RedisProbe`, `runMigrations(direction, deps)`, `keepAlive({ register, hold })`, `createBootLogger({ level, name })` are used identically across every task that references them.
+- **keepAlive is genuinely event-loop-refing:** the default `hold` refs a `setInterval` handle (max non-clamped delay) and clears it on shutdown — a pending promise + signal listener alone does not keep Node alive. Both the injected-hold and default-timer paths are tested.
