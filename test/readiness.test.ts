@@ -58,10 +58,11 @@ describe('assertDependenciesReady', () => {
     const exit = vi.fn((_c: number) => undefined as never);
     const fatal = vi.fn();
     const logger = { fatal, flush: vi.fn() } as unknown as Logger;
+    const end = vi.fn(() => Promise.resolve());
     const failingPg: PgProbe = {
       connect: vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))),
       query: vi.fn(() => Promise.resolve()),
-      end: vi.fn(() => Promise.resolve()),
+      end,
     };
     await assertDependenciesReady(baseConfig(), logger, {
       createPg: () => failingPg,
@@ -70,6 +71,7 @@ describe('assertDependenciesReady', () => {
     });
     expect(exit).toHaveBeenCalledWith(1);
     expect(fatal.mock.calls[0]?.[0]).toMatchObject({ error_code: 'DATABASE_UNAVAILABLE' });
+    expect(end).toHaveBeenCalledTimes(1);
   });
 
   it('exits REDIS_UNAVAILABLE when REDIS_URL is missing (worker QA)', async () => {
@@ -89,9 +91,10 @@ describe('assertDependenciesReady', () => {
     const exit = vi.fn((_c: number) => undefined as never);
     const fatal = vi.fn();
     const logger = { fatal, flush: vi.fn() } as unknown as Logger;
+    const quit = vi.fn(() => Promise.resolve('OK'));
     const failingRedis: RedisProbe = {
       ping: vi.fn(() => Promise.reject(new Error('connect ETIMEDOUT'))),
-      quit: vi.fn(() => Promise.resolve('OK')),
+      quit,
     };
     await assertDependenciesReady(baseConfig(), logger, {
       createPg: () => okPg(),
@@ -100,5 +103,6 @@ describe('assertDependenciesReady', () => {
     });
     expect(exit).toHaveBeenCalledWith(1);
     expect(fatal.mock.calls[0]?.[0]).toMatchObject({ error_code: 'REDIS_UNAVAILABLE' });
+    expect(quit).toHaveBeenCalledTimes(1);
   });
 });
