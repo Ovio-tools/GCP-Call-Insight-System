@@ -13,8 +13,9 @@ timestamps, and the related-call graph (`operator_call_id`, `master_call_id`).
 
 **Fail safe:** when a needed field is missing, unknown, contradictory, or the
 provider semantics are unclear, the call **passes** (is left ready for
-`fetch-transcript`). The stage can only ever under-drop, never mis-drop a real
-customer conversation.
+`fetch-transcript`). Every drop rule keys on an **explicit positive marker**, so a
+wrong or unconfirmed field mapping can only ever cause under-dropping (safe), never a
+mis-drop of a real customer conversation.
 
 ## Outcomes
 
@@ -26,6 +27,27 @@ The stage produces exactly one of two outcomes:
   `call_state` row and its original metadata are **never deleted** — a dropped call
   stays fully recoverable.
 
+## Controlled drop vocabulary (enforced, not free text)
+
+`DropReason` is a shared source of truth used in three places kept in lockstep:
+
+- a zod enum `dropReasonSchema` / `DROP_REASONS` tuple in `src/pipeline/stages.ts`
+  (the pipeline vocabulary home),
+- the `StageResult` drop type (`reason: DropReason`, **not** `string`),
+- a DB `CHECK` constraint on `call_state.drop_reason`.
+
+```
+DROP_REASONS = [
+  'zero_duration',
+  'non_conversation_call_state',
+  'outbound_no_customer_conversation',
+  'internal_transfer_non_operator_leg',
+] as const
+```
+
+Adding a future reason means editing the tuple **and** the CHECK constraint (a
+migration) — the vocabulary cannot drift into arbitrary strings.
+
 ## Architecture — four independently testable pieces
 
 ### 1. Pure decision function — `src/pipeline/metadata-prefilter.ts`
@@ -33,11 +55,6 @@ The stage produces exactly one of two outcomes:
 ```
 evaluateMetadata(callId: string, metadata: unknown): PrefilterOutcome
 type PrefilterOutcome = { action: 'pass' } | { action: 'drop'; reason: DropReason }
-type DropReason =
-  | 'zero_duration'
-  | 'non_conversation_call_state'
-  | 'outbound_no_customer_conversation'
-  | 'internal_transfer_non_operator_leg'
 ```
 
 - A **lenient** zod schema parses `source_metadata`. `safeParse` failure → **pass**
@@ -49,36 +66,69 @@ type DropReason =
 - `callId` is passed explicitly (not read from metadata) so the operator-leg
   comparison is reliable.
 
-**Drop rules — first match wins; anything else → pass:**
+**Drop rules — first match wins; anything else → pass. Every rule requires an explicit
+positive marker:**
 
 | reason | fires only when |
 | --- | --- |
 | `zero_duration` | `duration` is a number and `<= 0` |
-| `non_conversation_call_state` | `state` ∈ allowlist that unambiguously means no two-party conversation: `missed`, `no_answer`, `voicemail`, `failed`, `busy`, `canceled`, `abandoned`, `rejected` (compared case-insensitively) |
-| `internal_transfer_non_operator_leg` | `operator_call_id` present **and** `!== callId` (a known operator/customer leg that is not this one) |
-| `outbound_no_customer_conversation` | `direction === 'outbound'` **and** an explicit internal-only indicator (`is_internal === true`) |
+| `non_conversation_call_state` | `state` ∈ allowlist that unambiguously means no two-party conversation: `missed`, `no_answer`, `failed`, `busy`, `canceled`, `abandoned`, `rejected` (case-insensitive). **`voicemail` is deliberately excluded** — a voicemail can carry customer intent; it fails open to `fetch-transcript` (see Open questions). |
+| `internal_transfer_non_operator_leg` | `is_internal === true` **and** `operator_call_id` present **and** `operator_call_id !== callId` — an explicitly-flagged internal leg that the graph also shows is not the operator/customer leg |
+| `outbound_no_customer_conversation` | `is_internal === true` **and** `direction === 'outbound'` (and not already caught by the transfer rule) |
 
-**Explicit pass cases (conservative):**
+`is_internal` is the core "no customer on this leg" signal; direction / graph context
+refine it into the specific reason. Because both graph-derived rules require
+`is_internal === true`, absence of that explicit marker (the common and the
+unconfirmed-semantics case) → **pass**.
+
+**Explicit pass cases (conservative / fail open):**
 
 - `duration` absent or not a number → pass (don't assume zero).
-- `state` unknown / not in the allowlist → pass.
-- `operator_call_id` absent → pass. `master_call_id` present but `operator_call_id`
-  absent → ambiguous graph → pass. `operator_call_id === callId` → this **is** the
-  operator leg → pass.
-- `direction` absent/unknown, or outbound without a clear internal indicator → pass.
+- `state` unknown / not in the allowlist (including `voicemail`) → pass.
+- `is_internal` absent or not `true` → pass, regardless of `operator_call_id` /
+  `master_call_id` / `direction`. Id inequality **alone** never drops.
+- `operator_call_id === callId` → this **is** the operator leg → pass.
+- `master_call_id` present but `operator_call_id` absent → ambiguous graph → pass.
+- `direction` absent/unknown → pass.
 
 ### 2. Schema change — `migrations/1782864000006_call_state_drop_reason.cjs`
 
-- **up:** add nullable `drop_reason text` to `call_state`.
-- **down:** drop the column.
+- **up:** add nullable `drop_reason text` to `call_state`, plus a `CHECK` constraint
+  `drop_reason IS NULL OR drop_reason IN (<DROP_REASONS>)`.
+- **down:** drop the constraint and the column.
 - Additive + reversible → no backup step required (non-destruction convention).
 - Update `src/db/schemas/call-state.ts`: `callStateRowSchema` gains
-  `drop_reason: z.string().nullable()`. `upsertCallState` does not set it (defaults
-  `NULL`); its `ON CONFLICT DO UPDATE` does not touch `drop_reason`, so a re-seed of a
-  dropped call preserves the reason.
+  `drop_reason: z.string().nullable()`.
+- The DROP_REASONS list in the migration and the `DROP_REASONS` tuple in `stages.ts`
+  are kept in sync by hand (documented at both sites), mirroring the existing
+  enum-duplication convention in `src/db/enums.ts`.
 
 `call_state` remains the durable spine (never purged); `drop_reason` is `NULL` for
 every call except dropped ones.
+
+### 2a. Terminal-state protection on ingest upsert — `upsertCallState`
+
+`upsertCallState` currently overwrites `status` and `current_stage` from `EXCLUDED` on
+conflict. A webhook/reconciliation **re-seed** of an already-terminal call would
+resurrect it (`skipped`/`completed` → `processing`), defeating the skipped terminal
+guard and re-running the pre-filter. Fix the `ON CONFLICT DO UPDATE` to **preserve
+terminal state**:
+
+```
+status        = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.status ELSE EXCLUDED.status END
+current_stage = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.current_stage ELSE EXCLUDED.current_stage END
+source_metadata = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.source_metadata ELSE EXCLUDED.source_metadata END
+-- drop_reason is never overwritten by upsert (only skipCall sets it)
+updated_at    = now()
+```
+
+A non-terminal row upserts exactly as before. A future explicit **reprocess** path
+(Task 6.2) will reset terminal state through its own dedicated function, never through
+`upsertCallState`. This also hardens `completed` against re-seed resurrection (a
+latent bug today), which the skipped terminal guarantee depends on.
 
 ### 3. DAL helper — `skipCall` in `src/db/repositories/call-state-repo.ts`
 
@@ -89,9 +139,10 @@ skipCall(pool, { callId, atStage, dropReason, logDetail? }): Promise<CallStateRo
 - One transaction via `withTransaction` + `appendLog` (the same atomic pattern as
   `advanceStage`), so `call_state` and the audit trail can never diverge:
   1. `UPDATE call_state SET status='skipped', drop_reason=$reason, updated_at=now()
-     WHERE call_id=$ AND current_stage=$atStage` — the `current_stage` guard is the
-     same optimistic concurrency check `advanceStage` uses; no row matched →
-     `DAL_STALE_STAGE`.
+     WHERE call_id=$ AND current_stage=$atStage AND status='processing'`. The
+     `status='processing'` term makes the update **idempotent under concurrency**:
+     once the row is `skipped`, a second runner matches **zero** rows →
+     `DAL_STALE_STAGE`, so no duplicate `skipped` log row is appended.
   2. `appendLog` a `processing_log` row `{ stage:'metadata-pre-filter',
      outcome:'skipped', detail:{ drop_reason } }`.
 - `current_stage` stays where it is (no forward movement). The row is **never
@@ -107,7 +158,7 @@ transaction + log-append machinery.
 
 - `StageHandler` return type becomes `Promise<StageResult | void>`:
   ```
-  type StageResult = { action: 'continue' } | { action: 'drop'; reason: string; detail?: JsonValue }
+  type StageResult = { action: 'continue' } | { action: 'drop'; reason: DropReason; detail?: JsonValue }
   ```
   `void`/`undefined` is treated as continue, so the existing stub handlers and the
   test override handlers keep working unchanged.
@@ -117,12 +168,17 @@ transaction + log-append machinery.
   `getCallState`, calls `evaluateMetadata(callId, source_metadata)`, and returns the
   outcome.
 - Runner (`runPipeline`):
-  - After a handler returns `{ action: 'drop', reason }`, call
+  - **Terminal no-op guard** at the top: `status === STATUS_SKIPPED` → log + return
+    (mirrors the `completed` guard), so a re-enqueued dropped call never re-runs stages
+    or duplicates `processing_log` rows.
+  - **Drop branch:** after a handler returns `{ action: 'drop', reason }`, call
     `skipCall(pool, { callId, atStage: stage, dropReason: reason, ... })` and
-    **return** — the loop never reaches `fetch-transcript`.
-  - Add a terminal no-op guard: `status === STATUS_SKIPPED` → log + return (mirrors the
-    `completed` guard), so a re-enqueued dropped call never re-runs stages or
-    duplicates `processing_log` rows.
+    **return** — the loop never reaches `fetch-transcript`. If `skipCall` throws
+    `DAL_STALE_STAGE` (a concurrent runner won the race), re-read the row: if it is now
+    `skipped` (or `completed`) → treat as terminal and return (no-op); otherwise throw
+    an inconsistency error. This is a small drop-specific check — it does **not** reuse
+    `resolveStale`, which is tailored to forward advancement and would wrongly throw on
+    a `skipped` status.
 
 **Wiring:** the real handler replaces the stub for `metadata-pre-filter` in
 `defaultStageHandlers`. The worker consumes `defaultStageHandlers` unchanged, so no
@@ -144,10 +200,13 @@ job -> runPipeline -> [metadata-pre-filter handler]
 ## Error handling / edge cases
 
 - Parse failure of `source_metadata` → pass (fail safe).
-- Concurrent runner already moved the call: `skipCall`'s `current_stage` guard yields
-  `DAL_STALE_STAGE`, handled by the runner's existing stale-stage resolution path.
-- Re-enqueue of a dropped call: terminal `skipped` no-op guard → no duplicate work or
-  log rows.
+- Concurrent runners both reach the drop: first `skipCall` wins; the second matches
+  zero rows (`status='processing'` guard) → `DAL_STALE_STAGE` → runner re-reads,
+  sees `skipped`, returns. Exactly one `skipped` log row.
+- Re-enqueue / re-run of a dropped call: terminal `skipped` no-op guard → no duplicate
+  work or log rows.
+- Re-seed (ingest upsert) of a terminal call: preserved by the `CASE` guard in
+  `upsertCallState` → never resurrected to `processing`.
 - `skipCall` and the whole stage never touch `raw_transcripts`, the token vault, or any
   transcript client.
 
@@ -156,18 +215,22 @@ job -> runPipeline -> [metadata-pre-filter handler]
 **Unit — no DB** (`test/pipeline/metadata-prefilter.test.ts`), pure `evaluateMetadata`:
 
 - zero-duration call → `drop zero_duration`.
-- clear outbound internal-only leg → `drop outbound_no_customer_conversation`.
+- clear outbound internal-only leg (`is_internal:true, direction:'outbound'`) →
+  `drop outbound_no_customer_conversation`.
 - transfer graph where only the true operator/customer leg passes; a non-operator leg
-  → `drop internal_transfer_non_operator_leg`.
-- ambiguous outbound call (no internal indicator) → `pass`.
-- incomplete/contradictory transfer graph (e.g. `master_call_id` but no
-  `operator_call_id`) → `pass`.
-- non-conversation call state → `drop non_conversation_call_state`; unknown state →
-  `pass`.
+  (`is_internal:true`, `operator_call_id` ≠ this id) →
+  `drop internal_transfer_non_operator_leg`.
+- **id inequality alone, no `is_internal`** → `pass` (guards against the
+  over-confident-graph regression).
+- ambiguous outbound call (no `is_internal`) → `pass`.
+- incomplete/contradictory transfer graph (`master_call_id` but no `operator_call_id`)
+  → `pass`.
+- non-conversation call state → `drop non_conversation_call_state`; unknown state and
+  `voicemail` → `pass`.
 - Pure function ⇒ no test path reads `raw_transcripts` or invokes any transcript
   client.
 
-**DB-backed short-circuit** (`test/pipeline/metadata-prefilter-shortcircuit.test.ts`,
+**DB-backed** (`test/pipeline/metadata-prefilter-shortcircuit.test.ts`,
 `describe.skipIf(!hasTestDb)`), via `runPipeline` with a **spy** `fetch-transcript`
 handler:
 
@@ -178,6 +241,10 @@ handler:
 - passing call: the `fetch-transcript` spy **is** called (the call advances past the
   filter).
 - idempotency: re-running a skipped call adds no new `processing_log` row.
+- **double/concurrent skip:** calling `skipCall` (or `runPipeline`) twice on the same
+  call yields exactly one `skipped` `processing_log` row.
+- **re-seed resurrection:** upserting a skipped call again leaves it `skipped` with
+  `drop_reason` and `current_stage` intact (also covers `completed`).
 
 ## Documentation
 
@@ -187,13 +254,20 @@ handler:
 - CLAUDE.md "current repo state" note: add the metadata pre-filter (Task 3.1).
 - No new config, no `.env.example` change, no ADR (not in the §5 ADR list).
 
+## Open questions
+
+- **`voicemail`:** excluded from the hard-drop allowlist so voicemail-derived intent is
+  not silently dropped. Confirm with Eric that voicemail should flow into the pipeline
+  (fetch/availability handles the no-transcript case). If he explicitly wants no
+  voicemail insights, add `voicemail` to the allowlist.
+
 ## Provisional (fails safe regardless)
 
 The exact Dialpad field names (`duration`, `state`, `direction`, `operator_call_id`,
 `master_call_id`, `is_internal`) are confirmed against the real webhook payload in Task
-3.2. Because the stage passes on anything it does not clearly recognize, a wrong field
-mapping can only cause under-dropping (safe), never a mis-drop of a real call. The
-lenient schema and the drop-rule allowlists are the single place those names are
-adjusted when 3.2 lands.
+3.2. Because **every** drop rule requires an explicit positive marker and the stage
+passes on anything it does not clearly recognize, a wrong field mapping can only cause
+under-dropping (safe), never a mis-drop of a real call. The lenient schema and the
+drop-rule allowlists are the single place those names are adjusted when 3.2 lands.
 ```
 
