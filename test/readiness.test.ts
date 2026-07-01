@@ -19,6 +19,7 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     WORKER_CONCURRENCY: 5,
     WORKER_MAX_ATTEMPTS: 5,
     WORKER_BACKOFF_MS: 1000,
+    ALERT_ESCALATION_WINDOW_MINUTES: 15,
     WORKER_KILL_SWITCH: false,
     ...overrides,
   };

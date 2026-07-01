@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { CONFIG_ERROR_CODE, ConfigError, loadConfig, validateEnv } from '../src/config/index.js';
 
@@ -88,5 +89,35 @@ describe('config loader', () => {
     expect(exit).not.toHaveBeenCalled();
     expect(config.NODE_ENV).toBe('test');
     expect(config.PORT).toBe(8080); // coerced to a number
+  });
+});
+
+describe('ALERT_ESCALATION_WINDOW_MINUTES (Task 2.2)', () => {
+  it('defaults to 15 when unset', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.ALERT_ESCALATION_WINDOW_MINUTES).toBe(15);
+  });
+
+  it('coerces a numeric string', () => {
+    const result = validateEnv({ ...validEnv(), ALERT_ESCALATION_WINDOW_MINUTES: '30' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.ALERT_ESCALATION_WINDOW_MINUTES).toBe(30);
+  });
+
+  it('rejects non-int, non-positive, and non-numeric values, naming the variable', () => {
+    for (const bad of ['1.5', '0', '-1', 'abc', '']) {
+      const result = validateEnv({ ...validEnv(), ALERT_ESCALATION_WINDOW_MINUTES: bad });
+      expect(result.ok, `value ${JSON.stringify(bad)} should be rejected`).toBe(false);
+      if (result.ok) continue;
+      expect(result.error.invalid).toContain('ALERT_ESCALATION_WINDOW_MINUTES');
+    }
+  });
+
+  it('is present in .env.example (kept in lockstep with the schema)', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    expect(example).toContain('ALERT_ESCALATION_WINDOW_MINUTES');
   });
 });

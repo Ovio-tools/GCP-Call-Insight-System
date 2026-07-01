@@ -41,6 +41,7 @@ export function makeWorkerHarness(overrides: Partial<Config> = {}): WorkerHarnes
     WORKER_CONCURRENCY: 4,
     WORKER_MAX_ATTEMPTS: 3,
     WORKER_BACKOFF_MS: 10,
+    ALERT_ESCALATION_WINDOW_MINUTES: 15,
     WORKER_KILL_SWITCH: false,
     ...overrides,
   };
