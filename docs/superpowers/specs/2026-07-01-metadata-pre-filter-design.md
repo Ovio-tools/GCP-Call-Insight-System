@@ -31,8 +31,9 @@ The stage produces exactly one of two outcomes:
 
 `DropReason` is a shared source of truth used in three places kept in lockstep:
 
-- a zod enum `dropReasonSchema` / `DROP_REASONS` tuple in `src/pipeline/stages.ts`
-  (the pipeline vocabulary home),
+- a zod enum `dropReasonSchema` / `DROP_REASONS` tuple in `src/db/enums.ts`
+  (next to `HELD_REASON`, so the DAL layer can reference it without importing up into
+  the pipeline layer),
 - the `StageResult` drop type and `skipCall`'s input (`reason: DropReason`, **not**
   `string`, validated by `dropReasonSchema`),
 - DB `CHECK` constraints on `call_state` — a value list **and** a `status ⇔
