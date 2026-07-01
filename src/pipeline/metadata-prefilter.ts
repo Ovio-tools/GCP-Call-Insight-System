@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import type { DropReason } from '../db/enums.js';
+import { getCallState } from '../db/repositories/call-state-repo.js';
+import type { StageContext, StageResult } from './stages.js';
 
 /**
  * Metadata pre-filter (Task 3.1) — a deterministic, metadata-only decision. Reads ONLY
@@ -67,4 +69,27 @@ export function evaluateMetadata(callId: string, metadata: unknown): PrefilterOu
   }
 
   return { action: 'pass' };
+}
+
+/**
+ * The `metadata-pre-filter` stage handler: reads the call's `source_metadata`, evaluates
+ * it, and returns `drop` (→ the runner calls `skipCall`) or `continue`. Logs only the
+ * stage and the controlled drop reason — never metadata values or PII.
+ */
+export async function metadataPreFilterHandler(ctx: StageContext): Promise<StageResult> {
+  const state = await getCallState(ctx.pool, ctx.callId);
+  if (!state) {
+    // The runner guarantees the row exists before invoking a handler; a vanished row is
+    // a real inconsistency, not something to skip past silently.
+    throw new Error(`call_state row for ${ctx.callId} vanished before metadata pre-filter`);
+  }
+
+  const outcome = evaluateMetadata(ctx.callId, state.source_metadata);
+  if (outcome.action === 'drop') {
+    ctx.logger.info({ stage: ctx.stage, drop_reason: outcome.reason }, 'metadata pre-filter: drop');
+    return { action: 'drop', reason: outcome.reason };
+  }
+
+  ctx.logger.info({ stage: ctx.stage }, 'metadata pre-filter: pass');
+  return { action: 'continue' };
 }
