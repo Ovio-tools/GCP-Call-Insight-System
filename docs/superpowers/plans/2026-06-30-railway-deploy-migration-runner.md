@@ -768,7 +768,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { runMigrations } from '../src/boot/migrate-runner.js';
 
 describe('runMigrations', () => {
-  it('invokes the runner with advisoryLockMode "wait" and count Infinity on up', async () => {
+  it('invokes the runner with count Infinity and correct options on up', async () => {
     const runner = vi.fn(async () => []);
     await runMigrations('up', {
       runner,
@@ -779,7 +779,6 @@ describe('runMigrations', () => {
     const opts = runner.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(opts.direction).toBe('up');
     expect(opts.count).toBe(Infinity);
-    expect(opts.advisoryLockMode).toBe('wait');
     expect(opts.databaseUrl).toBe('postgres://user:pw@localhost:5432/db');
     expect(opts.dir).toBe('migrations');
   });
@@ -846,9 +845,10 @@ const DEFAULT_MIGRATIONS_DIR = 'migrations';
 
 /**
  * Run migrations in one direction. `up` applies all pending; `down` rolls back one.
- * Sets advisoryLockMode 'wait' — node-pg-migrate defaults to 'fail', which would
- * error a concurrent pre-deploy rather than serialize it. Any failure (including a
- * missing DATABASE_URL) becomes a MIGRATION_FAILED FatalBootError.
+ * node-pg-migrate 8.0.4 has no wait-lock mode (its advisory lock is non-blocking), so
+ * concurrent runs are avoided at the deploy-topology level (migrations run on the
+ * worker's pre-deploy only). Any failure (including a missing DATABASE_URL) becomes a
+ * MIGRATION_FAILED FatalBootError.
  */
 export async function runMigrations(
   direction: MigrationDirection,
@@ -869,7 +869,6 @@ export async function runMigrations(
       direction,
       count: direction === 'up' ? Infinity : 1,
       migrationsTable: 'pgmigrations',
-      advisoryLockMode: 'wait',
     });
   } catch (cause) {
     throw new FatalBootError(
@@ -884,12 +883,14 @@ export async function runMigrations(
  * test (which injects a stub) never imports the library. */
 async function loadDefaultRunner(): Promise<MigrationRunner> {
   const mod = await import('node-pg-migrate');
-  const runner = (mod.default ?? mod) as unknown as MigrationRunner;
-  return runner;
+  return mod.runner as unknown as MigrationRunner;
 }
 ```
 
-> Implementation note: confirm `advisoryLockMode` is the exact option key in the installed `node-pg-migrate` version (per its docs it is). If the installed types name it differently, update both the adapter call and the test expectation to that key while keeping the `'wait'` intent.
+> Implementation note: `runner` is a **named** export of node-pg-migrate 8.0.4 (not a
+> default export), verified against the installed types. node-pg-migrate 8.0.4 exposes
+> no `advisoryLockMode`; its advisory lock is non-blocking (`pg_try_advisory_lock`), so
+> concurrency is handled by running migrations from one service's pre-deploy (Task 7).
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -1117,6 +1118,12 @@ directory is a valid no-op run. Every migration must have an `up` and a `down`.
 
 - [ ] **Step 2: Create the four Railway config files**
 
+**Only `worker.json` carries `preDeployCommand`.** node-pg-migrate 8.0.4 has no
+`advisoryLockMode`/wait mode — its advisory lock is non-blocking (`pg_try_advisory_lock`),
+so if all four services ran migrations pre-deploy concurrently, one would win and the
+others would fail their deploy with `MIGRATION_FAILED`. Running migrations from exactly
+one service (the worker) avoids concurrent runs entirely.
+
 `deploy/railway/webhook-receiver.json`:
 
 ```json
@@ -1124,13 +1131,12 @@ directory is a valid no-op run. Every migration must have an `up` and a `down`.
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
     "startCommand": "node dist/services/webhook-receiver.js",
-    "preDeployCommand": ["npm run db:migrate"],
     "restartPolicyType": "ON_FAILURE"
   }
 }
 ```
 
-`deploy/railway/worker.json`:
+`deploy/railway/worker.json` (the ONLY service that runs migrations pre-deploy):
 
 ```json
 {
@@ -1150,7 +1156,6 @@ directory is a valid no-op run. Every migration must have an `up` and a `down`.
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
     "startCommand": "node dist/services/reconciliation-cron.js",
-    "preDeployCommand": ["npm run db:migrate"],
     "cronSchedule": "*/15 * * * *",
     "restartPolicyType": "NEVER"
   }
@@ -1164,7 +1169,6 @@ directory is a valid no-op run. Every migration must have an `up` and a `down`.
   "$schema": "https://railway.com/railway.schema.json",
   "deploy": {
     "startCommand": "node dist/services/retention-cron.js",
-    "preDeployCommand": ["npm run db:migrate"],
     "cronSchedule": "0 4 * * *",
     "restartPolicyType": "NEVER"
   }
@@ -1199,9 +1203,11 @@ One config file per service. In the Railway dashboard, set each service's
 - Wire `DATABASE_URL` and `REDIS_URL` into every service as reference variables.
 - Private networking only: neither Postgres nor Redis has a public endpoint.
 - The worker has no public domain.
-- `preDeployCommand` runs `npm run db:migrate` before each deploy. All four services
-  run it; node-pg-migrate uses a pg advisory lock in `wait` mode, so concurrent
-  pre-deploys serialize instead of failing.
+- Migrations run pre-deploy on the **worker service only** (`npm run db:migrate`).
+  node-pg-migrate 8.0.4 has no wait-lock mode (its advisory lock is non-blocking), so
+  running migrations from a single service avoids concurrent pre-deploy runs that would
+  otherwise fail deploys. If you later need another service to guarantee schema currency
+  before boot, gate it on the worker deploy rather than adding a second `preDeployCommand`.
 
 ## Known-and-expected in Task 0.3
 
@@ -1262,7 +1268,7 @@ gh pr create --base main --title "Task 0.3: Railway deploy config + migration ru
 
 ## Self-review notes (author)
 
-- **Spec coverage:** config (`REDIS_URL` + timeouts, store URLs optional) → Task 1; error contract + flush → Task 2; readiness → Task 3; keepAlive → Task 4; migration runner + `advisoryLockMode: 'wait'` + TS→`dist` execution → Task 5; entrypoints (webhook no-listener, crons terminate) → Task 6; Railway config (builder omitted, array `preDeployCommand`, schedules) + migrations dir + dashboard README → Task 7; verification gate → Task 8. All spec §2–§11 items map to a task.
+- **Spec coverage:** config (`REDIS_URL` + timeouts, store URLs optional) → Task 1; error contract + flush → Task 2; readiness → Task 3; keepAlive → Task 4; migration runner (MIGRATION_FAILED; no `advisoryLockMode` in node-pg-migrate 8.0.4) + TS→`dist` execution → Task 5; entrypoints (webhook no-listener, crons terminate) → Task 6; Railway config (builder omitted, array `preDeployCommand` on the **worker only**, schedules) + migrations dir + dashboard README → Task 7; verification gate → Task 8. All spec §2–§11 items map to a task.
 - **Manual-only QA (not automatable in CI):** live Postgres/Redis reachability, real concurrent-lock serialization, per-service deploy success, and the worker-has-no-public-domain check are done by hand during the deploy, per the spec.
 - **Type consistency:** `FatalBootError(code, message, context)`, `failBoot(logger, error, { exit })`, `assertDependenciesReady(config, logger, deps)`, `PgProbe`/`RedisProbe`, `runMigrations(direction, deps)`, `keepAlive({ register, hold })`, `createBootLogger({ level, name })` are used identically across every task that references them.
 - **keepAlive is genuinely event-loop-refing:** the default `hold` refs a `setInterval` handle (max non-clamped delay) and clears it on shutdown — a pending promise + signal listener alone does not keep Node alive. Both the injected-hold and default-timer paths are tested.

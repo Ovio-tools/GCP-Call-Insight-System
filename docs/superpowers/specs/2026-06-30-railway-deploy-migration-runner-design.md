@@ -154,13 +154,15 @@ JS runs under plain `node` in Railway after the build step. Exposed as npm scrip
   rollback (`direction: 'down'`, count 1), present because the convention requires
   every migration to have a down even though none exist yet.
 
-Implementation calls node-pg-migrate's **programmatic runner** with
-`databaseUrl = DATABASE_URL`, `dir = migrations/`, `direction`/`count` as above, and
-**`advisoryLockMode: 'wait'`** — node-pg-migrate's default lock mode is `fail`, which
-would error a concurrent run rather than queue it; `'wait'` makes the four services'
-pre-deploy runs serialize on the advisory lock. If `DATABASE_URL` is absent at
-migrate time the runner exits `MIGRATION_FAILED` with context noting the missing var
-(migrations cannot run without a target).
+Implementation calls node-pg-migrate's **programmatic runner** (the `runner` **named**
+export in v8.0.4) with `databaseUrl = DATABASE_URL`, `dir = migrations/`, and
+`direction`/`count` as above. node-pg-migrate 8.0.4 exposes **no `advisoryLockMode`**
+— its advisory lock is non-blocking (`pg_try_advisory_lock`), with no wait mode — so
+concurrent pre-deploy runs cannot serialize. Concurrency is therefore handled at the
+deploy topology: the `preDeployCommand` runs on the **worker service only** (§9), so
+no two migration runs race. If `DATABASE_URL` is absent at migrate time the runner
+exits `MIGRATION_FAILED` with context noting the missing var (migrations cannot run
+without a target).
 
 - Success → log applied count, exit 0.
 - Any failure → `failBoot(logger, FatalBootError(MIGRATION_FAILED, ...), exit)`,
