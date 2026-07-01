@@ -126,13 +126,16 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
   },
   DIALPAD_TRANSCRIPT_MISSING: {
     rootCauseCategory: 'DIALPAD_TRANSCRIPT_MISSING',
+    // The transient "not yet ready" state is handled by the availability check and never
+    // emits this code; DIALPAD_TRANSCRIPT_MISSING fires only when the transcript never
+    // arrives within the window and the call is held with reason `missing_transcript` (§3.2).
     impact:
-      'A transcript is not yet available from Dialpad; the call waits on the availability check rather than failing.',
+      'A transcript did not become available within the retry window; the call is held for review rather than guessed or dropped.',
     remediationNow:
-      'No action for a single call — the availability check retries. Investigate only if many calls stall.',
+      'Review the held missing-transcript call and confirm whether Dialpad has the transcript or it should be marked unresolvable.',
     remediationFix: SAME_AS_IMMEDIATE,
     dataSafe: true,
-    callsState: 'retried',
+    callsState: 'held',
     owner: OVIO,
     runbookRef: 'runbook#dialpad-transcript-missing',
   },
@@ -299,13 +302,14 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
   },
   SERVICETITAN_MATCH_WEAK: {
     rootCauseCategory: 'SERVICETITAN_MATCH_WEAK',
+    // A weak match holds with reason `weak_servicetitan_match` and writes nothing (§12.1).
     impact:
-      'A ServiceTitan match was too weak to trust; write-back is withheld and the match is flagged rather than guessed.',
+      'A ServiceTitan match was too weak to trust; the call is held for review and nothing is written back rather than guessed.',
     remediationNow:
-      'Review the flagged match manually and confirm or reject it before any write-back.',
+      'Review the held weak-match call manually and confirm or reject it before any write-back.',
     remediationFix: 'Tune match thresholds and add more match keys.',
     dataSafe: true,
-    callsState: 'none',
+    callsState: 'held',
     owner: OVIO,
     runbookRef: 'runbook#servicetitan-match-weak',
   },

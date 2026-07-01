@@ -131,12 +131,12 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     whatBroke: 'DIALPAD_TRANSCRIPT_MISSING',
     likelyRootCause: 'DIALPAD_TRANSCRIPT_MISSING',
     impact:
-      'A transcript is not yet available from Dialpad; the call waits on the availability check rather than failing.',
+      'A transcript did not become available within the retry window; the call is held for review rather than guessed or dropped.',
     immediateRemediation:
-      'No action for a single call — the availability check retries. Investigate only if many calls stall.',
+      'Review the held missing-transcript call and confirm whether Dialpad has the transcript or it should be marked unresolvable.',
     longerTermFix: 'Same as the immediate step.',
     dataSafe: true,
-    callsState: 'retried',
+    callsState: 'held',
     runbookRef: 'runbook#dialpad-transcript-missing',
     timestamp: '2026-01-01T00:00:00.000Z',
     environment: 'staging',
@@ -380,16 +380,16 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     whatBroke: 'SERVICETITAN_MATCH_WEAK',
     likelyRootCause: 'SERVICETITAN_MATCH_WEAK',
     impact:
-      'A ServiceTitan match was too weak to trust; write-back is withheld and the match is flagged rather than guessed.',
+      'A ServiceTitan match was too weak to trust; the call is held for review and nothing is written back rather than guessed.',
     immediateRemediation:
-      'Review the flagged match manually and confirm or reject it before any write-back.',
+      'Review the held weak-match call manually and confirm or reject it before any write-back.',
     longerTermFix: 'Tune match thresholds and add more match keys.',
     dataSafe: true,
-    callsState: 'none',
+    callsState: 'held',
     runbookRef: 'runbook#servicetitan-match-weak',
     timestamp: '2026-01-01T00:00:00.000Z',
     environment: 'staging',
-    affectedScope: ['component', 'environment'],
+    affectedScope: ['call_id', 'environment'],
   },
   SERVICETITAN_WRITE_FAILED: {
     errorCode: 'SERVICETITAN_WRITE_FAILED',

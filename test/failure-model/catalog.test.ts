@@ -48,4 +48,11 @@ describe('remediation catalog', () => {
     expect(Object.keys(REMEDIATION_CATALOG)).not.toContain('UNKNOWN');
     expect(() => catalogFor('UNKNOWN' as ErrorCode)).toThrow();
   });
+
+  it('models the two held workflow states as held, per the spec', () => {
+    // Emitted only when the transcript never arrives and the call is held (§3.2).
+    expect(catalogFor('DIALPAD_TRANSCRIPT_MISSING').callsState).toBe('held');
+    // A weak match holds with weak_servicetitan_match and writes nothing (§12.1).
+    expect(catalogFor('SERVICETITAN_MATCH_WEAK').callsState).toBe('held');
+  });
 });
