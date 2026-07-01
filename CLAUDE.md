@@ -8,14 +8,17 @@ file, so it shapes every plan and every task. The authoritative source is the bu
 plan (`gcp-call-insight-execution-plan-v8.md`, §2 and §3); this is its working
 summary.
 
-Several conventions reference modules not yet built (Task 2.2 failure model, Task
-2.3 hardening/auth middleware, Task 8.2 crypto/restore procedures, §6.1 held-call
-retention). When you implement those, wire them in here rather than rolling your
-own.
+Several conventions reference modules not yet built (Task 2.3 hardening/auth
+middleware, Task 8.2 crypto/restore procedures, §6.1 held-call retention). When you
+implement those, wire them in here rather than rolling your own. The Task 2.2 failure
+model now exists under `src/failure-model/` — the canonical home the forerunner error
+modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) and the
+`SEAM(Task 2.2)` worker shims (`src/worker/errors.ts`, `src/worker/dead-letter.ts`)
+fold into when their code paths are next edited.
 
-Current repo state: **scaffolding only** — config loader, logger, and the project
-toolchain exist; data layer, pipeline stages, surfaces, crons, and model steps do
-not yet.
+Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
+per-call worker skeleton (Task 2.1), and the shared failure model (Task 2.2) exist;
+the model steps, surfaces, crons, and hardening/auth middleware do not yet.
 
 ## 1. Architecture
 
@@ -111,7 +114,7 @@ Every stage that ends in a hold writes a `review_queue` row with a specific reas
 Every model call writes a `model_invocations` row with the model ID and prompt
 version.
 
-## 4. Operational failure model (spec — implemented by Task 2.2)
+## 4. Operational failure model (implemented in `src/failure-model/`, Task 2.2)
 
 **Error object.** Every failure produces a structured error object with these
 fields:

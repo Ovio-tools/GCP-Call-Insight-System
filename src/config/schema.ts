@@ -64,6 +64,10 @@ export const configSchema = z.object({
   /** Base delay (ms) for the exponential backoff between retries. */
   WORKER_BACKOFF_MS: z.coerce.number().int().positive().default(1000),
 
+  /** Minutes an unacknowledged critical alert may sit before it escalates (Task 2.2).
+   * The escalation cron (later task) passes this as the window to `escalateStaleAlerts`. */
+  ALERT_ESCALATION_WINDOW_MINUTES: z.coerce.number().int().positive().default(15),
+
   /** Kill switch: when `true`, the worker boots but does NOT consume — queued jobs
    * accumulate untouched in Redis. Explicit string enum, never truthy-coerced (so the
    * literal 'false' does not read as true). */
