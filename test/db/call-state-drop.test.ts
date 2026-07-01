@@ -3,6 +3,10 @@ import type { Pool } from 'pg';
 import { hasTestDb, makePool, migrate } from './_pg.js';
 import { cleanupCalls, makeAppPool } from './_dal.js';
 import { upsertCallState } from '../../src/db/repositories/call-state-repo.js';
+import { DROP_REASONS } from '../../src/db/enums.js';
+import { DAL_STALE_STAGE, DalError } from '../../src/db/index.js';
+import { skipCall } from '../../src/db/repositories/call-state-repo.js';
+import { listByCall } from '../../src/db/repositories/processing-log-repo.js';
 
 const PATTERN = 'test-drop-%';
 
@@ -163,5 +167,91 @@ describe.skipIf(!hasTestDb)('upsertCallState preserves terminal rows', () => {
       status: 'processing',
     });
     expect(after.current_stage).toBe('classify');
+  });
+});
+
+describe.skipIf(!hasTestDb)('skipCall', () => {
+  let owner!: Pool;
+  let app!: Pool;
+
+  const seedProcessing = (callId: string): Promise<unknown> =>
+    upsertCallState(app, {
+      callId,
+      source: 'test',
+      currentStage: 'metadata-pre-filter',
+      status: 'processing',
+    });
+
+  beforeAll(async () => {
+    await migrate('up');
+    owner = makePool();
+    app = makeAppPool();
+  });
+  afterEach(async () => {
+    await cleanupCalls(owner, 'test-skip-%');
+  });
+  afterAll(async () => {
+    await owner.end();
+    await app.end();
+  });
+
+  it('marks the row skipped with a reason and logs one skipped row', async () => {
+    const callId = 'test-skip-basic';
+    await seedProcessing(callId);
+
+    const row = await skipCall(app, {
+      callId,
+      atStage: 'metadata-pre-filter',
+      dropReason: 'zero_duration',
+    });
+
+    expect(row.status).toBe('skipped');
+    expect(row.drop_reason).toBe('zero_duration');
+    expect(row.current_stage).toBe('metadata-pre-filter'); // no forward movement
+
+    const log = await listByCall(app, callId);
+    const skipped = log.filter((r) => r.outcome === 'skipped');
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.stage).toBe('metadata-pre-filter');
+    expect(skipped[0]?.detail).toEqual({ drop_reason: 'zero_duration' });
+  });
+
+  it('stores every DROP_REASONS value (TS/DB parity)', async () => {
+    for (const reason of DROP_REASONS) {
+      const callId = `test-skip-parity-${reason}`;
+      await seedProcessing(callId);
+      const row = await skipCall(app, {
+        callId,
+        atStage: 'metadata-pre-filter',
+        dropReason: reason,
+      });
+      expect(row.drop_reason).toBe(reason);
+    }
+  });
+
+  it('rejects an out-of-vocabulary reason at the DAL (zod) layer', async () => {
+    const callId = 'test-skip-badreason';
+    await seedProcessing(callId);
+    await expect(
+      // @ts-expect-error deliberately invalid reason
+      skipCall(app, { callId, atStage: 'metadata-pre-filter', dropReason: 'bogus' }),
+    ).rejects.toBeInstanceOf(DalError);
+  });
+
+  it('is idempotent under a double skip (second raises DAL_STALE_STAGE, one log row)', async () => {
+    const callId = 'test-skip-double';
+    await seedProcessing(callId);
+    await skipCall(app, { callId, atStage: 'metadata-pre-filter', dropReason: 'zero_duration' });
+
+    let code: string | undefined;
+    try {
+      await skipCall(app, { callId, atStage: 'metadata-pre-filter', dropReason: 'zero_duration' });
+    } catch (err) {
+      code = err instanceof DalError ? err.code : 'other';
+    }
+    expect(code).toBe(DAL_STALE_STAGE);
+
+    const skipped = (await listByCall(app, callId)).filter((r) => r.outcome === 'skipped');
+    expect(skipped).toHaveLength(1);
   });
 });
