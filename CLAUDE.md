@@ -14,11 +14,16 @@ implement those, wire them in here rather than rolling your own. The Task 2.2 fa
 model now exists under `src/failure-model/` — the canonical home the forerunner error
 modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) and the
 `SEAM(Task 2.2)` worker shims (`src/worker/errors.ts`, `src/worker/dead-letter.ts`)
-fold into when their code paths are next edited.
+fold into when their code paths are next edited. The Task 2.3 shared hardening/auth
+middleware now exists under `src/http/` — every HTTP surface builds on its
+`createInternalApp` / `createWebhookApp` factories (see `docs/http-middleware.md`); no
+surface rolls its own body limit, rate limiting, auth/session, CSRF, webhook signature/
+replay/timestamp checks, or error shaping.
 
 Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
-per-call worker skeleton (Task 2.1), and the shared failure model (Task 2.2) exist;
-the model steps, surfaces, crons, and hardening/auth middleware do not yet.
+per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), and the shared
+HTTP hardening/auth middleware (Task 2.3) exist; the model steps, surfaces, and crons do
+not yet.
 
 ## 1. Architecture
 
@@ -141,7 +146,10 @@ fields:
 `MODEL_AUTH_FAILED`, `MODEL_RATE_LIMITED`, `MODEL_MALFORMED_RESPONSE`,
 `MODEL_COST_CAP_EXCEEDED`, `QUEUE_RETRY_EXHAUSTED`, `DEAD_LETTER_CREATED`,
 `RETENTION_PURGE_FAILED`, `BACKFILL_CHECKPOINT_FAILED`, `REVIEW_QUEUE_STALLED`,
-`SERVICETITAN_AUTH_FAILED`, `SERVICETITAN_MATCH_WEAK`, `SERVICETITAN_WRITE_FAILED`.
+`SERVICETITAN_AUTH_FAILED`, `SERVICETITAN_MATCH_WEAK`, `SERVICETITAN_WRITE_FAILED`,
+`REQUEST_BODY_TOO_LARGE`, `REQUEST_MALFORMED`, `UNSUPPORTED_MEDIA_TYPE`,
+`RATE_LIMIT_EXCEEDED`, `AUTH_REQUIRED`, `CSRF_TOKEN_INVALID`, `WEBHOOK_TIMESTAMP_INVALID`,
+`INTERNAL_ERROR` (the last eight added by the Task 2.3 shared hardening/auth middleware).
 
 > The config loader in this scaffold already emits `CONFIG_MISSING_OR_INVALID` and
 > names the offending variable; it is the first member of this taxonomy.

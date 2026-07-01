@@ -42,6 +42,16 @@ export const ROOT_CAUSE_CATEGORIES = [
   'SERVICETITAN_AUTH_FAILED',
   'SERVICETITAN_MATCH_WEAK',
   'SERVICETITAN_WRITE_FAILED',
+  // HTTP hardening & auth middleware (Task 2.3). The shared middleware rejects requests with
+  // these codes instead of ad hoc strings; routine client rejections are logged, not alerted.
+  'REQUEST_BODY_TOO_LARGE',
+  'REQUEST_MALFORMED',
+  'UNSUPPORTED_MEDIA_TYPE',
+  'RATE_LIMIT_EXCEEDED',
+  'AUTH_REQUIRED',
+  'CSRF_TOKEN_INVALID',
+  'WEBHOOK_TIMESTAMP_INVALID',
+  'INTERNAL_ERROR',
 ] as const;
 
 export const rootCauseCategorySchema = z.enum(ROOT_CAUSE_CATEGORIES);

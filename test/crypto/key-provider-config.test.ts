@@ -1,29 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import type { Config } from '../../src/config/schema.js';
 import { DEK_BYTES, LocalKeyProvider, keyProviderFromConfig } from '../../src/crypto/index.js';
+import { makeTestConfig } from '../_config.js';
 
 /** A valid base64 master key (>= 32 decoded bytes). */
 const VALID_KEY = Buffer.alloc(DEK_BYTES, 0x11).toString('base64');
 
 function cfg(overrides: Partial<Config> = {}): Config {
-  return {
+  return makeTestConfig({
     NODE_ENV: 'development',
-    DB_CONNECT_TIMEOUT_MS: 5000,
-    REDIS_CONNECT_TIMEOUT_MS: 5000,
-    LOG_LEVEL: 'silent',
     SERVICE_NAME: 'test',
-    PORT: 8080,
-    CRYPTO_KEY_PROVIDER: 'local',
-    CRYPTO_ACTIVE_KEY_VERSION: 1,
     CRYPTO_LOCAL_MASTER_KEY: VALID_KEY,
-    WORKER_QUEUE_NAME: 'call-pipeline',
-    WORKER_CONCURRENCY: 5,
-    WORKER_MAX_ATTEMPTS: 5,
-    WORKER_BACKOFF_MS: 1000,
-    ALERT_ESCALATION_WINDOW_MINUTES: 15,
-    WORKER_KILL_SWITCH: false,
     ...overrides,
-  };
+  });
 }
 
 describe('keyProviderFromConfig', () => {

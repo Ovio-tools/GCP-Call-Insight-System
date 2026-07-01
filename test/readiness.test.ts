@@ -2,27 +2,15 @@ import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import type { Config } from '../src/config/schema.js';
 import { assertDependenciesReady, type PgProbe, type RedisProbe } from '../src/boot/readiness.js';
+import { makeTestConfig } from './_config.js';
 
 function baseConfig(overrides: Partial<Config> = {}): Config {
-  return {
-    NODE_ENV: 'test',
+  return makeTestConfig({
     DATABASE_URL: 'postgres://user:pw@localhost:5432/db',
     REDIS_URL: 'redis://localhost:6379',
-    DB_CONNECT_TIMEOUT_MS: 5000,
-    REDIS_CONNECT_TIMEOUT_MS: 5000,
-    LOG_LEVEL: 'silent',
     SERVICE_NAME: 'test',
-    PORT: 8080,
-    CRYPTO_KEY_PROVIDER: 'local',
-    CRYPTO_ACTIVE_KEY_VERSION: 1,
-    WORKER_QUEUE_NAME: 'call-pipeline',
-    WORKER_CONCURRENCY: 5,
-    WORKER_MAX_ATTEMPTS: 5,
-    WORKER_BACKOFF_MS: 1000,
-    ALERT_ESCALATION_WINDOW_MINUTES: 15,
-    WORKER_KILL_SWITCH: false,
     ...overrides,
-  };
+  });
 }
 
 const silentLogger = { fatal: vi.fn(), flush: vi.fn() } as unknown as Logger;
