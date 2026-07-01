@@ -17,6 +17,10 @@ One config file per service. In the Railway dashboard, set each service's
 - Add Postgres and Redis. Turn on Postgres point-in-time recovery and Redis
   persistence. Record the PITR retention window (matters for the deletion promise).
 - Wire `DATABASE_URL` and `REDIS_URL` into every service as reference variables.
+  These are validated by the **boot readiness check**, not the config loader: an
+  absent or unreachable store makes the service exit with `DATABASE_UNAVAILABLE` /
+  `REDIS_UNAVAILABLE` (not `CONFIG_MISSING_OR_INVALID`). Debug a crashed deploy by
+  looking for those store-specific codes.
 - Private networking only: neither Postgres nor Redis has a public endpoint.
 - The worker has no public domain.
 - Migrations run pre-deploy on the **worker service only** (`npm run db:migrate`).
