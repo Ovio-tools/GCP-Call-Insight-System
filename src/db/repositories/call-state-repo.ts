@@ -153,6 +153,8 @@ export async function skipCall(pool: Pool, input: SkipCallInput): Promise<CallSt
   const v = parseOrThrow(TABLE, skipCallSchema, input);
 
   return withTransaction(pool, async (client) => {
+    // 'processing'/'skipped' are the status vocabulary owned by the pipeline layer; kept as
+    // SQL literals here rather than importing STATUS_* to avoid a db -> pipeline layering dep.
     const rows = await query<CallStateRow>(
       client,
       `UPDATE call_state
@@ -170,7 +172,9 @@ export async function skipCall(pool: Pool, input: SkipCallInput): Promise<CallSt
       );
     }
 
-    const detail: JsonValue = { drop_reason: v.dropReason, ...(v.logDetail ?? {}) };
+    // Trusted drop_reason goes LAST so a caller's logDetail can never shadow it — the
+    // processing_log audit trail must always match the drop_reason written to call_state.
+    const detail: JsonValue = { ...(v.logDetail ?? {}), drop_reason: v.dropReason };
 
     await appendLog(client, {
       callId: v.callId,

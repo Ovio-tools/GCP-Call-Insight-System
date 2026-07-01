@@ -254,4 +254,36 @@ describe.skipIf(!hasTestDb)('skipCall', () => {
     const skipped = (await listByCall(app, callId)).filter((r) => r.outcome === 'skipped');
     expect(skipped).toHaveLength(1);
   });
+
+  it('merges logDetail into the log row but never lets it override drop_reason', async () => {
+    const callId = 'test-skip-detail';
+    await seedProcessing(callId);
+    await skipCall(app, {
+      callId,
+      atStage: 'metadata-pre-filter',
+      dropReason: 'zero_duration',
+      // A caller attempts to smuggle a different drop_reason plus extra detail.
+      logDetail: { drop_reason: 'internal_transfer_non_operator_leg', note: 'extra' },
+    });
+    const skipped = (await listByCall(app, callId)).filter((r) => r.outcome === 'skipped');
+    expect(skipped).toHaveLength(1);
+    expect(skipped[0]?.detail).toEqual({ note: 'extra', drop_reason: 'zero_duration' });
+  });
+
+  it('two concurrent skips: one wins, the other raises DAL_STALE_STAGE, one log row', async () => {
+    const callId = 'test-skip-race';
+    await seedProcessing(callId);
+    const results = await Promise.allSettled([
+      skipCall(app, { callId, atStage: 'metadata-pre-filter', dropReason: 'zero_duration' }),
+      skipCall(app, { callId, atStage: 'metadata-pre-filter', dropReason: 'zero_duration' }),
+    ]);
+    const fulfilled = results.filter((r) => r.status === 'fulfilled');
+    const rejected = results.filter((r) => r.status === 'rejected');
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(DalError);
+    expect(((rejected[0] as PromiseRejectedResult).reason as DalError).code).toBe(DAL_STALE_STAGE);
+    const skipped = (await listByCall(app, callId)).filter((r) => r.outcome === 'skipped');
+    expect(skipped).toHaveLength(1);
+  });
 });
