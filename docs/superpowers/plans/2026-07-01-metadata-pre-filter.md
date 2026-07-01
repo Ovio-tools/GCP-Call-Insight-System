@@ -641,7 +641,9 @@ export async function skipCall(pool: Pool, input: SkipCallInput): Promise<CallSt
       );
     }
 
-    const detail: JsonValue = { drop_reason: v.dropReason, ...(v.logDetail ?? {}) };
+    // Trusted drop_reason goes LAST so a caller's logDetail can never shadow it — the
+    // processing_log audit trail must always match the drop_reason written to call_state.
+    const detail: JsonValue = { ...(v.logDetail ?? {}), drop_reason: v.dropReason };
 
     await appendLog(client, {
       callId: v.callId,
