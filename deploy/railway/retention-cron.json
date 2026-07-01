@@ -1,0 +1,8 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "startCommand": "node dist/services/retention-cron.js",
+    "cronSchedule": "0 4 * * *",
+    "restartPolicyType": "NEVER"
+  }
+}
