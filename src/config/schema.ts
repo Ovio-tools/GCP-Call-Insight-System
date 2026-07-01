@@ -51,6 +51,26 @@ export const configSchema = z.object({
 
   /** key_version new writes encrypt under. */
   CRYPTO_ACTIVE_KEY_VERSION: z.coerce.number().int().positive().default(1),
+
+  /** BullMQ queue name for the per-call pipeline (Task 2.1). */
+  WORKER_QUEUE_NAME: z.string().min(1).default('call-pipeline'),
+
+  /** Worker concurrency: how many calls the pipeline worker processes at once. */
+  WORKER_CONCURRENCY: z.coerce.number().int().positive().default(5),
+
+  /** Capped retry count per job (BullMQ `attempts`). Includes the first attempt. */
+  WORKER_MAX_ATTEMPTS: z.coerce.number().int().positive().default(5),
+
+  /** Base delay (ms) for the exponential backoff between retries. */
+  WORKER_BACKOFF_MS: z.coerce.number().int().positive().default(1000),
+
+  /** Kill switch: when `true`, the worker boots but does NOT consume — queued jobs
+   * accumulate untouched in Redis. Explicit string enum, never truthy-coerced (so the
+   * literal 'false' does not read as true). */
+  WORKER_KILL_SWITCH: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
 });
 
 /** Validated, typed configuration object. */
