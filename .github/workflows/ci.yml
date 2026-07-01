@@ -21,6 +21,10 @@ jobs:
     # Postgres for the DB-integration suite. The `postgres` superuser is required by the
     # role-isolation test (SET ROLE needs membership/superuser). Without this service the
     # ci-guard test fails, so the DB suite can never silently skip on a PR.
+    #
+    # Redis backs the BullMQ worker/queue integration suite (Task 2.1). Same contract: the
+    # queue ci-guard test fails if TEST_REDIS_URL is unset, so those tests can never silently
+    # skip on a PR.
     services:
       postgres:
         image: postgres:16
@@ -32,6 +36,15 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -57,6 +70,7 @@ jobs:
         run: npm run test
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+          TEST_REDIS_URL: redis://localhost:6379
 
       - name: Build
         run: npm run build

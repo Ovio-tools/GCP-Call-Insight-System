@@ -15,6 +15,11 @@ function baseConfig(overrides: Partial<Config> = {}): Config {
     PORT: 8080,
     CRYPTO_KEY_PROVIDER: 'local',
     CRYPTO_ACTIVE_KEY_VERSION: 1,
+    WORKER_QUEUE_NAME: 'call-pipeline',
+    WORKER_CONCURRENCY: 5,
+    WORKER_MAX_ATTEMPTS: 5,
+    WORKER_BACKOFF_MS: 1000,
+    WORKER_KILL_SWITCH: false,
     ...overrides,
   };
 }
