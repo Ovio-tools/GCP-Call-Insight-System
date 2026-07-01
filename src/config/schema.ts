@@ -38,6 +38,19 @@ export const configSchema = z.object({
 
   /** HTTP port for internal surfaces. */
   PORT: z.coerce.number().int().positive().default(8080),
+
+  /** Envelope-encryption key source. `local` derives DEKs from CRYPTO_LOCAL_MASTER_KEY
+   * (dev/test only); `kms` is the external key service (Task 8.2). */
+  CRYPTO_KEY_PROVIDER: z.enum(['local', 'kms']).default('local'),
+
+  /** Base64-encoded master secret for the local key provider (>= 32 bytes decoded).
+   * Optional here — like DATABASE_URL, the consumer validates it: keyProviderFromConfig
+   * throws if it is missing/short when the local provider is actually built. Never a
+   * real value in the repo. */
+  CRYPTO_LOCAL_MASTER_KEY: z.string().min(44).optional(),
+
+  /** key_version new writes encrypt under. */
+  CRYPTO_ACTIVE_KEY_VERSION: z.coerce.number().int().positive().default(1),
 });
 
 /** Validated, typed configuration object. */

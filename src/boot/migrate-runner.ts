@@ -47,6 +47,13 @@ export async function runMigrations(
       direction,
       count: direction === 'up' ? Infinity : 1,
       migrationsTable: 'pgmigrations',
+      // node-pg-migrate loads EVERY non-ignored dirent in `dir` (no extension filter)
+      // and, for non-.sql files, `import()`s them. The default ignore is dotfiles only
+      // (`^\..*`), so `migrations/README.md` would be imported and crash the run. Anchor
+      // as `^…$` (node-pg-migrate wraps it): ignore any dotfile or any `.md`. Migration
+      // files are `<ts>_*.cjs` and never match; the `migrations/lib/` helper dir is a
+      // directory, not a file, so it is skipped regardless.
+      ignorePattern: '(\\..*|.*\\.md)',
     });
   } catch (cause) {
     throw new FatalBootError(

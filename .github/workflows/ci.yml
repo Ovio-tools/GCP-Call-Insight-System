@@ -17,6 +17,25 @@ jobs:
   verify:
     name: Lint, typecheck, test, build
     runs-on: ubuntu-latest
+
+    # Postgres for the DB-integration suite. The `postgres` superuser is required by the
+    # role-isolation test (SET ROLE needs membership/superuser). Without this service the
+    # ci-guard test fails, so the DB suite can never silently skip on a PR.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v4
 
@@ -36,6 +55,8 @@ jobs:
 
       - name: Test
         run: npm run test
+        env:
+          TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
 
       - name: Build
         run: npm run build
