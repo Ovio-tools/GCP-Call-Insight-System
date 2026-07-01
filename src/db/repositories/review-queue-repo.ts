@@ -61,12 +61,16 @@ export async function listOpen(pool: Pool): Promise<ReviewQueueRow[]> {
   return rows.map((r) => parseOrThrow(TABLE, reviewQueueRowSchema, r));
 }
 
-/** Move a held call to a new review status; stamps resolved_at when leaving the queue. */
+/**
+ * Move a held call to a new review status; stamps resolved_at when leaving the queue.
+ * `assignee` is set-if-provided (COALESCE keeps the current value when omitted); there is
+ * deliberately no "clear the assignee" path here, so the type excludes null.
+ */
 export async function setStatus(
   pool: Pool,
   id: string,
   status: ReviewStatus,
-  opts: { assignee?: string | null } = {},
+  opts: { assignee?: string } = {},
 ): Promise<ReviewQueueRow | undefined> {
   const parsedStatus = reviewStatusSchema.parse(status);
   const resolved = parsedStatus === 'resolved' || parsedStatus === 'unresolvable';

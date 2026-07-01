@@ -9,9 +9,10 @@ import { describe, expect, it } from 'vitest';
  * table identifiers and fails if any file OUTSIDE the allowlist issues such a query.
  *
  * Deliberately precise: it matches the snake_case identifier only in a SQL clause
- * (FROM/INTO/UPDATE/JOIN/TABLE token_vault|match_keys), so PascalCase type names
- * (TokenVaultRow, MatchKeyRow) and doc-comment mentions elsewhere are allowed. No live
- * DB needed.
+ * (FROM/INTO/UPDATE/JOIN/DELETE FROM/TABLE), tolerating an optional schema qualifier
+ * (`public.`) and a leading quote (`"token_vault"`), so PascalCase type names
+ * (TokenVaultRow, MatchKeyRow) and doc-comment mentions elsewhere are allowed. Note
+ * `DELETE FROM token_vault` is caught by the `FROM` alternative. No live DB needed.
  */
 const DB_DIR = fileURLToPath(new URL('../../src/db/', import.meta.url));
 
@@ -21,7 +22,8 @@ const ALLOWLIST = new Set([
   'restricted/restricted-context.ts',
 ]);
 
-const SQL_USAGE = /\b(?:from|into|update|join|table)\s+(?:token_vault|match_keys)\b/i;
+const SQL_USAGE =
+  /\b(?:from|into|update|join|table)\s+(?:"?\w+"?\.)?"?(?:token_vault|match_keys)\b/i;
 
 describe('restricted-table access guard', () => {
   it('token_vault / match_keys are queried only under src/db/restricted/', () => {
