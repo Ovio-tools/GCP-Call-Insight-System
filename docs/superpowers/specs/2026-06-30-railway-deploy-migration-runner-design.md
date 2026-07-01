@@ -30,14 +30,17 @@ Concretely, this task must satisfy the build plan's QA for Task 0.3:
 - Add `REDIS_URL` (and two optional readiness timeouts) to the config schema and
   `.env.example`, in lockstep.
 - Add runtime deps `pg`, `ioredis`, `node-pg-migrate`; dev dep `@types/pg`.
-- A forerunner error module for the three boot-time taxonomy codes.
+- A forerunner error module for the three boot-time taxonomy codes, including a
+  `failBoot` helper that flushes before exit.
 - A dependency-injected boot readiness check.
 - A migration runner (up + down) exposed as npm scripts; the `up` script is the
   Railway pre-deploy command.
+- A signal-aware `keepAlive()` helper for the two long-running services.
 - Four thin service entrypoints.
 - One committed Railway config file per service, plus a README documenting the
   by-hand dashboard steps.
-- Unit tests for the readiness check, the migration wrapper, and the error module.
+- Unit tests for the readiness check, the migration wrapper, the error module
+  (incl. flush-order), and `keepAlive`.
 
 ### Out of scope (deferred to their own tasks)
 
@@ -102,9 +105,15 @@ Task 2.2 failure model."*
     full connection string (it holds the password), never PII. A dedicated helper
     derives sanitized context from a connection URL.
 - `failBoot(logger, error, exit)` — logs exactly one structured `fatal` line
-  `{ error_code, context }` through the existing pino logger, then `exit(1)`.
-  "Exits loudly" = one actionable structured line + non-zero exit; never a bare
-  stack trace as the alert.
+  `{ error_code, context }`, **flushes**, then `exit(1)`. "Exits loudly" = one
+  actionable structured line + non-zero exit; never a bare stack trace as the alert.
+  - **Flush-before-exit is required.** pino's default destination (sonic-boom on fd
+    1) buffers, so a bare `process.exit(1)` can drop the fatal line — the opposite of
+    "loudly." Two mitigations, both specified: (a) the boot/fatal path uses a
+    **synchronous destination** (`pino.destination({ sync: true })`) so writes reach
+    the fd immediately; (b) `failBoot` calls `logger.flush?.()` before invoking
+    `exit`. The `exit` hook stays injectable, so a test asserts **flush is called
+    before exit** (call-order assertion), not just that both happen.
 
 ## 6. Boot readiness check
 
@@ -170,10 +179,15 @@ each identical in shape:
 loadConfig() → assertDependenciesReady(config) → log "<service> booted"
 ```
 
-- **webhook-receiver, worker:** long-running — stay alive after boot. No HTTP
-  server, no queue.
+- **webhook-receiver, worker:** long-running — after boot they `await keepAlive()`.
+  Without an event-loop task a bare "log and return" would let Node drain the loop
+  and **exit cleanly**, which Railway would treat as a completed process. `keepAlive()`
+  (`src/boot/keepalive.ts`) is a **signal-aware, never-resolving promise**: it
+  resolves only on `SIGTERM`/`SIGINT` (so Railway can stop the service gracefully),
+  otherwise it holds the process open until real work lands in Task 2.x. No busy
+  loop — it parks on the signal handlers, not a timer.
 - **reconciliation-cron, retention-cron:** run readiness, log, exit 0 (Railway
-  re-invokes on schedule).
+  re-invokes on schedule). They do **not** call `keepAlive()` — a cron must terminate.
 - Each binds a `service` field on its logger so log lines distinguish the four. No
   business logic anywhere.
 
@@ -220,7 +234,12 @@ worker has no public domain; Postgres PITR and Redis persistence on.
   behavior).
 - **Unit — codes** (`test/boot-codes.test.ts`): `FatalBootError` sanitized context
   carries host/port/db but **never** the credentials from a connection string —
-  regression guard against leaking `DATABASE_URL`/`REDIS_URL`.
+  regression guard against leaking `DATABASE_URL`/`REDIS_URL`. Plus a `failBoot`
+  **flush-order** test: a logger stub records when `flush` fires relative to the
+  injected `exit`, asserting flush runs **before** exit.
+- **Unit — keepalive** (`test/keepalive.test.ts`): `keepAlive()` stays pending until
+  a `SIGTERM`/`SIGINT` (simulated via the injected signal source), then resolves —
+  proving the long-running services neither exit early nor ignore shutdown signals.
 - **Update — `test/config.test.ts`**: `DATABASE_URL` is no longer required at the
   config layer, so the existing "missing `DATABASE_URL` → `CONFIG_MISSING_OR_INVALID`"
   case is **re-pointed to a still-required var** (`NODE_ENV`) to preserve the
