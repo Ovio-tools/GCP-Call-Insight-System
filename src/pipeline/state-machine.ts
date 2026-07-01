@@ -112,7 +112,7 @@ export async function runPipeline(
     const stage = PIPELINE_STAGES[index] as PipelineStage;
 
     try {
-      await handlers[stage]({ callId, stage, logger });
+      await handlers[stage]({ callId, stage, logger, pool });
     } catch (cause) {
       // Wrap so the worker's failed-handler knows exactly which stage failed. Fail-closed:
       // PipelineStageError never carries the raw error message.
