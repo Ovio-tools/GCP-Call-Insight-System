@@ -15,8 +15,20 @@ export const configSchema = z.object({
   /** Deployment environment. Drives environment separation (dev/staging/prod). */
   NODE_ENV: z.enum(['development', 'test', 'staging', 'production']),
 
-  /** Postgres connection string (primary relational store). */
-  DATABASE_URL: z.string().min(1),
+  /** Postgres connection string. Optional here: presence + reachability are owned
+   * by the boot readiness check, which emits DATABASE_UNAVAILABLE rather than
+   * CONFIG_MISSING_OR_INVALID so the store-specific code always surfaces. */
+  DATABASE_URL: z.string().min(1).optional(),
+
+  /** Redis connection string (BullMQ backend). Optional for the same reason as
+   * DATABASE_URL — readiness owns it and emits REDIS_UNAVAILABLE. */
+  REDIS_URL: z.string().min(1).optional(),
+
+  /** Readiness: Postgres connect timeout (ms). Fail fast, never hang. */
+  DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
+
+  /** Readiness: Redis connect timeout (ms). Fail fast, never hang. */
+  REDIS_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5000),
 
   /** pino log level. */
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),

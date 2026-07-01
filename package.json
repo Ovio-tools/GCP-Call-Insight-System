@@ -20,12 +20,16 @@
     "prepare": "husky"
   },
   "dependencies": {
+    "ioredis": "^5.11.1",
+    "node-pg-migrate": "^8.0.4",
+    "pg": "^8.22.0",
     "pino": "^9.5.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
     "@eslint/js": "^9.14.0",
     "@types/node": "^22.9.0",
+    "@types/pg": "^8.20.0",
     "@typescript-eslint/eslint-plugin": "^8.13.0",
     "@typescript-eslint/parser": "^8.13.0",
     "eslint": "^9.14.0",

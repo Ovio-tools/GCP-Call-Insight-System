@@ -15,7 +15,7 @@ function validEnv(): NodeJS.ProcessEnv {
 describe('config loader', () => {
   it('exits with the named-value error when a required variable is missing', () => {
     const env = validEnv();
-    delete env.DATABASE_URL;
+    delete env.NODE_ENV;
 
     // Capture the exit and the emitted error instead of killing the test runner.
     const exit = vi.fn((_code: number) => undefined as never);
@@ -32,23 +32,34 @@ describe('config loader', () => {
     const error = onError.mock.calls[0]?.[0] as ConfigError;
     expect(error).toBeInstanceOf(ConfigError);
     expect(error.code).toBe(CONFIG_ERROR_CODE);
-    expect(error.invalid).toContain('DATABASE_URL');
+    expect(error.invalid).toContain('NODE_ENV');
     expect(error.message).toContain(CONFIG_ERROR_CODE);
-    expect(error.message).toContain('DATABASE_URL');
+    expect(error.message).toContain('NODE_ENV');
   });
 
   it('names every offending variable when several are missing or invalid', () => {
     const env = validEnv();
     delete env.NODE_ENV;
-    delete env.DATABASE_URL;
+    env.LOG_LEVEL = 'bogus';
 
     const result = validateEnv(env);
 
     expect(result.ok).toBe(false);
     if (result.ok) return; // narrows the type for the assertions below
-    expect(result.error.invalid).toEqual(expect.arrayContaining(['NODE_ENV', 'DATABASE_URL']));
+    expect(result.error.invalid).toEqual(expect.arrayContaining(['NODE_ENV', 'LOG_LEVEL']));
     expect(result.error.message).toContain('NODE_ENV');
-    expect(result.error.message).toContain('DATABASE_URL');
+    expect(result.error.message).toContain('LOG_LEVEL');
+  });
+
+  it('accepts a missing DATABASE_URL — readiness owns store reachability', () => {
+    const env = validEnv();
+    delete env.DATABASE_URL;
+
+    const exit = vi.fn((_code: number) => undefined as never);
+    const config = loadConfig(env, { exit });
+
+    expect(exit).not.toHaveBeenCalled();
+    expect(config.DATABASE_URL).toBeUndefined();
   });
 
   it('exits naming LOG_LEVEL when it is invalid (boot path, not a pino crash)', () => {
