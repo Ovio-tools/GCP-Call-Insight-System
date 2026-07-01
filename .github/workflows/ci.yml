@@ -5,6 +5,9 @@ on:
 
 permissions:
   contents: read
+  # gitleaks-action enumerates the PR's commits via the API on pull_request runs;
+  # without this it fails with "403 Resource not accessible by integration".
+  pull-requests: read
 
 concurrency:
   group: ci-${{ github.ref }}
