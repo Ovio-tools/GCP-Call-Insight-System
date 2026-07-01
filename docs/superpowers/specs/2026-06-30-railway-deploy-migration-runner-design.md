@@ -65,7 +65,7 @@ Concretely, this task must satisfy the build plan's QA for Task 0.3:
 | webhook-receiver in 0.3 | **No HTTP listener** — boots and stays up | Keeps 0.3 honestly infra-only; the deploy still succeeds. Real listener + hardening land in Task 2.1/2.3. |
 | Error emission | **Forerunner module**, taxonomy-aligned | Mirrors the config loader shipping `CONFIG_MISSING_OR_INVALID` ahead of Task 2.2. Explicitly marked to fold into 2.2. |
 | Store-URL ownership | **Readiness owns `DATABASE_URL` / `REDIS_URL`** — optional in config, validated by readiness | A required zod field would exit `CONFIG_MISSING_OR_INVALID` *before* readiness runs, so removing the Redis var could never surface `REDIS_UNAVAILABLE` (0.3 QA). Making the store URLs readiness-owned means a missing **or** unreachable store maps to the dependency-specific code, symmetric across Postgres/Redis. Revisits Task 0.2's config contract for `DATABASE_URL` (see §10). |
-| pre-deploy on which services | **All four, with `advisoryLockMode: 'wait'`** | node-pg-migrate's default lock mode is **`fail`** (a concurrent run errors, it does not queue). Setting `'wait'` makes the four services' pre-deploy runs serialize on the advisory lock instead of failing a deploy; each service then guarantees the schema is current before it boots. |
+| pre-deploy on which services | **Worker only** | node-pg-migrate 8.0.4 has **no `advisoryLockMode`** — its advisory lock is non-blocking (`pg_try_advisory_lock`), with no wait mode. Four concurrent pre-deploy runs would fail 3 of 4 deploys. Running the `preDeployCommand` on the worker service alone avoids concurrency entirely; the other three deploy without migrating. (Original plan assumed a `'wait'` lock mode that this version doesn't provide.) |
 | Railway builder | **Omit `build.builder`** (default Railpack) | `NIXPACKS` is no longer a listed builder value; current values are `RAILPACK` (default) and `DOCKERFILE`. Omitting relies on the default and avoids pinning a value that may drift. |
 | retention-cron schedule | `0 4 * * *` (daily, 04:00 UTC) | Daily as required; off-peak. Trivially changeable. |
 
@@ -205,15 +205,16 @@ is infrastructure only.
 
 `deploy/railway/<service>.json`, one per service. Shared: **`build.builder` is
 omitted** (relies on Railway's default builder, Railpack — `NIXPACKS` is no longer a
-listed value); `deploy.preDeployCommand = ["npm run db:migrate"]` (array form, per
-the current config-as-code reference).
+listed value). Only the **worker** carries `deploy.preDeployCommand = ["npm run
+db:migrate"]` (array form, per the current config-as-code reference); see §3 for why
+migrations run on a single service.
 
 | Service | startCommand | Extra |
 | --- | --- | --- |
-| webhook-receiver | `node dist/services/webhook-receiver.js` | public domain (dashboard); **no `healthcheckPath`** in 0.3 |
-| worker | `node dist/services/worker.js` | `restartPolicyType: "ON_FAILURE"`; no public domain |
-| reconciliation-cron | `node dist/services/reconciliation-cron.js` | `cronSchedule: "*/15 * * * *"` |
-| retention-cron | `node dist/services/retention-cron.js` | `cronSchedule: "0 4 * * *"` |
+| webhook-receiver | `node dist/services/webhook-receiver.js` | public domain (dashboard); **no `healthcheckPath`** in 0.3; no `preDeployCommand` |
+| worker | `node dist/services/worker.js` | `preDeployCommand: ["npm run db:migrate"]`; `restartPolicyType: "ON_FAILURE"`; no public domain |
+| reconciliation-cron | `node dist/services/reconciliation-cron.js` | `cronSchedule: "*/15 * * * *"`; no `preDeployCommand` |
+| retention-cron | `node dist/services/retention-cron.js` | `cronSchedule: "0 4 * * *"`; no `preDeployCommand` |
 
 All cron schedules are UTC. `deploy/railway/README.md` documents the by-hand
 dashboard steps from the build plan: point each service at its config path; wire
@@ -230,10 +231,10 @@ worker has no public domain; Postgres PITR and Redis persistence on.
   the **"worker with no `REDIS_URL` exits `REDIS_UNAVAILABLE`"** 0.3 QA is pinned as
   a test. Mirrors `test/config.test.ts`.
 - **Unit — migrate wrapper** (`test/migrate.test.ts`): injected runner that throws →
-  asserts `MIGRATION_FAILED` + non-zero exit; success → exit 0; missing
-  `DATABASE_URL` → `MIGRATION_FAILED`. Also asserts the runner is invoked with
-  `advisoryLockMode: 'wait'` (regression guard for the concurrent-pre-deploy lock
-  behavior).
+  asserts `MIGRATION_FAILED`; success → the runner is called with the right options
+  (`count: Infinity` on up, `count: 1` on down); missing `DATABASE_URL` →
+  `MIGRATION_FAILED` and the runner is never called. (No `advisoryLockMode` assertion
+  — node-pg-migrate 8.0.4 has no such option; see §3/§7.)
 - **Unit — codes** (`test/boot-codes.test.ts`): `FatalBootError` sanitized context
   carries host/port/db but **never** the credentials from a connection string —
   regression guard against leaking `DATABASE_URL`/`REDIS_URL`. Plus a `failBoot`
