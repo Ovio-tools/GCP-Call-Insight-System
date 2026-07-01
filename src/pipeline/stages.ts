@@ -65,7 +65,8 @@ export function isPipelineStage(stage: string): stage is PipelineStage {
  *   `reason` (a controlled `DropReason`), leaving the call `skipped` and recoverable.
  */
 export type StageResult =
-  { action: 'continue' } | { action: 'drop'; reason: DropReason; detail?: JsonValue };
+  | { action: 'continue' }
+  | { action: 'drop'; reason: DropReason; detail?: Record<string, JsonValue> };
 
 /** Context handed to each stage handler. `pool` lets a real stage read/write the DB. */
 export interface StageContext {

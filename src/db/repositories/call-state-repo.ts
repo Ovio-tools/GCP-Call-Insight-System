@@ -126,8 +126,8 @@ export interface SkipCallInput {
   /** Optimistic guard: only skip a call currently at this stage. */
   atStage: string;
   dropReason: DropReason;
-  /** Extra PII-free detail merged into the processing_log row. */
-  logDetail?: JsonValue;
+  /** A JSON object of PII-free extra detail merged into the processing_log row. */
+  logDetail?: Record<string, JsonValue>;
 }
 
 const skipCallSchema = z.object({
