@@ -176,7 +176,7 @@ transaction + log-append machinery.
 
 - `StageHandler` return type becomes `Promise<StageResult | void>`:
   ```
-  type StageResult = { action: 'continue' } | { action: 'drop'; reason: DropReason; detail?: JsonValue }
+  type StageResult = { action: 'continue' } | { action: 'drop'; reason: DropReason; detail?: Record<string, JsonValue> }
   ```
   `void`/`undefined` is treated as continue, so the existing stub handlers and the
   test override handlers keep working unchanged.
@@ -201,9 +201,11 @@ transaction + log-append machinery.
     `resolveStale`, which is tailored to forward advancement and would wrongly throw on
     a `skipped` status.
 
-**Wiring:** the real handler replaces the stub for `metadata-pre-filter` in
-`defaultStageHandlers`. The worker consumes `defaultStageHandlers` unchanged, so no
-`worker.ts` edit is needed. The runner is the single choke point: a dropped call
+**Wiring:** _(As built — see plan Tasks 7-8, which supersede this paragraph.)_ the real
+handler is composed into a `productionStageHandlers` set in its own `src/pipeline/handlers.ts`
+module (keeping `defaultStageHandlers` pure stubs and avoiding a `stages.ts ↔
+metadata-prefilter.ts` import cycle), and `src/worker/worker.ts` switches its default
+handler set to `productionStageHandlers`. The runner is the single choke point: a dropped call
 physically cannot reach the transcript stage, so the transcript client (built later in
 3.2/4.x) is only ever reachable for calls whose pre-filter outcome is **pass**.
 
