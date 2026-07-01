@@ -3,7 +3,7 @@
 // escalation), replace the constants and sanitizeFailure() here with calls into them.
 
 import type { JsonValue } from '../db/index.js';
-import { PipelineStageError } from '../pipeline/errors.js';
+import { PipelineStageError, safeErrorCode, safeErrorName } from '../pipeline/errors.js';
 
 /** Error code for a job that exhausted its capped retries (CLAUDE.md §4 taxonomy). */
 export const QUEUE_RETRY_EXHAUSTED = 'QUEUE_RETRY_EXHAUSTED';
@@ -40,15 +40,11 @@ function callIdOf(job: FailedJobLike): string | null {
  * code — never `err.message`, since future stages touch transcript-adjacent data.
  */
 export function sanitizeFailure(job: FailedJobLike, err: unknown): SanitizedFailure {
+  // Both branches go through the same fail-closed whitelist: a PipelineStageError already
+  // sanitized its cause; a raw error is sanitized here. Neither persists free-text name/code.
   const failedStage = err instanceof PipelineStageError ? err.stage : 'unknown';
-  const errorName =
-    err instanceof PipelineStageError ? err.causeName : err instanceof Error ? err.name : 'Error';
-  const errorCode =
-    err instanceof PipelineStageError
-      ? err.causeCode
-      : err && typeof err === 'object' && typeof (err as { code?: unknown }).code === 'string'
-        ? (err as { code: string }).code
-        : undefined;
+  const errorName = err instanceof PipelineStageError ? err.causeName : safeErrorName(err);
+  const errorCode = err instanceof PipelineStageError ? err.causeCode : safeErrorCode(err);
 
   const callId = callIdOf(job);
   const shortMessage = `Stage ${failedStage} failed: ${errorName}${errorCode ? ` (${errorCode})` : ''}`;

@@ -32,7 +32,11 @@ async function onJobFailed(
 ): Promise<void> {
   const { snapshot, failedStage } = sanitizeFailure(job, err);
   const callId = typeof job.data.callId === 'string' ? job.data.callId : null;
-  const exhausted = job.attemptsMade >= config.WORKER_MAX_ATTEMPTS;
+  // Source of truth is the JOB'S own attempts (set at enqueue), not the worker's current
+  // config — a job that outlived a redeploy/config change must still dead-letter exactly when
+  // BullMQ stops retrying it, never too early or never.
+  const maxAttempts = job.opts.attempts ?? config.WORKER_MAX_ATTEMPTS;
+  const exhausted = job.attemptsMade >= maxAttempts;
 
   await appendLog(pool, {
     callId,

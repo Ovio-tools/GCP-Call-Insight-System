@@ -1,18 +1,27 @@
 import type { PipelineStage } from './stages.js';
 
-/** A safe error `code`, if the underlying error carries one (e.g. a DAL error code). */
-function safeCodeOf(err: unknown): string | undefined {
-  if (err && typeof err === 'object' && 'code' in err) {
-    const code = err.code;
-    if (typeof code === 'string' && code.length > 0) return code;
-  }
-  return undefined;
+/**
+ * A conservative whitelist for values we are willing to persist: a leading letter followed by
+ * up to 63 identifier chars. Error class names (`DalError`, `TypeError`) and stable codes
+ * (`DAL_STALE_STAGE`, `QUEUE_RETRY_EXHAUSTED`) match; anything with spaces, punctuation, or
+ * free text does not. Fail-closed: an error whose `name`/`code` was tampered to carry content
+ * (a future stage may touch transcript-adjacent data) is rejected, not stored.
+ */
+const SAFE_TOKEN = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+
+/** The error's `name` if it is a safe identifier, else the generic `Error`. Never free text. */
+export function safeErrorName(err: unknown): string {
+  const name = err instanceof Error ? err.name : '';
+  return SAFE_TOKEN.test(name) ? name : 'Error';
 }
 
-/** The error `name`, defaulting to `Error` — always safe (a class name, never content). */
-function safeNameOf(err: unknown): string {
-  if (err instanceof Error && err.name) return err.name;
-  return 'Error';
+/** The error's `code` if present AND a safe identifier, else undefined (omit, don't guess). */
+export function safeErrorCode(err: unknown): string | undefined {
+  if (err && typeof err === 'object' && 'code' in err) {
+    const code = err.code;
+    if (typeof code === 'string' && SAFE_TOKEN.test(code)) return code;
+  }
+  return undefined;
 }
 
 /**
@@ -31,11 +40,11 @@ export class PipelineStageError extends Error {
   readonly causeCode: string | undefined;
 
   constructor(stage: PipelineStage, callId: string, cause: unknown) {
-    super(`Stage ${stage} failed: ${safeNameOf(cause)}`);
+    super(`Stage ${stage} failed: ${safeErrorName(cause)}`);
     this.name = 'PipelineStageError';
     this.stage = stage;
     this.callId = callId;
-    this.causeName = safeNameOf(cause);
-    this.causeCode = safeCodeOf(cause);
+    this.causeName = safeErrorName(cause);
+    this.causeCode = safeErrorCode(cause);
   }
 }
