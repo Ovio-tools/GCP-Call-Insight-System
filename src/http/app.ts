@@ -59,15 +59,20 @@ export async function createInternalApp(deps: InternalAppDeps): Promise<FastifyI
   const { config } = deps;
   const logger = deps.logger ?? defaultLogger;
 
+  const isRealDeployment = config.NODE_ENV === 'staging' || config.NODE_ENV === 'production';
+
   const secret = config.SESSION_SECRET;
   if (!secret) {
     failConfig(config);
   }
   // A non-secure session cookie must never ship in staging/production.
-  if (
-    !config.SESSION_COOKIE_SECURE &&
-    (config.NODE_ENV === 'staging' || config.NODE_ENV === 'production')
-  ) {
+  if (!config.SESSION_COOKIE_SECURE && isRealDeployment) {
+    failConfig(config);
+  }
+  // Real internal surfaces require a shared, revocable session store (Redis). The
+  // @fastify/session in-memory fallback leaks memory and is not shared across instances, so
+  // it is refused outside dev/test.
+  if (!deps.sessionStore && isRealDeployment) {
     failConfig(config);
   }
 

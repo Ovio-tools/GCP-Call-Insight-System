@@ -111,14 +111,20 @@ export function registerWebhook(
         throw webhookFailure('WEBHOOK_REPLAY_DETECTED', deps);
       }
 
-      // 4. The only side effect. Commit on success so retries are blocked; release on
-      //    failure so a legitimate retry is accepted.
+      // 4. The only side effect. Release ONLY when the handler itself failed, so a
+      //    legitimate retry is accepted. If the handler succeeded but commit() failed, keep
+      //    the reservation in place (it blocks retries until its TTL) so the handler's
+      //    already-applied side effects are never repeated.
+      let handlerSucceeded = false;
       try {
         const result = await opts.handler(request, reply);
+        handlerSucceeded = true;
         await reservation.commit();
         return result;
       } catch (err) {
-        await reservation.release();
+        if (!handlerSucceeded) {
+          await reservation.release();
+        }
         throw err;
       }
     },

@@ -44,6 +44,21 @@ export function oidcSettingsFromConfig(config: Config): OidcSettings {
   };
 }
 
+/**
+ * Build the URL handed to the token exchange: the origin + path come from the trusted,
+ * configured `OIDC_REDIRECT_URI`; only the query string (code, state, iss, ...) is taken from
+ * the received request. This stops a spoofed/mis-forwarded `Host` or proxy header from
+ * changing the `redirect_uri` openid-client derives for the token request.
+ */
+export function trustedCallbackUrl(
+  configuredRedirectUri: string,
+  receivedCallbackUrl: string,
+): URL {
+  const trusted = new URL(configuredRedirectUri);
+  trusted.search = new URL(receivedCallbackUrl).search;
+  return trusted;
+}
+
 function extractRoles(claims: Record<string, unknown>): string[] {
   const raw = claims.roles ?? claims.groups;
   if (Array.isArray(raw)) {
@@ -86,12 +101,17 @@ export class OidcAuthProvider implements AuthProvider {
   async exchangeCallback(params: CallbackParams): Promise<AuthenticatedUser> {
     const config = await this.discover();
     // Throws if state/nonce/PKCE do not validate — the /auth/callback route maps that to a
-    // refused login rather than leaking the reason.
-    const tokens = await client.authorizationCodeGrant(config, new URL(params.callbackUrl), {
-      expectedState: params.state,
-      expectedNonce: params.nonce,
-      pkceCodeVerifier: params.codeVerifier,
-    });
+    // refused login rather than leaking the reason. The callback origin/path is the trusted
+    // configured redirect URI, never derived from request Host/proxy headers.
+    const tokens = await client.authorizationCodeGrant(
+      config,
+      trustedCallbackUrl(this.settings.redirectUri, params.callbackUrl),
+      {
+        expectedState: params.state,
+        expectedNonce: params.nonce,
+        pkceCodeVerifier: params.codeVerifier,
+      },
+    );
     const claims = tokens.claims();
     if (!claims?.sub) {
       throw new Error('OIDC callback returned no subject claim');
