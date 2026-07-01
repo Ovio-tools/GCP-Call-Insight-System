@@ -61,19 +61,30 @@ Concretely, this task must satisfy the build plan's QA for Task 0.3:
 | Structure | **Shared boot modules + thin entrypoints** (Approach A) | Readiness embedded in each service's own boot is what makes the "remove Redis → worker exits" QA pass; DI keeps it unit-testable without live servers. |
 | webhook-receiver in 0.3 | **No HTTP listener** — boots and stays up | Keeps 0.3 honestly infra-only; the deploy still succeeds. Real listener + hardening land in Task 2.1/2.3. |
 | Error emission | **Forerunner module**, taxonomy-aligned | Mirrors the config loader shipping `CONFIG_MISSING_OR_INVALID` ahead of Task 2.2. Explicitly marked to fold into 2.2. |
-| pre-deploy on which services | **All four** | node-pg-migrate takes a pg advisory lock by default, so concurrent pre-deploy runs serialize safely; each service guarantees the schema is current before it boots. |
+| Store-URL ownership | **Readiness owns `DATABASE_URL` / `REDIS_URL`** — optional in config, validated by readiness | A required zod field would exit `CONFIG_MISSING_OR_INVALID` *before* readiness runs, so removing the Redis var could never surface `REDIS_UNAVAILABLE` (0.3 QA). Making the store URLs readiness-owned means a missing **or** unreachable store maps to the dependency-specific code, symmetric across Postgres/Redis. Revisits Task 0.2's config contract for `DATABASE_URL` (see §10). |
+| pre-deploy on which services | **All four, with `advisoryLockMode: 'wait'`** | node-pg-migrate's default lock mode is **`fail`** (a concurrent run errors, it does not queue). Setting `'wait'` makes the four services' pre-deploy runs serialize on the advisory lock instead of failing a deploy; each service then guarantees the schema is current before it boots. |
+| Railway builder | **Omit `build.builder`** (default Railpack) | `NIXPACKS` is no longer a listed builder value; current values are `RAILPACK` (default) and `DOCKERFILE`. Omitting relies on the default and avoids pinning a value that may drift. |
 | retention-cron schedule | `0 4 * * *` (daily, 04:00 UTC) | Daily as required; off-peak. Trivially changeable. |
 
 ## 4. Config and dependencies
 
 **`src/config/schema.ts`** (kept in lockstep with `.env.example`):
 
-- `REDIS_URL: z.string().min(1)` — required. Redis/BullMQ backend.
+- `REDIS_URL: z.string().min(1).optional()` — Redis/BullMQ backend. **Optional at
+  the config layer**: presence and reachability are owned by the readiness check so
+  that a missing value maps to `REDIS_UNAVAILABLE`, not `CONFIG_MISSING_OR_INVALID`
+  (§3, §6).
+- `DATABASE_URL` — **relaxed from required to `z.string().min(1).optional()`** for
+  the same reason: readiness owns presence + reachability and emits
+  `DATABASE_UNAVAILABLE`. This is the one change that revisits Task 0.2's config
+  contract (§10 covers the test update). Still format-validated (non-empty) when
+  present.
 - `DB_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5000)` — optional.
 - `REDIS_CONNECT_TIMEOUT_MS: z.coerce.number().int().positive().default(5000)` — optional.
 
-`.env.example` gains matching entries (required `REDIS_URL`, the two optional
-timeouts under the "Optional (defaults shown)" section).
+`.env.example` keeps `DATABASE_URL` and `REDIS_URL` documented (they are still
+expected in every real deployment) plus the two optional timeouts under the
+"Optional (defaults shown)" section — the file and schema stay in lockstep.
 
 **Dependencies:** `pg`, `ioredis`, `node-pg-migrate` (runtime); `@types/pg` (dev).
 `ioredis` and `node-pg-migrate` ship their own types. New deps are covered by the
@@ -99,35 +110,48 @@ Task 2.2 failure model."*
 
 **`src/boot/readiness.ts`** — `assertDependenciesReady(config, deps?)`:
 
-1. **Postgres:** a `pg.Client` with `connectionTimeoutMillis = DB_CONNECT_TIMEOUT_MS`,
-   runs `SELECT 1`, then closes. Failure or timeout → `FatalBootError(DATABASE_UNAVAILABLE)`.
-2. **Redis:** an `ioredis` client configured to **fail fast, not hang** —
-   `lazyConnect: true`, `connectTimeout = REDIS_CONNECT_TIMEOUT_MS`,
-   `maxRetriesPerRequest: 1`, and a `retryStrategy` returning `null` (give up) so a
-   missing Redis **exits** instead of reconnecting forever. Runs `PING`, then `quit`.
-   Failure or timeout → `FatalBootError(REDIS_UNAVAILABLE)`.
+1. **Postgres:** if `config.DATABASE_URL` is absent → `FatalBootError(DATABASE_UNAVAILABLE)`
+   with context noting the variable is missing. Otherwise a `pg.Client` with
+   `connectionTimeoutMillis = DB_CONNECT_TIMEOUT_MS` runs `SELECT 1`, then closes.
+   Failure or timeout → `FatalBootError(DATABASE_UNAVAILABLE)`.
+2. **Redis:** if `config.REDIS_URL` is absent → `FatalBootError(REDIS_UNAVAILABLE)`
+   with context noting the variable is missing. Otherwise an `ioredis` client
+   configured to **fail fast, not hang** — `lazyConnect: true`,
+   `connectTimeout = REDIS_CONNECT_TIMEOUT_MS`, `maxRetriesPerRequest: 1`, and a
+   `retryStrategy` returning `null` (give up) so an unreachable Redis **exits**
+   instead of reconnecting forever. Runs `PING`, then `quit`. Failure or timeout →
+   `FatalBootError(REDIS_UNAVAILABLE)`.
 
-Postgres is checked first, then Redis. On a `FatalBootError` the function calls
-`failBoot(...)`. Clients and the `exit` hook are injectable via `deps`, mirroring
-`loadConfig`, so unit tests assert the right code and exit with **no live servers**.
+Because the store URLs are readiness-owned (§3), **both** the missing-var and
+unreachable cases resolve to the dependency-specific code, never
+`CONFIG_MISSING_OR_INVALID`. Postgres is checked first, then Redis. On a
+`FatalBootError` the function calls `failBoot(...)`. Clients and the `exit` hook are
+injectable via `deps`, mirroring `loadConfig`, so unit tests assert the right code
+and exit with **no live servers**.
 
 This is the function every entrypoint calls at boot — the mechanism behind the
 "remove Redis → worker exits with `REDIS_UNAVAILABLE`" QA.
 
 ## 7. Migration runner
 
-**`scripts/migrate.ts`**, exposed as npm scripts:
+**`src/scripts/migrate.ts`** — placed **under `src/`** so `tsc -p tsconfig.build.json`
+(which has `rootDir: "src"`, `include: ["src/**/*.ts"]`) emits it to
+`dist/scripts/migrate.js`. No `tsx` or extra runtime loader is needed; the compiled
+JS runs under plain `node` in Railway after the build step. Exposed as npm scripts:
 
-- `npm run db:migrate` → runs all pending migrations (`direction: 'up'`, count all).
-  This is the Railway `preDeployCommand`.
-- `npm run db:migrate:down` → single-step rollback (`direction: 'down'`, count 1),
-  present because the convention requires every migration to have a down even though
-  none exist yet.
+- `npm run db:migrate` → `node dist/scripts/migrate.js up` — runs all pending
+  migrations (`direction: 'up'`, count all). This is the Railway `preDeployCommand`.
+- `npm run db:migrate:down` → `node dist/scripts/migrate.js down` — single-step
+  rollback (`direction: 'down'`, count 1), present because the convention requires
+  every migration to have a down even though none exist yet.
 
 Implementation calls node-pg-migrate's **programmatic runner** with
-`databaseUrl = DATABASE_URL`, `dir = migrations/`, and the direction/count above.
-node-pg-migrate takes a **pg advisory lock by default**, so the four services'
-concurrent pre-deploy runs serialize rather than collide.
+`databaseUrl = DATABASE_URL`, `dir = migrations/`, `direction`/`count` as above, and
+**`advisoryLockMode: 'wait'`** — node-pg-migrate's default lock mode is `fail`, which
+would error a concurrent run rather than queue it; `'wait'` makes the four services'
+pre-deploy runs serialize on the advisory lock. If `DATABASE_URL` is absent at
+migrate time the runner exits `MIGRATION_FAILED` with context noting the missing var
+(migrations cannot run without a target).
 
 - Success → log applied count, exit 0.
 - Any failure → `failBoot(logger, FatalBootError(MIGRATION_FAILED, ...), exit)`,
@@ -153,16 +177,24 @@ loadConfig() → assertDependenciesReady(config) → log "<service> booted"
 - Each binds a `service` field on its logger so log lines distinguish the four. No
   business logic anywhere.
 
+**webhook-receiver has no HTTP listener in 0.3.** No `healthcheckPath` is configured,
+so the deploy succeeds as soon as the process boots and stays up. Its public domain
+will return **502 until Task 2.1** adds the real receiver (and Task 2.3 the shared
+hardening/auth middleware). This is expected and documented, not a regression — 0.3
+is infrastructure only.
+
 `src/index.ts` is left as the current generic boot; it is not repurposed.
 
 ## 9. Railway deploy config
 
-`deploy/railway/<service>.json`, one per service. Shared: `build.builder = "NIXPACKS"`,
-`deploy.preDeployCommand = "npm run db:migrate"`.
+`deploy/railway/<service>.json`, one per service. Shared: **`build.builder` is
+omitted** (relies on Railway's default builder, Railpack — `NIXPACKS` is no longer a
+listed value); `deploy.preDeployCommand = ["npm run db:migrate"]` (array form, per
+the current config-as-code reference).
 
 | Service | startCommand | Extra |
 | --- | --- | --- |
-| webhook-receiver | `node dist/services/webhook-receiver.js` | public domain (dashboard) |
+| webhook-receiver | `node dist/services/webhook-receiver.js` | public domain (dashboard); **no `healthcheckPath`** in 0.3 |
 | worker | `node dist/services/worker.js` | `restartPolicyType: "ON_FAILURE"`; no public domain |
 | reconciliation-cron | `node dist/services/reconciliation-cron.js` | `cronSchedule: "*/15 * * * *"` |
 | retention-cron | `node dist/services/retention-cron.js` | `cronSchedule: "0 4 * * *"` |
@@ -174,16 +206,31 @@ worker has no public domain; Postgres PITR and Redis persistence on.
 
 ## 10. Testing
 
-- **Unit — readiness** (`test/readiness.test.ts`): injected fake PG/Redis clients →
-  assert `DATABASE_UNAVAILABLE` / `REDIS_UNAVAILABLE` and that `exit(1)` fired; the
-  success path makes no exit call. Mirrors `test/config.test.ts`.
+- **Unit — readiness** (`test/readiness.test.ts`): injected fake PG/Redis clients.
+  Covers four paths per store — missing URL, unreachable/timeout, and success —
+  asserting the missing-URL and unreachable cases both exit with
+  `DATABASE_UNAVAILABLE` / `REDIS_UNAVAILABLE` (never `CONFIG_MISSING_OR_INVALID`)
+  and that `exit(1)` fired; the all-reachable path makes no exit call. This is where
+  the **"worker with no `REDIS_URL` exits `REDIS_UNAVAILABLE`"** 0.3 QA is pinned as
+  a test. Mirrors `test/config.test.ts`.
 - **Unit — migrate wrapper** (`test/migrate.test.ts`): injected runner that throws →
-  asserts `MIGRATION_FAILED` + non-zero exit; success → exit 0.
+  asserts `MIGRATION_FAILED` + non-zero exit; success → exit 0; missing
+  `DATABASE_URL` → `MIGRATION_FAILED`. Also asserts the runner is invoked with
+  `advisoryLockMode: 'wait'` (regression guard for the concurrent-pre-deploy lock
+  behavior).
 - **Unit — codes** (`test/boot-codes.test.ts`): `FatalBootError` sanitized context
   carries host/port/db but **never** the credentials from a connection string —
   regression guard against leaking `DATABASE_URL`/`REDIS_URL`.
-- Live Postgres/Redis integration stays **manual**, per the build plan's deploy QA.
-  Everything CI-testable is covered via DI; no testcontainers in 0.3.
+- **Update — `test/config.test.ts`**: `DATABASE_URL` is no longer required at the
+  config layer, so the existing "missing `DATABASE_URL` → `CONFIG_MISSING_OR_INVALID`"
+  case is **re-pointed to a still-required var** (`NODE_ENV`) to preserve the
+  "names the missing var" coverage; the missing-store-URL behavior now lives in the
+  readiness test above. The multi-missing test already covers `NODE_ENV`.
+- **Build/clean-checkout note**: `npm run build` must emit `dist/scripts/migrate.js`
+  (verified by the build step in the verification gate), so that `npm run db:migrate`
+  resolves on a fresh Railway checkout after build. Live Postgres/Redis integration
+  and the actual concurrent-lock behavior stay **manual**, per the build plan's
+  deploy QA. Everything else CI-testable is covered via DI; no testcontainers in 0.3.
 
 ## 11. Verification gate (before PR)
 
