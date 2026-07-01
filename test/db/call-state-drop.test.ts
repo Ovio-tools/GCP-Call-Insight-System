@@ -81,3 +81,87 @@ describe.skipIf(!hasTestDb)('call_state.drop_reason constraints', () => {
     expect(res.rows[0]).toEqual({ status: 'skipped', drop_reason: 'zero_duration' });
   });
 });
+
+describe.skipIf(!hasTestDb)('upsertCallState preserves terminal rows', () => {
+  let owner!: Pool;
+  let app!: Pool;
+
+  beforeAll(async () => {
+    await migrate('up');
+    owner = makePool();
+    app = makeAppPool();
+  });
+  afterEach(async () => {
+    await cleanupCalls(owner, 'test-reseed-%');
+  });
+  afterAll(async () => {
+    await owner.end();
+    await app.end();
+  });
+
+  it('does not resurrect a skipped call on re-seed', async () => {
+    const callId = 'test-reseed-skip';
+    // Seed processing, then mark skipped directly (skipCall lands in Task 4; use SQL here).
+    await upsertCallState(app, {
+      callId,
+      source: 'dialpad',
+      sourceMetadata: { duration: 0 },
+      currentStage: 'metadata-pre-filter',
+      status: 'processing',
+    });
+    await owner.query(
+      `UPDATE call_state SET status='skipped', drop_reason='zero_duration' WHERE call_id=$1`,
+      [callId],
+    );
+
+    // A reconciliation/webhook re-seed arrives with fresh metadata + processing status.
+    const after = await upsertCallState(app, {
+      callId,
+      source: 'reconciliation',
+      sourceMetadata: { duration: 999 },
+      currentStage: 'metadata-pre-filter',
+      status: 'processing',
+    });
+
+    expect(after.status).toBe('skipped');
+    expect(after.drop_reason).toBe('zero_duration');
+    expect(after.current_stage).toBe('metadata-pre-filter');
+    expect(after.source).toBe('dialpad'); // original source frozen
+    expect(after.source_metadata).toEqual({ duration: 0 }); // original metadata frozen
+  });
+
+  it('does not resurrect a completed call on re-seed', async () => {
+    const callId = 'test-reseed-done';
+    await upsertCallState(app, {
+      callId,
+      source: 'dialpad',
+      currentStage: 'mark-retention-eligible',
+      status: 'completed',
+    });
+    const after = await upsertCallState(app, {
+      callId,
+      source: 'reconciliation',
+      currentStage: 'metadata-pre-filter',
+      status: 'processing',
+    });
+    expect(after.status).toBe('completed');
+    expect(after.current_stage).toBe('mark-retention-eligible');
+  });
+
+  it('still overwrites a non-terminal (processing) row', async () => {
+    const callId = 'test-reseed-proc';
+    await upsertCallState(app, {
+      callId,
+      source: 'test',
+      currentStage: 'fetch-transcript',
+      status: 'processing',
+    });
+    const after = await upsertCallState(app, {
+      callId,
+      source: 'test',
+      currentStage: 'classify',
+      status: 'processing',
+    });
+    expect(after.current_stage).toBe('classify');
+  });
+});

@@ -21,10 +21,14 @@ export async function upsertCallState(pool: Pool, input: CallStateInsert): Promi
     `INSERT INTO call_state (call_id, source, source_metadata, current_stage, status)
      VALUES ($1, $2, COALESCE($3::jsonb, '{}'::jsonb), $4, $5)
      ON CONFLICT (call_id) DO UPDATE SET
-       source = EXCLUDED.source,
-       source_metadata = EXCLUDED.source_metadata,
-       current_stage = EXCLUDED.current_stage,
-       status = EXCLUDED.status,
+       source = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.source ELSE EXCLUDED.source END,
+       source_metadata = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.source_metadata ELSE EXCLUDED.source_metadata END,
+       current_stage = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.current_stage ELSE EXCLUDED.current_stage END,
+       status = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.status ELSE EXCLUDED.status END,
        updated_at = now()
      RETURNING *`,
     [v.callId, v.source, toJsonParam(v.sourceMetadata), v.currentStage, v.status],
