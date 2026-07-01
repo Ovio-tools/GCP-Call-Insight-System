@@ -11,6 +11,7 @@ import { STATUS_PROCESSING } from '../../src/pipeline/stages.js';
 import { makePool } from '../db/_pg.js';
 import { makeAppPool } from '../db/_dal.js';
 import { makeQueueConnection } from './_redis.js';
+import { makeTestConfig } from '../_config.js';
 
 /** Unique queue-name suffix per harness so serial tests never share BullMQ state. */
 let seq = 0;
@@ -25,26 +26,14 @@ const silentLogger = createRootLogger({ level: 'silent', name: 'test-worker' });
 export function makeWorkerHarness(overrides: Partial<Config> = {}): WorkerHarness {
   seq += 1;
   const queueName = `test-pipeline-${process.pid}-${seq}`;
-  const config: Config = {
-    NODE_ENV: 'test',
-    DATABASE_URL: undefined,
-    REDIS_URL: undefined,
-    DB_CONNECT_TIMEOUT_MS: 5000,
-    REDIS_CONNECT_TIMEOUT_MS: 5000,
-    LOG_LEVEL: 'silent',
+  const config: Config = makeTestConfig({
     SERVICE_NAME: 'test-worker',
-    PORT: 8080,
-    CRYPTO_KEY_PROVIDER: 'local',
-    CRYPTO_LOCAL_MASTER_KEY: undefined,
-    CRYPTO_ACTIVE_KEY_VERSION: 1,
     WORKER_QUEUE_NAME: queueName,
     WORKER_CONCURRENCY: 4,
     WORKER_MAX_ATTEMPTS: 3,
     WORKER_BACKOFF_MS: 10,
-    ALERT_ESCALATION_WINDOW_MINUTES: 15,
-    WORKER_KILL_SWITCH: false,
     ...overrides,
-  };
+  });
 
   const owner = makePool();
   const app = makeAppPool();

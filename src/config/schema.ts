@@ -75,6 +75,68 @@ export const configSchema = z.object({
     .enum(['true', 'false'])
     .default('false')
     .transform((v) => v === 'true'),
+
+  // --- Shared HTTP hardening & auth middleware (Task 2.3) ---
+
+  /** Max accepted request body size (bytes). Larger bodies are rejected before parsing
+   * with REQUEST_BODY_TOO_LARGE. Default 1 MiB. */
+  HTTP_MAX_BODY_BYTES: z.coerce.number().int().positive().default(1_048_576),
+
+  /** Comma-separated allowlist of CORS origins. Empty (the default) denies all cross-origin
+   * requests — a surface opts in explicitly by setting this. */
+  CORS_ALLOWED_ORIGINS: z.string().default(''),
+
+  /** Trusted reverse-proxy hop count for deriving the real client IP (Railway puts one
+   * proxy in front). Fastify `trustProxy` is set to this exact number — never `true`, which
+   * would let clients spoof X-Forwarded-For. `0` disables proxy trust. */
+  TRUSTED_PROXY_HOPS: z.coerce.number().int().nonnegative().default(1),
+
+  /** Tier-1 (per-IP) rate limit: a coarse guard covering all traffic from one address
+   * (including many users behind a shared NAT), so it is deliberately generous. */
+  RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
+  RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Tier-2 (per-authenticated-user) rate limit: per-identity fairness, applied after auth.
+   * Kept below the IP tier so one user cannot exhaust the shared IP budget. */
+  USER_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+  USER_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Webhook rate limit (per provider/IP): higher/burstier than the internal tier. */
+  WEBHOOK_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(600),
+  WEBHOOK_RATE_LIMIT_WINDOW_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Replay-protection window (ms): how long a seen `provider:eventId` is remembered. */
+  WEBHOOK_REPLAY_WINDOW_MS: z.coerce.number().int().positive().default(300_000),
+
+  /** Max allowed clock skew (ms) for a webhook timestamp, in either direction. A stale or
+   * future timestamp beyond this is rejected with WEBHOOK_TIMESTAMP_INVALID. */
+  WEBHOOK_TIMESTAMP_SKEW_MS: z.coerce.number().int().positive().default(300_000),
+
+  /** Secret that signs the session cookie. Optional here (like DATABASE_URL); the auth
+   * plugin validates presence when it is actually built, emitting CONFIG_MISSING_OR_INVALID.
+   * Never a real value in the repo. */
+  SESSION_SECRET: z.string().min(32).optional(),
+
+  /** Session cookie name. */
+  SESSION_COOKIE_NAME: z.string().min(1).default('sid'),
+
+  /** Server-side session lifetime (ms). Default 8h. */
+  SESSION_TTL_MS: z.coerce.number().int().positive().default(28_800_000),
+
+  /** Whether the session cookie carries the `Secure` flag. Defaults true; may be `false`
+   * only in dev/test (over plain HTTP). The auth plugin refuses `false` in staging/prod. */
+  SESSION_COOKIE_SECURE: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  /** OIDC provider settings. All optional here; the OIDC adapter validates presence when
+   * built (tests inject a fake AuthProvider and never need real values). */
+  OIDC_ISSUER_URL: z.string().url().optional(),
+  OIDC_CLIENT_ID: z.string().min(1).optional(),
+  OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  OIDC_REDIRECT_URI: z.string().url().optional(),
+  OIDC_SCOPES: z.string().min(1).default('openid profile email'),
 });
 
 /** Validated, typed configuration object. */

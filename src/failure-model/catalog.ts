@@ -325,6 +325,107 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
     owner: PLATFORM,
     runbookRef: 'runbook#servicetitan-write-failed',
   },
+
+  // --- HTTP hardening & auth middleware (Task 2.3) ---
+  // These are raised by the shared middleware. The impact text is written for an operator
+  // reading an alert; the HTTP response itself carries only a terse, PII-free message.
+  REQUEST_BODY_TOO_LARGE: {
+    rootCauseCategory: 'REQUEST_BODY_TOO_LARGE',
+    impact:
+      'A request body exceeded the configured size limit and was rejected before parsing; nothing was ingested from it.',
+    remediationNow:
+      'No action for a single request; if legitimate large payloads are expected, raise HTTP_MAX_BODY_BYTES for that surface.',
+    remediationFix: SAME_AS_IMMEDIATE,
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#request-body-too-large',
+  },
+  REQUEST_MALFORMED: {
+    rootCauseCategory: 'REQUEST_MALFORMED',
+    impact:
+      'A request body could not be parsed (malformed JSON) and was rejected; nothing was ingested from it.',
+    remediationNow:
+      'No action for a single request; if a caller keeps sending malformed bodies, share the expected request format.',
+    remediationFix: SAME_AS_IMMEDIATE,
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#request-malformed',
+  },
+  UNSUPPORTED_MEDIA_TYPE: {
+    rootCauseCategory: 'UNSUPPORTED_MEDIA_TYPE',
+    impact:
+      'A request used an unsupported content type and was rejected; only the documented content types are accepted.',
+    remediationNow:
+      'No action for a single request; confirm callers send the documented Content-Type header.',
+    remediationFix: SAME_AS_IMMEDIATE,
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#unsupported-media-type',
+  },
+  RATE_LIMIT_EXCEEDED: {
+    rootCauseCategory: 'RATE_LIMIT_EXCEEDED',
+    impact:
+      'A source exceeded the request-rate limit and is being throttled; its requests are rejected until the window resets. No data is lost.',
+    remediationNow:
+      'No action for expected bursts; if a legitimate source is being throttled, adjust its rate-limit threshold.',
+    remediationFix: 'Add per-source rate-limit tuning and alert on sustained throttling.',
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#rate-limit-exceeded',
+  },
+  AUTH_REQUIRED: {
+    rootCauseCategory: 'AUTH_REQUIRED',
+    impact:
+      'An unauthenticated request to an internal surface was refused; no protected data was exposed.',
+    remediationNow:
+      'Sign in through the configured identity provider; if valid sessions are being rejected, check the OIDC and session configuration.',
+    remediationFix: SAME_AS_IMMEDIATE,
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#auth-required',
+  },
+  CSRF_TOKEN_INVALID: {
+    rootCauseCategory: 'CSRF_TOKEN_INVALID',
+    impact:
+      'A state-changing internal request was refused because its CSRF token was missing or invalid; no change was made.',
+    remediationNow:
+      'Reload the surface to obtain a fresh CSRF token and retry; if valid tokens are being rejected, check the session configuration.',
+    remediationFix: SAME_AS_IMMEDIATE,
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#csrf-token-invalid',
+  },
+  WEBHOOK_TIMESTAMP_INVALID: {
+    rootCauseCategory: 'WEBHOOK_TIMESTAMP_INVALID',
+    impact:
+      'A webhook was rejected because its timestamp was outside the allowed freshness window (stale or future); nothing was ingested. Legitimate calls are still recovered by the reconciliation cron.',
+    remediationNow:
+      'Confirm the sender and server clocks are in sync; investigate if stale-timestamp volume is high (a possible replay attack).',
+    remediationFix:
+      'Monitor rejection rates and widen the skew window only if a clock-sync issue is confirmed.',
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#webhook-timestamp-invalid',
+  },
+  INTERNAL_ERROR: {
+    rootCauseCategory: 'INTERNAL_ERROR',
+    impact:
+      'An HTTP surface hit an unexpected error and returned a generic failure; the request did not complete. The error detail is in the logs, never in the response.',
+    remediationNow:
+      'Check the service logs for the correlated request id and address the underlying error.',
+    remediationFix: SAME_AS_IMMEDIATE,
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#internal-error',
+  },
 };
 
 /**

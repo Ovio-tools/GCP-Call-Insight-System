@@ -32,6 +32,16 @@ export const DEFAULT_SEVERITY: Record<ErrorCode, Severity> = {
   SERVICETITAN_AUTH_FAILED: 'high',
   SERVICETITAN_MATCH_WEAK: 'low',
   SERVICETITAN_WRITE_FAILED: 'medium',
+  // HTTP hardening & auth middleware (Task 2.3). Routine client rejections are low; an
+  // unexpected boundary error is high (it logs at error level).
+  REQUEST_BODY_TOO_LARGE: 'low',
+  REQUEST_MALFORMED: 'low',
+  UNSUPPORTED_MEDIA_TYPE: 'low',
+  RATE_LIMIT_EXCEEDED: 'low',
+  AUTH_REQUIRED: 'low',
+  CSRF_TOKEN_INVALID: 'low',
+  WEBHOOK_TIMESTAMP_INVALID: 'low',
+  INTERNAL_ERROR: 'high',
 };
 
 /** The default severity for a code. Throws on an unknown code (no fallback). */
