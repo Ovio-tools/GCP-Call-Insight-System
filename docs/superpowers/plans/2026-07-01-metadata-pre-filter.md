@@ -113,7 +113,8 @@ describe.skipIf(!hasTestDb)('call_state.drop_reason constraints', () => {
   let owner!: Pool;
   let app!: Pool;
 
-  const seedProcessing = (callId: string): Promise<unknown> =>
+  // Returns the inserted CallStateRow so tests can assert on parsed columns.
+  const seedProcessing = (callId: string) =>
     upsertCallState(app, {
       callId,
       source: 'test',
@@ -132,6 +133,15 @@ describe.skipIf(!hasTestDb)('call_state.drop_reason constraints', () => {
   afterAll(async () => {
     await owner.end();
     await app.end();
+  });
+
+  it('inserts a processing call through the DAL with drop_reason null', async () => {
+    // Verifies the updated callStateRowSchema parses the new column and the app role can
+    // read it back — a bad schema or missing grant fails here, right after the migration.
+    const callId = 'test-drop-dal-insert';
+    const row = await seedProcessing(callId);
+    expect(row.status).toBe('processing');
+    expect(row.drop_reason).toBeNull();
   });
 
   it('rejects an out-of-vocabulary drop_reason (value CHECK)', async () => {
@@ -223,6 +233,20 @@ exports.up = (pgm) => {
   pgm.addConstraint('call_state', VALUE_CHK, {
     check: `drop_reason IS NULL OR drop_reason IN (${list})`,
   });
+
+  // Precondition: fail loud if any pre-existing 'skipped' rows exist. Before Task 3.1 the
+  // status vocabulary was only 'processing'/'completed', so a 'skipped' row here would
+  // carry a NULL drop_reason (the column is brand new) and would make the biconditional
+  // constraint below fail to validate. Remediate such rows before migrating.
+  pgm.sql(`
+    DO $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM call_state WHERE status = 'skipped') THEN
+        RAISE EXCEPTION 'pre-existing skipped call_state rows must be remediated before migration 1782864000006';
+      END IF;
+    END $$;
+  `);
+
   pgm.addConstraint('call_state', REL_CHK, {
     check: `(status = 'skipped') = (drop_reason IS NOT NULL)`,
   });
@@ -409,14 +433,20 @@ git commit -m "fix(3.1): upsertCallState preserves terminal skipped/completed ro
 - Modify: `src/db/repositories/call-state-repo.ts` (add `skipCall` + imports)
 - Test: `test/db/call-state-drop.test.ts` (add a describe block)
 
-- [ ] **Step 1: Write the failing test.** Append a new `describe.skipIf(!hasTestDb)('skipCall', ...)` block to `test/db/call-state-drop.test.ts`:
+- [ ] **Step 1: Add the new imports to the TOP of `test/db/call-state-drop.test.ts`** (mid-file `import` statements are invalid ESM). Add to the existing top-level import section:
 
 ```ts
-import { skipCall } from '../../src/db/repositories/call-state-repo.js';
-import { DalError, DAL_STALE_STAGE } from '../../src/db/index.js';
-import { listByCall } from '../../src/db/repositories/processing-log-repo.js';
 import { DROP_REASONS } from '../../src/db/enums.js';
+import { DAL_STALE_STAGE, DalError } from '../../src/db/index.js';
+import { skipCall } from '../../src/db/repositories/call-state-repo.js';
+import { listByCall } from '../../src/db/repositories/processing-log-repo.js';
+```
 
+(`upsertCallState`, `hasTestDb`/`makePool`/`migrate`, and `cleanupCalls`/`makeAppPool` are already imported from Task 2.)
+
+- [ ] **Step 2: Append the failing test block** (no import lines) to the end of `test/db/call-state-drop.test.ts`:
+
+```ts
 describe.skipIf(!hasTestDb)('skipCall', () => {
   let owner!: Pool;
   let app!: Pool;
@@ -497,15 +527,21 @@ describe.skipIf(!hasTestDb)('skipCall', () => {
 });
 ```
 
-- [ ] **Step 2: Run it to verify it fails.**
+- [ ] **Step 3: Run it to verify it fails.**
 
 Run: `TEST_DATABASE_URL=$TEST_DATABASE_URL npx vitest run test/db/call-state-drop.test.ts -t 'skipCall'`
 Expected: FAIL — `skipCall` is not exported yet (or SKIP without a DB).
 
-- [ ] **Step 3: Implement `skipCall`.** In `src/db/repositories/call-state-repo.ts`, add the import at the top (with the other schema imports):
+- [ ] **Step 4: Implement `skipCall`.** In `src/db/repositories/call-state-repo.ts`, add the imports at the top. Add:
 
 ```ts
 import { type DropReason, dropReasonSchema } from '../enums.js';
+```
+
+and change the existing `import type { JsonValue } from '../types.js';` line to also bring in the value schema:
+
+```ts
+import { type JsonValue, jsonValueSchema } from '../types.js';
 ```
 
 Then append this helper at the end of the file:
@@ -524,7 +560,9 @@ const skipCallSchema = z.object({
   callId: z.string().min(1),
   atStage: z.string().min(1),
   dropReason: dropReasonSchema,
-  logDetail: z.unknown().optional(),
+  // A JSON object of PII-free extra detail. Validated (not cast) so a non-JSON value is
+  // rejected here rather than blowing up later in appendLog.
+  logDetail: z.record(z.string(), jsonValueSchema).optional(),
 });
 
 /**
@@ -558,10 +596,7 @@ export async function skipCall(pool: Pool, input: SkipCallInput): Promise<CallSt
       );
     }
 
-    const detail: JsonValue =
-      v.logDetail !== undefined && typeof v.logDetail === 'object' && v.logDetail !== null
-        ? ({ drop_reason: v.dropReason, ...(v.logDetail as Record<string, JsonValue>) })
-        : { drop_reason: v.dropReason };
+    const detail: JsonValue = { drop_reason: v.dropReason, ...(v.logDetail ?? {}) };
 
     await appendLog(client, {
       callId: v.callId,
@@ -575,19 +610,19 @@ export async function skipCall(pool: Pool, input: SkipCallInput): Promise<CallSt
 }
 ```
 
-(`DalError`, `DAL_STALE_STAGE`, `parseOrThrow`, `query`, `withTransaction`, `toJsonParam`, `appendLog`, `JsonValue`, `callStateRowSchema` are already imported at the top of this file — verify and reuse them.)
+(`DalError`, `DAL_STALE_STAGE`, `parseOrThrow`, `query`, `withTransaction`, `appendLog`, and `callStateRowSchema` are already imported at the top of this file — verify and reuse them.)
 
-- [ ] **Step 4: Run the test to verify it passes.**
+- [ ] **Step 5: Run the test to verify it passes.**
 
 Run: `TEST_DATABASE_URL=$TEST_DATABASE_URL npx vitest run test/db/call-state-drop.test.ts -t 'skipCall'`
 Expected: PASS (or SKIP without a DB).
 
-- [ ] **Step 5: Typecheck.**
+- [ ] **Step 6: Typecheck.**
 
 Run: `npm run typecheck`
 Expected: PASS.
 
-- [ ] **Step 6: Commit.**
+- [ ] **Step 7: Commit.**
 
 ```bash
 git add src/db/repositories/call-state-repo.ts test/db/call-state-drop.test.ts
@@ -600,7 +635,13 @@ git commit -m "feat(3.1): add skipCall DAL helper (atomic skip + processing_log)
 
 **Files:**
 - Modify: `src/pipeline/stages.ts`
+- Modify: `src/pipeline/state-machine.ts` (one line — supply the newly-required `pool`)
 - Test: none yet (types only; exercised by Tasks 6-8). Verified via `npm run typecheck`.
+
+> **Why the runner edit lives here:** making `pool` a required field of `StageContext`
+> immediately breaks the runner's single handler call site, so `npm run typecheck` fails
+> until it is fixed. Step 5 fixes it in the same task; the `drop`-handling logic comes in
+> Task 8.
 
 - [ ] **Step 1: Update `src/pipeline/stages.ts`.** Change the imports at the top:
 
@@ -660,15 +701,29 @@ export type StageHandlers = Record<PipelineStage, StageHandler>;
 
 - [ ] **Step 4: Keep `defaultStageHandlers` as pure stubs.** The existing `defaultStageHandlers` (the `Object.fromEntries(...)` block) stays as-is — each stub logs and returns `Promise<void>`, which now means "continue". No change needed beyond confirming it still type-checks against the new `StageHandler`.
 
-- [ ] **Step 5: Typecheck.**
+- [ ] **Step 5: Supply `pool` at the runner's handler call site.** In `src/pipeline/state-machine.ts`, `StageContext` now requires `pool`, so update the single invocation (inside `runPipeline`, around line 115). Change:
+
+```ts
+      await handlers[stage]({ callId, stage, logger });
+```
+
+to:
+
+```ts
+      await handlers[stage]({ callId, stage, logger, pool });
+```
+
+(`pool` is already the first parameter of `runPipeline`. The `drop`-result handling replaces this whole block in Task 8; this step only keeps typecheck green.)
+
+- [ ] **Step 6: Typecheck.**
 
 Run: `npm run typecheck`
-Expected: PASS. (`test/pipeline/state-machine.test.ts` handlers return `void` → still valid; they don't yet pass `pool`, which is fine — the runner supplies it.)
+Expected: PASS. (`test/pipeline/state-machine.test.ts` handlers return `void` → still valid, and ignore the extra `pool` in the context.)
 
-- [ ] **Step 6: Commit.**
+- [ ] **Step 7: Commit.**
 
 ```bash
-git add src/pipeline/stages.ts
+git add src/pipeline/stages.ts src/pipeline/state-machine.ts
 git commit -m "feat(3.1): add StageResult drop outcome, STATUS_SKIPPED, pool on StageContext"
 ```
 
@@ -862,12 +917,14 @@ git commit -m "feat(3.1): pure evaluateMetadata decision function + unit tests"
 
 ---
 
-## Task 7: Stage handler + production handler set + worker wiring
+## Task 7: Stage handler + production handler set
 
 **Files:**
 - Modify: `src/pipeline/metadata-prefilter.ts` (add the handler)
 - Create: `src/pipeline/handlers.ts`
-- Modify: `src/worker/worker.ts:1-12,65`
+
+> Worker wiring is intentionally deferred to Task 8, so the worker only starts using the
+> real handler once the runner actually acts on a `drop` result.
 
 - [ ] **Step 1: Add the stage handler** to `src/pipeline/metadata-prefilter.ts`. Add these imports at the top:
 
@@ -922,49 +979,25 @@ export const productionStageHandlers: StageHandlers = {
 };
 ```
 
-- [ ] **Step 3: Wire the worker to the production handlers.** In `src/worker/worker.ts`, update the import (line ~9) from:
-
-```ts
-import { defaultStageHandlers, type StageHandlers } from '../pipeline/stages.js';
-```
-
-to:
-
-```ts
-import type { StageHandlers } from '../pipeline/stages.js';
-import { productionStageHandlers } from '../pipeline/handlers.js';
-```
-
-and change the default in `createPipelineWorker` (line ~65) from:
-
-```ts
-  const handlers = options.handlers ?? defaultStageHandlers;
-```
-
-to:
-
-```ts
-  const handlers = options.handlers ?? productionStageHandlers;
-```
-
-- [ ] **Step 4: Typecheck + build.**
+- [ ] **Step 3: Typecheck + build.**
 
 Run: `npm run typecheck && npm run build`
-Expected: PASS (no import cycle: `handlers.ts → metadata-prefilter.ts → stages.ts`; `stages.ts` imports neither).
+Expected: PASS (no import cycle: `handlers.ts → metadata-prefilter.ts → stages.ts`; `stages.ts` imports neither). `productionStageHandlers` is exported but not yet consumed by the worker — that wiring lands in Task 8.
 
-- [ ] **Step 5: Commit.**
+- [ ] **Step 4: Commit.**
 
 ```bash
-git add src/pipeline/metadata-prefilter.ts src/pipeline/handlers.ts src/worker/worker.ts
-git commit -m "feat(3.1): wire metadata pre-filter handler into the worker"
+git add src/pipeline/metadata-prefilter.ts src/pipeline/handlers.ts
+git commit -m "feat(3.1): metadata pre-filter stage handler + production handler set"
 ```
 
 ---
 
-## Task 8: Runner short-circuit + skipped terminal guard
+## Task 8: Runner short-circuit + skipped terminal guard + worker wiring
 
 **Files:**
 - Modify: `src/pipeline/state-machine.ts`
+- Modify: `src/worker/worker.ts:1-12,65`
 - Create: `test/pipeline/metadata-prefilter-shortcircuit.test.ts`
 
 - [ ] **Step 1: Write the failing integration test.** Create `test/pipeline/metadata-prefilter-shortcircuit.test.ts`:
@@ -1131,11 +1164,11 @@ import {
   }
 ```
 
-(c) Handle a `drop` result in the loop. Replace the handler-invocation block:
+(c) Handle a `drop` result in the loop. Replace the handler-invocation block (as left by Task 5, i.e. already passing `pool`):
 
 ```ts
     try {
-      await handlers[stage]({ callId, stage, logger });
+      await handlers[stage]({ callId, stage, logger, pool });
     } catch (cause) {
       // Wrap so the worker's failed-handler knows exactly which stage failed. Fail-closed:
       // PipelineStageError never carries the raw error message.
@@ -1182,21 +1215,51 @@ with:
 
 (The rest of the loop — building `toStage`, the `advanceStage` call, and the stale-resolution — is unchanged.)
 
-- [ ] **Step 4: Run the short-circuit test to verify it passes.**
+- [ ] **Step 4: Wire the worker to the production handlers** (now that the runner acts on `drop`). In `src/worker/worker.ts`, update the import (line ~9) from:
+
+```ts
+import { defaultStageHandlers, type StageHandlers } from '../pipeline/stages.js';
+```
+
+to:
+
+```ts
+import type { StageHandlers } from '../pipeline/stages.js';
+import { productionStageHandlers } from '../pipeline/handlers.js';
+```
+
+and change the default in `createPipelineWorker` (line ~65) from:
+
+```ts
+  const handlers = options.handlers ?? defaultStageHandlers;
+```
+
+to:
+
+```ts
+  const handlers = options.handlers ?? productionStageHandlers;
+```
+
+- [ ] **Step 5: Typecheck + build.**
+
+Run: `npm run typecheck && npm run build`
+Expected: PASS.
+
+- [ ] **Step 6: Run the short-circuit test to verify it passes.**
 
 Run: `TEST_DATABASE_URL=$TEST_DATABASE_URL npx vitest run test/pipeline/metadata-prefilter-shortcircuit.test.ts`
 Expected: PASS (or SKIP without a DB).
 
-- [ ] **Step 5: Run the existing state-machine test to confirm no regression.**
+- [ ] **Step 7: Run the existing state-machine test to confirm no regression.**
 
 Run: `TEST_DATABASE_URL=$TEST_DATABASE_URL npx vitest run test/pipeline/state-machine.test.ts`
 Expected: PASS (or SKIP). Its `void`-returning handlers still mean "continue"; the added `pool` in the context is ignored by them.
 
-- [ ] **Step 6: Commit.**
+- [ ] **Step 8: Commit.**
 
 ```bash
-git add src/pipeline/state-machine.ts test/pipeline/metadata-prefilter-shortcircuit.test.ts
-git commit -m "feat(3.1): short-circuit runner on drop; skipped terminal guard"
+git add src/pipeline/state-machine.ts src/worker/worker.ts test/pipeline/metadata-prefilter-shortcircuit.test.ts
+git commit -m "feat(3.1): short-circuit runner on drop; skipped terminal guard; wire worker"
 ```
 
 ---
