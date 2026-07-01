@@ -33,8 +33,10 @@ The stage produces exactly one of two outcomes:
 
 - a zod enum `dropReasonSchema` / `DROP_REASONS` tuple in `src/pipeline/stages.ts`
   (the pipeline vocabulary home),
-- the `StageResult` drop type (`reason: DropReason`, **not** `string`),
-- a DB `CHECK` constraint on `call_state.drop_reason`.
+- the `StageResult` drop type and `skipCall`'s input (`reason: DropReason`, **not**
+  `string`, validated by `dropReasonSchema`),
+- DB `CHECK` constraints on `call_state` — a value list **and** a `status ⇔
+  drop_reason` biconditional (see §2).
 
 ```
 DROP_REASONS = [
@@ -93,9 +95,15 @@ unconfirmed-semantics case) → **pass**.
 
 ### 2. Schema change — `migrations/1782864000006_call_state_drop_reason.cjs`
 
-- **up:** add nullable `drop_reason text` to `call_state`, plus a `CHECK` constraint
-  `drop_reason IS NULL OR drop_reason IN (<DROP_REASONS>)`.
-- **down:** drop the constraint and the column.
+- **up:** add nullable `drop_reason text` to `call_state`, plus two `CHECK`
+  constraints:
+  - **value:** `drop_reason IS NULL OR drop_reason IN (<DROP_REASONS>)`.
+  - **relationship (biconditional):** `(status = 'skipped') = (drop_reason IS NOT
+    NULL)` — a `skipped` row must carry a reason, and any non-null reason requires
+    `status = 'skipped'`. This makes the doc's "reason is null for every call except
+    dropped ones" a DB-enforced invariant, not just a convention, and rejects
+    contradictory rows (`processing` + reason, or `skipped` + null).
+- **down:** drop both constraints and the column.
 - Additive + reversible → no backup step required (non-destruction convention).
 - Update `src/db/schemas/call-state.ts`: `callStateRowSchema` gains
   `drop_reason: z.string().nullable()`.
@@ -145,6 +153,9 @@ skipCall(pool, { callId, atStage, dropReason, logDetail? }): Promise<CallStateRo
      `DAL_STALE_STAGE`, so no duplicate `skipped` log row is appended.
   2. `appendLog` a `processing_log` row `{ stage:'metadata-pre-filter',
      outcome:'skipped', detail:{ drop_reason } }`.
+- The input `dropReason` is validated by `dropReasonSchema` (the shared zod enum) in
+  the helper's parse step, so the DAL rejects an out-of-vocabulary reason before the
+  DB CHECK is ever reached — two independent guards against drift.
 - `current_stage` stays where it is (no forward movement). The row is **never
   deleted**.
 - A drop is **not** a failure-model failure: no `error_code`, no `failure_snapshot`.
@@ -168,9 +179,12 @@ transaction + log-append machinery.
   `getCallState`, calls `evaluateMetadata(callId, source_metadata)`, and returns the
   outcome.
 - Runner (`runPipeline`):
-  - **Terminal no-op guard** at the top: `status === STATUS_SKIPPED` → log + return
-    (mirrors the `completed` guard), so a re-enqueued dropped call never re-runs stages
-    or duplicates `processing_log` rows.
+  - **Terminal no-op guard** at the top: `status === STATUS_SKIPPED` → **validate then**
+    log + return (mirrors the `completed` guard, which treats terminal + wrong stage as
+    corruption). A valid `skipped` row must have `current_stage` ∈ the skip-stage set
+    (`{ 'metadata-pre-filter' }` today — the only stage that drops) **and** a non-null
+    `drop_reason`; otherwise throw an inconsistency error rather than silently
+    returning. The skip-stage set generalizes when a future stage gains drop capability.
   - **Drop branch:** after a handler returns `{ action: 'drop', reason }`, call
     `skipCall(pool, { callId, atStage: stage, dropReason: reason, ... })` and
     **return** — the loop never reaches `fetch-transcript`. If `skipCall` throws
@@ -245,6 +259,18 @@ handler:
   call yields exactly one `skipped` `processing_log` row.
 - **re-seed resurrection:** upserting a skipped call again leaves it `skipped` with
   `drop_reason` and `current_stage` intact (also covers `completed`).
+- **drop-reason TS/DB parity:** for **every** value in `DROP_REASONS`, `skipCall`
+  stores it successfully (iterate the tuple) — proves the DB CHECK value list is a
+  superset of the TS vocabulary.
+- **invalid reason rejected at both layers:** an out-of-vocabulary reason is rejected
+  by the zod/DAL parse in `skipCall`; a raw SQL `UPDATE ... SET drop_reason='bogus'`
+  (bypassing the DAL) is rejected by the DB CHECK constraint.
+- **status/drop_reason invariant:** a raw SQL update setting `status='skipped',
+  drop_reason=NULL` (and the inverse, `status='processing'` with a non-null reason) is
+  rejected by the biconditional CHECK.
+- **corrupt terminal row:** `runPipeline` on a `skipped` row whose `current_stage` is
+  not a skip-stage (or whose `drop_reason` is null) throws an inconsistency error
+  rather than no-oping.
 
 ## Documentation
 
