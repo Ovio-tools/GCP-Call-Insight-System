@@ -8,6 +8,7 @@ export const callStateRowSchema = z.object({
   source_metadata: jsonValueSchema,
   current_stage: z.string(),
   status: z.string(),
+  drop_reason: z.string().nullable(),
   created_at: z.date(),
   updated_at: z.date(),
 });
