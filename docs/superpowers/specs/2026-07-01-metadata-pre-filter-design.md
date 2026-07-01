@@ -123,15 +123,21 @@ guard and re-running the pre-filter. Fix the `ON CONFLICT DO UPDATE` to **preser
 terminal state**:
 
 ```
-status        = CASE WHEN call_state.status IN ('skipped','completed')
-                     THEN call_state.status ELSE EXCLUDED.status END
-current_stage = CASE WHEN call_state.status IN ('skipped','completed')
-                     THEN call_state.current_stage ELSE EXCLUDED.current_stage END
+source        = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.source ELSE EXCLUDED.source END
 source_metadata = CASE WHEN call_state.status IN ('skipped','completed')
                      THEN call_state.source_metadata ELSE EXCLUDED.source_metadata END
+current_stage = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.current_stage ELSE EXCLUDED.current_stage END
+status        = CASE WHEN call_state.status IN ('skipped','completed')
+                     THEN call_state.status ELSE EXCLUDED.status END
 -- drop_reason is never overwritten by upsert (only skipCall sets it)
 updated_at    = now()
 ```
+
+A terminal row is thus frozen whole — `source`, `source_metadata`, `current_stage`,
+`status`, and `drop_reason` all retain their original values — so the promise that a
+dropped call's original metadata is never rewritten holds for every column.
 
 A non-terminal row upserts exactly as before. A future explicit **reprocess** path
 (Task 6.2) will reset terminal state through its own dedicated function, never through
