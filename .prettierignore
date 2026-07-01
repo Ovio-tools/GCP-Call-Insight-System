@@ -2,6 +2,11 @@
 # never reformat it — table churn makes task PRs hard to audit.
 gcp-call-insight-execution-plan-v8.md
 
+# Design specs and implementation plans are spec-like source-of-truth docs authored
+# by hand (tables, aligned code blocks). Same rationale as the execution plan above:
+# prettier reflow churns them and makes task PRs hard to audit.
+docs/superpowers/
+
 # Generated / vendored — not ours to format.
 dist/
 coverage/
