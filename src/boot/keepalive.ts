@@ -1,3 +1,7 @@
+/** Node clamps setInterval delays larger than this (2^31-1 ms) to 1ms, which
+ * would turn the empty keep-alive tick into a busy loop. Do NOT increase. */
+const NODE_MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
 export interface KeepAliveDeps {
   /** Register a shutdown handler. Injectable so tests drive it without real signals. */
   register?: (handler: () => void) => void;
@@ -26,12 +30,9 @@ export function keepAlive(deps: KeepAliveDeps = {}): Promise<void> {
   const hold =
     deps.hold ??
     ((): (() => void) => {
-      const handle = setInterval(
-        () => {
-          /* keep-alive tick: intentionally empty */
-        },
-        2 ** 31 - 1,
-      );
+      const handle = setInterval(() => {
+        /* keep-alive tick: intentionally empty */
+      }, NODE_MAX_TIMEOUT_MS);
       return () => clearInterval(handle);
     });
 

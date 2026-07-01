@@ -38,7 +38,7 @@ describe('keepAlive', () => {
 
     const promise = keepAlive({ register: (handler) => (fire = handler) });
     await Promise.resolve();
-    expect(setSpy).toHaveBeenCalled();
+    expect(setSpy).toHaveBeenCalledWith(expect.any(Function), 2 ** 31 - 1);
 
     fire();
     await promise;
