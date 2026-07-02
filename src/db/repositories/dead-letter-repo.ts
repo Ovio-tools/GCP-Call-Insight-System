@@ -33,6 +33,17 @@ export async function recordDeadLetter(
   return parseOrThrow(TABLE, deadLetterRowSchema, rows[0]);
 }
 
+/** Whether any dead_letter row exists for this call — it exhausted retries and belongs to
+ * the manual re-drive path, so automated sweeps must not silently restart it. */
+export async function hasDeadLetter(pool: Pool, callId: string): Promise<boolean> {
+  const rows = await query<{ one: number }>(
+    pool,
+    `SELECT 1 AS one FROM dead_letter WHERE call_id = $1 LIMIT 1`,
+    [callId],
+  );
+  return rows.length > 0;
+}
+
 export async function listUncleared(pool: Pool): Promise<DeadLetterRow[]> {
   const rows = await query<DeadLetterRow>(pool, `SELECT * FROM dead_letter ORDER BY failed_at`);
   return rows.map((r) => parseOrThrow(TABLE, deadLetterRowSchema, r));

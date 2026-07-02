@@ -173,6 +173,30 @@ describe('DialpadClient.listRecentlyConcludedCalls', () => {
     expect(url).not.toContain('/transcripts/');
   });
 
+  it('parses date_ended (epoch ms or ISO string) into endedAt; omits it when unparseable', async () => {
+    const body = {
+      items: [
+        { call_id: 'c-num', date_ended: 1_700_000_100_000 },
+        { call_id: 'c-num-str', date_ended: '1700000200000' },
+        { call_id: 'c-iso', date_ended: '2026-07-01T12:00:00.000Z' },
+        { call_id: 'c-garbage', date_ended: 'not-a-date' },
+        { call_id: 'c-ongoing' },
+      ],
+    };
+    const { client } = clientWith([json(body)]);
+
+    const page = await client.listRecentlyConcludedCalls({ since: 1000 });
+
+    expect(page.calls).toEqual([
+      { callId: 'c-num', endedAt: 1_700_000_100_000 },
+      { callId: 'c-num-str', endedAt: 1_700_000_200_000 },
+      { callId: 'c-iso', endedAt: Date.parse('2026-07-01T12:00:00.000Z') },
+      // Unparseable and absent end timestamps yield NO endedAt — the sweep fails open.
+      { callId: 'c-garbage' },
+      { callId: 'c-ongoing' },
+    ]);
+  });
+
   it('passes a cursor through for pagination', async () => {
     const { client, fetchImpl } = clientWith([json({ items: [] })]);
     await client.listRecentlyConcludedCalls({ since: 1000, cursor: 'abc' });

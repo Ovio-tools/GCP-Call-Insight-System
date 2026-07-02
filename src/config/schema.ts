@@ -181,6 +181,24 @@ export const configSchema = z.object({
   /** Delay (ms) between not-ready transcript retries (the delayed re-enqueue cadence). */
   DIALPAD_TRANSCRIPT_POLL_MS: z.coerce.number().int().positive().default(60_000),
 
+  // --- Reconciliation cron (Task 3.4) ---
+
+  /** Lookback window (minutes) for the reconciliation sweep. Deliberately LONGER than the
+   * 15-minute cron cadence so consecutive runs overlap and a delayed or missed run still
+   * catches every concluded call; idempotent enqueue makes the overlap harmless. */
+  RECONCILIATION_WINDOW_MINUTES: z.coerce.number().int().positive().default(45),
+
+  /** Longest plausible call (minutes). Dialpad's list API filters by START time only, so the
+   * sweep queries `started_after = window + this margin` back — otherwise a long call that
+   * started before the window but CONCLUDED inside it would never be listed. Over-listing is
+   * harmless: already-ingested calls are skipped idempotently. */
+  RECONCILIATION_MAX_CALL_MINUTES: z.coerce.number().int().positive().default(180),
+
+  /** The reconciliation cron's OWN dead-man's-switch URL, pinged only after a fully
+   * successful sweep. Optional in the schema (local dev / tests skip the ping), but the
+   * cron entrypoint REQUIRES it in production via requireReconciliationCheckUrl. */
+  RECONCILIATION_CHECK_URL: z.string().url().optional(),
+
   // --- Redaction stage (Task 4.1) ---
 
   /** Risk score at or above which a call is held with redaction_failed. Forced-hold

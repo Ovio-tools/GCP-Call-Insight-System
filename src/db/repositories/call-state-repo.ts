@@ -37,6 +37,25 @@ export async function upsertCallState(pool: Pool, input: CallStateInsert): Promi
   return parseOrThrow(TABLE, callStateRowSchema, rows[0]);
 }
 
+/**
+ * Insert a call_state row ONLY if none exists; returns whether this call created it. Unlike
+ * {@link upsertCallState} it never touches an existing row, so a rescuer (the reconciliation
+ * sweep re-enqueueing a seeded-but-never-queued call) cannot overwrite another writer's
+ * provenance or metadata.
+ */
+export async function seedCallStateIfAbsent(pool: Pool, input: CallStateInsert): Promise<boolean> {
+  const v = parseOrThrow(TABLE, callStateInsertSchema, input);
+  const rows = await query<{ call_id: string }>(
+    pool,
+    `INSERT INTO call_state (call_id, source, source_metadata, current_stage, status)
+     VALUES ($1, $2, COALESCE($3::jsonb, '{}'::jsonb), $4, $5)
+     ON CONFLICT (call_id) DO NOTHING
+     RETURNING call_id`,
+    [v.callId, v.source, toJsonParam(v.sourceMetadata), v.currentStage, v.status],
+  );
+  return rows.length > 0;
+}
+
 export async function getCallState(pool: Pool, callId: string): Promise<CallStateRow | undefined> {
   const rows = await query<CallStateRow>(pool, `SELECT * FROM call_state WHERE call_id = $1`, [
     callId,

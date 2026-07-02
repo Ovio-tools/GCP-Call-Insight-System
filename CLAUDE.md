@@ -23,12 +23,13 @@ replay/timestamp checks, or error shaping.
 Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
 per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), the shared
 HTTP hardening/auth middleware (Task 2.3), the metadata pre-filter stage (Task 3.1),
-the Dialpad transcript client (Task 3.3, `src/dialpad/client/`), and the redaction
-stage (Task 4.1, `src/redaction/` + `src/pipeline/redact.ts` — the privacy boundary;
-see `docs/adr/0002-redaction-tokens-and-fail-closed.md`) exist; the remaining model
-steps, surfaces, and crons do not yet. The NER model is vendored by `npm run
-model:fetch` into `models/` (gitignored); model stages read ONLY `clean_transcripts`
-(enforced by `test/pipeline/model-stage-import-guard.test.ts`).
+the Dialpad transcript client (Task 3.3, `src/dialpad/client/`), the reconciliation
+cron (Task 3.4, `src/reconciliation/` + `src/services/reconciliation-cron.ts`), and the
+redaction stage (Task 4.1, `src/redaction/` + `src/pipeline/redact.ts` — the privacy
+boundary; see `docs/adr/0002-redaction-tokens-and-fail-closed.md`) exist; the remaining
+model steps, surfaces, and the retention cron do not yet. The NER model is vendored by
+`npm run model:fetch` into `models/` (gitignored); model stages read ONLY
+`clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
 ## 1. Architecture
 
