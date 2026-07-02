@@ -7,6 +7,7 @@ import {
   type ClassifyModelResult,
   ModelApiError,
 } from '../../../src/anthropic/client.js';
+import * as anthropicClient from '../../../src/anthropic/client.js';
 import { createClassifyHandler } from '../../../src/pipeline/classify/handler.js';
 import * as alertRepo from '../../../src/db/repositories/alert-events-repo.js';
 import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
@@ -432,6 +433,42 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
     );
     expect(reviews.rows).toEqual([{ held_reason: 'cost_cap_held' }]);
     expect(await countRows('model_invocations', callId)).toBe(0);
+  });
+
+  // ---- production wiring (lazy client) -----------------------------------------
+
+  it('production handlers with CLASSIFY_ENABLED=false and no ANTHROPIC_API_KEY never construct the Anthropic client', async () => {
+    const callId = 'test-cls-lazy-nokey';
+    await seed(callId);
+
+    // Real lazy factory (NO getClassifyModel override), config with the kill switch OFF and
+    // NO ANTHROPIC_API_KEY. Building the set must not throw, and running the disabled classify
+    // stage must never invoke createAnthropicClassifyClient (the thunk stays un-invoked behind
+    // the kill switch). This is the "disabled classify doesn't need a key" property.
+    const spy = vi.spyOn(anthropicClient, 'createAnthropicClassifyClient');
+    try {
+      const config = makeTestConfig({ CLASSIFY_ENABLED: false });
+      expect(config.ANTHROPIC_API_KEY).toBeUndefined();
+      const handlers = buildProductionStageHandlers({
+        client: dialpadStub,
+        keyProvider,
+        queue: { add: vi.fn(() => Promise.resolve()) },
+        config,
+        clock,
+      });
+      expect(handlers.classify).toBeTypeOf('function');
+
+      await runPipeline(app, callId, silent, handlers);
+
+      // Client never built; call parked (still processing), no invocation.
+      expect(spy).not.toHaveBeenCalled();
+      const state = await getCallState(app, callId);
+      expect(state?.status).toBe('processing');
+      expect(state?.current_stage).toBe('classify');
+      expect(await countRows('model_invocations', callId)).toBe(0);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   // ---- kill switch -------------------------------------------------------------
