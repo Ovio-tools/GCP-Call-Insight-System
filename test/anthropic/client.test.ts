@@ -231,6 +231,29 @@ describe('createAnthropicClassifyClient — success and received-but-broken shap
     });
   });
 
+  // A usage OBJECT whose token counts are absent or not usable integers must NOT be trusted:
+  // treating it as present would let the handler settle the reservation to ~0 and undercount
+  // real spend. Every one of these degrades to usagePresent: false + zero tokens (handler holds
+  // malformed_model_output and KEEPS the reservation), never usagePresent: true.
+  it.each([
+    { label: 'empty usage object', usage: {} },
+    { label: 'only input_tokens present', usage: { input_tokens: 5 } },
+    { label: 'only output_tokens present', usage: { output_tokens: 7 } },
+    { label: 'string token values', usage: { input_tokens: '12', output_tokens: '7' } },
+    { label: 'fractional token values', usage: { input_tokens: 12.5, output_tokens: 7 } },
+    { label: 'negative token value', usage: { input_tokens: -1, output_tokens: 7 } },
+    { label: 'null token value', usage: { input_tokens: null, output_tokens: 7 } },
+    { label: 'NaN token value', usage: { input_tokens: Number.NaN, output_tokens: 7 } },
+  ])('treats $label as usagePresent: false with zero tokens', async ({ usage }) => {
+    const { client } = clientWith([json(message({ usage }))]);
+
+    await expect(client.classify(classifyReq)).resolves.toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      usagePresent: false,
+    });
+  });
+
   it('returns text: null for an empty content array', async () => {
     const { client } = clientWith([json(message({ content: [] }))]);
     await expect(client.classify(classifyReq)).resolves.toMatchObject({ text: null });

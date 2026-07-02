@@ -1,13 +1,17 @@
 import { Writable } from 'node:stream';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import type { ClassifyModelClient, ClassifyModelResult } from '../../../src/anthropic/client.js';
 import { createClassifyHandler } from '../../../src/pipeline/classify/handler.js';
+import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
+import { runPipeline } from '../../../src/pipeline/state-machine.js';
 import {
   CLASSIFY_SYSTEM_PROMPT,
   buildClassifyUserMessage,
 } from '../../../src/pipeline/classify/prompt.js';
 import type { Clock } from '../../../src/pipeline/fetch-transcript.js';
+import type { DialpadClient } from '../../../src/dialpad/client/index.js';
+import { DEK_BYTES, LocalKeyProvider } from '../../../src/crypto/index.js';
 import { upsertCallState } from '../../../src/db/repositories/call-state-repo.js';
 import { upsertCleanTranscript } from '../../../src/db/repositories/clean-transcripts-repo.js';
 import { upsertDailyCost } from '../../../src/db/repositories/daily-cost-usage-repo.js';
@@ -60,6 +64,12 @@ function resultWithReason(
   };
 }
 
+/** A Dialpad client stub — classify never touches it, but buildProductionStageHandlers wants one. */
+const dialpadStub: DialpadClient = {
+  fetchTranscript: vi.fn(() => Promise.resolve({ kind: 'not_ready' as const })),
+  listRecentlyConcludedCalls: vi.fn(() => Promise.resolve({ calls: [] })),
+};
+
 function collectingLogger(): { lines: string[]; logger: ReturnType<typeof createRootLogger> } {
   const lines: string[] = [];
   const stream = new Writable({
@@ -85,10 +95,33 @@ describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
     await upsertCleanTranscript(app, { callId, redactedText: redacted, redactionRiskScore: 0.1 });
   };
 
+  const keyProvider = new LocalKeyProvider({
+    masterKey: Buffer.alloc(DEK_BYTES, 0x07),
+    activeKeyVersion: 1,
+  });
+
   /** Build the classify handler with the fixed clock; enabled unless overridden. */
   function handler(getModel: () => ClassifyModelClient, overrides = {}) {
     const config = makeTestConfig({ CLASSIFY_ENABLED: true, ...overrides });
     return createClassifyHandler({ getModel, config, clock });
+  }
+
+  /**
+   * Build the FULL production handler set so `runPipeline` routes classify's `hold` through the
+   * state machine's `holdCall` — which is what actually writes the `review_queue` and
+   * `processing_log` rows. Asserting those rows against a directly-invoked handler would be
+   * vacuous (the handler only returns a StageResult; the runner performs the writes).
+   */
+  function set(getModel: () => ClassifyModelClient, overrides = {}) {
+    const config = makeTestConfig({ CLASSIFY_ENABLED: true, ...overrides });
+    return buildProductionStageHandlers({
+      client: dialpadStub,
+      keyProvider,
+      queue: { add: vi.fn(() => Promise.resolve()) },
+      config,
+      clock,
+      getClassifyModel: getModel,
+    });
   }
 
   /**
@@ -245,31 +278,41 @@ describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
 
   // ---- no content in persisted rows --------------------------------------------
 
-  it('spam hold: review_queue / processing_log / alert_events carry no transcript or reason content', async () => {
+  const rowCount = async (table: string, callId: string): Promise<number> => {
+    const r = await owner.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${table} WHERE call_id = $1`,
+      [callId],
+    );
+    return Number(r.rows[0]?.n);
+  };
+
+  it('spam hold: review_queue / processing_log carry no transcript or reason content', async () => {
     const callId = 'test-clsp-rows-spam';
     const redacted = `Robocall detected. ${REDACTED_MARKER}`;
     await seed(callId, redacted);
     const silent = createRootLogger({ level: 'silent' });
-    await handler(() => ({ classify: () => Promise.resolve(resultWithReason('spam')) }))({
+    // Drive the FULL pipeline so the runner's holdCall actually writes review_queue + processing_log.
+    await runPipeline(
+      app,
       callId,
-      stage: 'classify',
-      logger: silent,
-      pool: app,
-    });
+      silent,
+      set(() => ({ classify: () => Promise.resolve(resultWithReason('spam')) })),
+    );
 
-    // Positive guard: prove the classify call actually ran and reached routing before asserting
-    // the rows are content-clean — an empty result must FAIL this test, not vacuously pass it.
-    // (review_queue/processing_log are populated by the runner on `hold`, not by this handler
-    // called directly, so the guard is on what the handler itself writes unconditionally: the
-    // model_invocations row it records before routing, here with the 'spam' outcome bucket.)
-    const invocations = await owner.query<{ outcome: string }>(
-      `SELECT outcome FROM model_invocations WHERE call_id = $1 AND stage = 'classify'`,
+    // Positive guards: the runner must have written the rows we are about to scan — otherwise the
+    // absence assertions below would pass vacuously against empty tables.
+    const reviews = await owner.query<{ held_reason: string }>(
+      `SELECT held_reason FROM review_queue WHERE call_id = $1`,
       [callId],
     );
-    expect(invocations.rows).toHaveLength(1);
-    expect(invocations.rows[0]?.outcome).toBe('success');
+    expect(reviews.rows).toHaveLength(1);
+    expect(reviews.rows[0]?.held_reason).toBe('classified_spam');
+    expect(await rowCount('processing_log', callId)).toBeGreaterThan(0);
+    // Spam is a routing outcome, not a failure — no alert is emitted for it.
+    const spamAlerts = await serializedRows('alert_events', callId);
+    expect(spamAlerts).toBe('[]');
 
-    for (const table of ['review_queue', 'processing_log', 'alert_events']) {
+    for (const table of ['review_queue', 'processing_log']) {
       const serialized = await serializedRows(table, callId);
       expect(serialized, `${table} must not contain the transcript marker`).not.toContain(
         REDACTED_MARKER,
@@ -287,26 +330,38 @@ describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
     await seed(callId, redacted);
     const silent = createRootLogger({ level: 'silent' });
     // Malformed output whose text embeds BOTH the reason marker and the transcript marker — the
-    // most adversarial case for row leakage (the handler must persist neither).
-    await handler(() => ({
-      classify: () =>
-        Promise.resolve(
-          resultWithReason('customer', {
-            text: `prose ${REASON_MARKER} ${REDACTED_MARKER}`,
-            stopReason: 'end_turn',
-          }),
-        ),
-    }))({ callId, stage: 'classify', logger: silent, pool: app });
+    // most adversarial case for row leakage (nothing downstream must persist either). Drive the
+    // full pipeline so holdCall writes review_queue + processing_log.
+    await runPipeline(
+      app,
+      callId,
+      silent,
+      set(() => ({
+        classify: () =>
+          Promise.resolve(
+            resultWithReason('customer', {
+              text: `prose ${REASON_MARKER} ${REDACTED_MARKER}`,
+              stopReason: 'end_turn',
+            }),
+          ),
+      })),
+    );
 
+    // Positive guards: every table we scan must have its expected row first.
+    const reviews = await owner.query<{ held_reason: string }>(
+      `SELECT held_reason FROM review_queue WHERE call_id = $1`,
+      [callId],
+    );
+    expect(reviews.rows).toHaveLength(1);
+    expect(reviews.rows[0]?.held_reason).toBe('malformed_model_output');
+    expect(await rowCount('processing_log', callId)).toBeGreaterThan(0);
     // The alert row exists (MODEL_MALFORMED_RESPONSE) and carries only sanitized metadata.
-    const alerts = await owner.query<{
-      error_code: string;
-      root_cause_category: string;
-      severity: string;
-    }>(
-      `SELECT error_code, root_cause_category, severity FROM alert_events WHERE error_code = 'MODEL_MALFORMED_RESPONSE'`,
+    const alerts = await owner.query(
+      `SELECT * FROM alert_events WHERE failure_snapshot->>'call_id' = $1`,
+      [callId],
     );
     expect(alerts.rows).toHaveLength(1);
+    expect(alerts.rows[0]).toMatchObject({ error_code: 'MODEL_MALFORMED_RESPONSE' });
 
     for (const table of ['review_queue', 'processing_log', 'alert_events']) {
       const serialized = await serializedRows(table, callId);

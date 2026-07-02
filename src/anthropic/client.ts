@@ -140,17 +140,25 @@ function normalize(response: Anthropic.Message): ClassifyModelResult {
 
   const stopReason = (response as { stop_reason?: unknown }).stop_reason;
   const usage: unknown = (response as { usage?: unknown }).usage;
-  const usagePresent = typeof usage === 'object' && usage !== null;
-  const tokenOf = (field: 'input_tokens' | 'output_tokens'): number => {
-    const value = usagePresent ? (usage as Record<string, unknown>)[field] : undefined;
-    return typeof value === 'number' ? value : 0;
+  const usageObj =
+    typeof usage === 'object' && usage !== null ? (usage as Record<string, unknown>) : undefined;
+  // A token count is only usable if it is a nonnegative safe integer. Anything else — absent,
+  // null, NaN, fractional, a string, or an unsafe magnitude — is NOT trusted: `usagePresent`
+  // then reports false so the handler holds the call and KEEPS the cost reservation, rather than
+  // settling to a bogus (possibly 0) value and undercounting real spend (never-undercount).
+  const tokenOf = (field: 'input_tokens' | 'output_tokens'): number | null => {
+    const value = usageObj ? usageObj[field] : undefined;
+    return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
   };
+  const inputTokens = tokenOf('input_tokens');
+  const outputTokens = tokenOf('output_tokens');
+  const usagePresent = inputTokens !== null && outputTokens !== null;
 
   return {
     text: texts.length > 0 ? texts.join('') : null,
     stopReason: typeof stopReason === 'string' ? stopReason : null,
-    inputTokens: tokenOf('input_tokens'),
-    outputTokens: tokenOf('output_tokens'),
+    inputTokens: usagePresent ? inputTokens : 0,
+    outputTokens: usagePresent ? outputTokens : 0,
     usagePresent,
   };
 }
