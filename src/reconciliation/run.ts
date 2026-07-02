@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
-import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
+import { checkUrlFor, httpPing, pingSuccess, requireCheckUrl } from '../heartbeat/index.js';
 import type { DialpadClient, RecentCall } from '../dialpad/client/index.js';
 import { DialpadError } from '../dialpad/client/index.js';
 import { getCallState, seedCallStateIfAbsent } from '../db/repositories/call-state-repo.js';
@@ -44,18 +44,13 @@ export interface ReconciliationDeps {
 }
 
 /**
- * Fail-fast guard for the cron entrypoint: in production the reconciliation cron MUST have
- * its own dead-man's-switch URL — a silently unmonitored backstop is a broken backstop.
- * Outside production the ping is optional (local dev and tests simply skip it). Same shape
- * as requireDialpadApiKey: CONFIG_MISSING_OR_INVALID naming the variable.
+ * Fail-fast guard for the cron entrypoint: in staging/production the reconciliation cron MUST
+ * have its own dead-man's-switch URL — a silently unmonitored backstop is a broken backstop.
+ * Outside those environments the ping is optional (local dev and tests simply skip it). Thin
+ * wrapper over the shared {@link requireCheckUrl} so the component identity stays explicit.
  */
 export function requireReconciliationCheckUrl(config: Config): void {
-  if (config.NODE_ENV === 'production' && !config.RECONCILIATION_CHECK_URL) {
-    throw new ConfigError(
-      ['RECONCILIATION_CHECK_URL'],
-      `${CONFIG_ERROR_CODE}: RECONCILIATION_CHECK_URL is required in production — the reconciliation cron must ping its own external check`,
-    );
-  }
+  requireCheckUrl(config, 'reconciliation-cron');
 }
 
 /** States that POSITIVELY mean the call has not concluded yet. Anything else — including an
@@ -81,12 +76,6 @@ function shouldSweepListedCall(call: RecentCall, concludedSince: number): boolea
   const state = call.state?.toLowerCase();
   if (state !== undefined && NON_TERMINAL_CALL_STATES.has(state)) return false;
   return true;
-}
-
-/** Default check ping: a GET that treats any non-2xx as a failure. PII-free by nature. */
-async function httpPing(url: string): Promise<void> {
-  const res = await fetch(url, { method: 'GET' });
-  if (!res.ok) throw new Error(`external check responded ${res.status}`);
 }
 
 /**
@@ -156,16 +145,14 @@ export async function runReconciliation(deps: ReconciliationDeps): Promise<Recon
   );
 
   // Success ping — this cron's OWN check, never the worker's or retention's. A ping failure
-  // is logged but does not fail the run: the sweep genuinely succeeded, and a missed ping is
-  // exactly the signal the dead-man's switch exists to raise on the monitor side.
-  if (config.RECONCILIATION_CHECK_URL !== undefined) {
-    const ping = deps.pingCheck ?? httpPing;
-    try {
-      await ping(config.RECONCILIATION_CHECK_URL);
-    } catch (err) {
-      logger.warn(`external check ping failed: ${String(err)}`);
-    }
-  }
+  // is logged (sanitized, no URL) but does not fail the run: the sweep genuinely succeeded,
+  // and a missed ping is exactly the signal the dead-man's switch exists to raise monitor-side.
+  await pingSuccess({
+    component: 'reconciliation-cron',
+    url: checkUrlFor(config, 'reconciliation-cron'),
+    logger,
+    ping: deps.pingCheck ?? httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
+  });
 
   return summary;
 }

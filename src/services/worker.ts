@@ -2,6 +2,7 @@ import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { keepAlive } from '../boot/keepalive.js';
+import { checkUrlFor, httpPing, requireCheckUrl, startLivenessHeartbeat } from '../heartbeat/index.js';
 import { createAppPool } from '../db/index.js';
 import { keyProviderFromConfig } from '../crypto/index.js';
 import { createDialpadClient, RedisDualWindowLimiter } from '../dialpad/client/index.js';
@@ -18,6 +19,8 @@ import { createPipelineWorker } from '../worker/worker.js';
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createBootLogger({ level: config.LOG_LEVEL, name: 'worker' });
+  // Production/staging must not run an unmonitored worker: fail fast, naming the variable.
+  requireCheckUrl(config, 'worker');
   await assertDependenciesReady(config, logger);
 
   // Readiness guarantees DATABASE_URL/REDIS_URL are set and reachable; guard anyway for types.
@@ -61,10 +64,34 @@ async function main(): Promise<void> {
   }
 
   logger.info({ node_env: config.NODE_ENV }, 'worker booted');
+
+  // Liveness dead-man's switch (Task 7.1): now that readiness passed, ping the worker's OWN
+  // external check on its own cadence — liveness, not throughput, so an idle-but-healthy
+  // worker still beats. Each beat is gated on the queue's Redis answering, so a worker that
+  // can no longer reach Redis stops looking alive and its check alerts. It pings ONLY
+  // WORKER_CHECK_URL, never a cron's check. Runs regardless of the kill switch (a kill-switched
+  // worker is still a live process). Skipped only when unset (dev/test).
+  const workerCheckUrl = checkUrlFor(config, 'worker');
+  const heartbeat = workerCheckUrl
+    ? startLivenessHeartbeat({
+        component: 'worker',
+        url: workerCheckUrl,
+        intervalMs: config.WORKER_HEARTBEAT_INTERVAL_MS,
+        logger,
+        ping: httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
+        isHealthy: async (): Promise<boolean> => {
+          await queueConnection.ping();
+          return true;
+        },
+      })
+    : undefined;
+
   await keepAlive();
 
-  // Graceful shutdown: finish in-flight jobs, then release BullMQ/Redis/PG resources in order.
+  // Graceful shutdown: stop beating first (so a shutting-down worker stops looking alive),
+  // finish in-flight jobs, then release BullMQ/Redis/PG resources in order.
   logger.info('worker shutting down');
+  heartbeat?.stop();
   await worker.close();
   await queue.close();
   await queueConnection.quit();
