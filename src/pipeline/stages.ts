@@ -71,6 +71,8 @@ export function isPipelineStage(stage: string): stage is PipelineStage {
 /**
  * What a stage handler asks the runner to do next:
  * - `continue` — advance to the next stage (the default; `void`/`undefined` also means this).
+ *   An optional `detail` is recorded on the stage's `completed` processing_log row (e.g.
+ *   classify's `{bucket: 'customer'}`).
  * - `drop` — stop the pipeline before the next stage; the runner calls `skipCall` with
  *   `reason` (a controlled `DropReason`), leaving the call `skipped` and recoverable.
  * - `defer` — stop WITHOUT advancing and WITHOUT failing; the call stays at this stage in
@@ -82,7 +84,7 @@ export function isPipelineStage(stage: string): stage is PipelineStage {
  *   `errorCode` (a failure-model code) is recorded on the processing_log row.
  */
 export type StageResult =
-  | { action: 'continue' }
+  | { action: 'continue'; detail?: Record<string, JsonValue> }
   | { action: 'drop'; reason: DropReason; detail?: Record<string, JsonValue> }
   | { action: 'defer' }
   | {
