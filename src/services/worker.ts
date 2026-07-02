@@ -4,6 +4,7 @@ import { assertDependenciesReady } from '../boot/readiness.js';
 import { keepAlive } from '../boot/keepalive.js';
 import {
   checkUrlFor,
+  createWorkerLivenessProbe,
   httpPing,
   requireCheckUrl,
   startLivenessHeartbeat,
@@ -56,14 +57,20 @@ async function main(): Promise<void> {
   });
   const worker = createPipelineWorker(config, pool, workerConnection, { handlers, logger });
 
+  const shouldConsume = !config.WORKER_KILL_SWITCH;
+
   if (config.WORKER_KILL_SWITCH) {
     logger.warn(
       'WORKER_KILL_SWITCH is on — worker will NOT consume; queued jobs remain in Redis until it is turned off',
     );
   } else {
-    // autorun:false, so start the processing loop explicitly. run() resolves on close.
+    // autorun:false, so start the processing loop explicitly. run() resolves on close but
+    // REJECTS if the loop dies — an unrecoverable in-process state. Exit nonzero so the platform
+    // restarts the dyno (which tears down the heartbeat interval); the missed check alerts in the
+    // meantime. isRunning() also flips false, so the liveness probe below goes unhealthy at once.
     void worker.run().catch((err: unknown) => {
-      logger.error({ error: String(err) }, 'worker run loop errored');
+      logger.error({ error: String(err) }, 'worker run loop errored — exiting for restart');
+      process.exit(1);
     });
     logger.info({ concurrency: config.WORKER_CONCURRENCY }, 'worker consuming pipeline jobs');
   }
@@ -72,10 +79,12 @@ async function main(): Promise<void> {
 
   // Liveness dead-man's switch (Task 7.1): now that readiness passed, ping the worker's OWN
   // external check on its own cadence — liveness, not throughput, so an idle-but-healthy
-  // worker still beats. Each beat is gated on the queue's Redis answering, so a worker that
-  // can no longer reach Redis stops looking alive and its check alerts. It pings ONLY
+  // worker still beats. The health gate reflects the ACTUAL consumer: the beat is skipped
+  // unless the BullMQ run loop is still running AND the worker's OWN consuming connection
+  // answers, so a dead consumer (crashed run loop or lost Redis link) stops looking alive and
+  // its check alerts — even if the side producer connection is still healthy. It pings ONLY
   // WORKER_CHECK_URL, never a cron's check. Runs regardless of the kill switch (a kill-switched
-  // worker is still a live process). Skipped only when unset (dev/test).
+  // worker is still a live process, just not consuming). Skipped only when unset (dev/test).
   const workerCheckUrl = checkUrlFor(config, 'worker');
   const heartbeat = workerCheckUrl
     ? startLivenessHeartbeat({
@@ -84,10 +93,11 @@ async function main(): Promise<void> {
         intervalMs: config.WORKER_HEARTBEAT_INTERVAL_MS,
         logger,
         ping: httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
-        isHealthy: async (): Promise<boolean> => {
-          await queueConnection.ping();
-          return true;
-        },
+        isHealthy: createWorkerLivenessProbe({
+          worker,
+          connection: workerConnection,
+          shouldConsume,
+        }),
       })
     : undefined;
 

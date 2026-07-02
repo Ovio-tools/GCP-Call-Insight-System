@@ -20,11 +20,11 @@ no single "system healthy" URL.
 
 ## The three checks
 
-| Component           | Config variable            | Cadence                              | Pings when                                                    |
-| ------------------- | -------------------------- | ------------------------------------ | ------------------------------------------------------------- |
-| worker              | `WORKER_CHECK_URL`         | every `WORKER_HEARTBEAT_INTERVAL_MS` | it is booted, readiness passed, and the queue's Redis answers |
-| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | the sweep completes fully successfully                        |
-| retention-cron      | `RETENTION_CHECK_URL`      | once per run                         | the run completes without throwing                            |
+| Component           | Config variable            | Cadence                              | Pings when                                                                                        |
+| ------------------- | -------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| worker              | `WORKER_CHECK_URL`         | every `WORKER_HEARTBEAT_INTERVAL_MS` | it is booted, readiness passed, its run loop is running, and its own consuming connection answers |
+| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | the sweep completes fully successfully                                                            |
+| retention-cron      | `RETENTION_CHECK_URL`      | once per run                         | the run completes without throwing                                                                |
 
 `WORKER_HEARTBEAT_INTERVAL_MS` (default 60s) and `HEARTBEAT_PING_TIMEOUT_MS` (default 5s) tune
 the worker cadence and the per-ping timeout. Set each component's check period/grace on the
@@ -40,10 +40,15 @@ monitor **longer** than the component's cadence so a single slow beat does not f
 - **Success-only for crons.** A cron pings **only after** its run fully succeeds. If the run
   fails, exits early, or throws, it does **not** ping — the missed external check is the alert.
 - **Worker heartbeat is liveness, not throughput.** An idle-but-healthy worker still beats.
-  Each beat is gated on a dependency probe (the queue's Redis ping); if the probe fails or
-  throws, the beat is skipped so a worker that can no longer reach Redis stops looking alive.
-  The worker pings **only** `WORKER_CHECK_URL` — never a cron's check — and beats regardless of
-  `WORKER_KILL_SWITCH` (a kill-switched worker is still a live process).
+  Each beat is gated on the actual consumer: the BullMQ run loop must still be running **and**
+  the worker's **own** consuming connection must answer a Redis ping (not a side/producer
+  connection — a healthy producer link must never keep a dead consumer looking alive). If the
+  run loop has stopped or the consuming connection is unreachable, the beat is skipped so the
+  worker stops looking alive. A run loop that outright rejects is unrecoverable in-process: the
+  worker logs and exits nonzero so the platform restarts it, and the missed check alerts in the
+  gap. The worker pings **only** `WORKER_CHECK_URL` — never a cron's check — and beats regardless
+  of `WORKER_KILL_SWITCH` (a kill-switched worker is intentionally not running yet still a live
+  process, so its run-loop gate is skipped and only its Redis reachability is checked).
 - **No PII, ever, in a ping or its error.** A ping-transport failure is logged as sanitized
   operational context: the component name and a coarse reason only. The check **URL**, secrets,
   transcript content, `customer_language`, phone numbers, names, and any customer data are

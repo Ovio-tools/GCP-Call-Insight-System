@@ -6,3 +6,8 @@ export {
   pingSuccess,
   startLivenessHeartbeat,
 } from './emit.js';
+export {
+  type RedisPingable,
+  type RunLoopStatus,
+  createWorkerLivenessProbe,
+} from './worker-liveness.js';
