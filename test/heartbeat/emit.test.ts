@@ -29,7 +29,11 @@ function manualScheduler(): {
   intervalMs: number | undefined;
   cleared: boolean;
 } {
-  const state = { fire: (): void => {}, intervalMs: undefined as number | undefined, cleared: false };
+  const state = {
+    fire: (): void => {},
+    intervalMs: undefined as number | undefined,
+    cleared: false,
+  };
   const scheduler: IntervalScheduler = {
     set(callback, ms) {
       state.fire = callback;
@@ -76,9 +80,7 @@ describe('pingSuccess', () => {
 
   it('logs a sanitized failure and never throws when the ping rejects', async () => {
     const { lines, logger } = collectingLogger();
-    const ping = vi.fn(() =>
-      Promise.reject(new Error(`connect ECONNREFUSED ${RETENTION_URL}`)),
-    );
+    const ping = vi.fn(() => Promise.reject(new Error(`connect ECONNREFUSED ${RETENTION_URL}`)));
 
     await expect(
       pingSuccess({ component: 'retention-cron', url: RETENTION_URL, logger, ping }),

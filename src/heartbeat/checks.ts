@@ -29,7 +29,7 @@ export function checkUrlVar(component: HeartbeatComponent): keyof Config {
 
 /** A component's own configured check URL, or undefined when unset (dev/test skip the ping). */
 export function checkUrlFor(config: Config, component: HeartbeatComponent): string | undefined {
-  return config[CHECK_URL_VAR[component]] as string | undefined;
+  return config[CHECK_URL_VAR[component]];
 }
 
 /**

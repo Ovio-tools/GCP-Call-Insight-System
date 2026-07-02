@@ -47,7 +47,9 @@ describe('per-component heartbeat independence', () => {
     // Reconciliation stalls: the Dialpad listing errors out mid-run.
     const failing: Pick<DialpadClient, 'listRecentlyConcludedCalls'> = {
       listRecentlyConcludedCalls: () =>
-        Promise.reject(new DialpadError('rate_limited', { endpoint: 'calls', status: 429, attempts: 5 })),
+        Promise.reject(
+          new DialpadError('rate_limited', { endpoint: 'calls', status: 429, attempts: 5 }),
+        ),
     };
     const reconConfig = makeTestConfig({ RECONCILIATION_CHECK_URL: RECON_URL });
 

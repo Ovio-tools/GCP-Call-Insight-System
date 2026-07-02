@@ -2,7 +2,12 @@ import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { keepAlive } from '../boot/keepalive.js';
-import { checkUrlFor, httpPing, requireCheckUrl, startLivenessHeartbeat } from '../heartbeat/index.js';
+import {
+  checkUrlFor,
+  httpPing,
+  requireCheckUrl,
+  startLivenessHeartbeat,
+} from '../heartbeat/index.js';
 import { createAppPool } from '../db/index.js';
 import { keyProviderFromConfig } from '../crypto/index.js';
 import { createDialpadClient, RedisDualWindowLimiter } from '../dialpad/client/index.js';
