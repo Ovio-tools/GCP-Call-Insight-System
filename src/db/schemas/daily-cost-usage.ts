@@ -17,7 +17,9 @@ export const dailyCostUsageInputSchema = z.object({
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   inputTokens: z.number().int().nonnegative(),
   outputTokens: z.number().int().nonnegative(),
-  estimatedCost: z.number().nonnegative(),
+  // `.finite()` rejects Infinity/NaN at the boundary as DAL_VALIDATION_FAILED rather than
+  // letting `Infinity.toFixed(6)` reach pg as the string "Infinity".
+  estimatedCost: z.number().finite().nonnegative(),
 });
 export type DailyCostUsageInput = z.infer<typeof dailyCostUsageInputSchema>;
 
@@ -28,6 +30,8 @@ export const dailyCostAdjustmentSchema = z.object({
   day: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   inputTokensDelta: z.number().int().nonnegative(),
   outputTokensDelta: z.number().int().nonnegative(),
-  estimatedCostDelta: z.number(),
+  // `.finite()` rejects Infinity/NaN at the boundary as DAL_VALIDATION_FAILED rather than
+  // letting `(±Infinity).toFixed(6)` reach pg as the string "Infinity".
+  estimatedCostDelta: z.number().finite(),
 });
 export type DailyCostAdjustment = z.infer<typeof dailyCostAdjustmentSchema>;

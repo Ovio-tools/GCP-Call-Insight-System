@@ -49,10 +49,12 @@ export const STATUS_COMPLETED = 'completed';
 export const STATUS_SKIPPED = 'skipped';
 
 /**
- * Stages permitted to end in a `skipped` drop. Only the metadata pre-filter drops today;
- * the runner's terminal `skipped` guard validates `current_stage` against this set.
+ * Stages permitted to end in a `skipped` drop. The metadata pre-filter drops obvious junk;
+ * `classify` (Task 5.1) drops a `non-customer` call with `drop_reason='classified_non_customer'`.
+ * The runner's terminal `skipped` guard validates `current_stage` against this set, so a
+ * re-enqueued non-customer call is a safe no-op.
  */
-export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set(['metadata-pre-filter']);
+export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set(['metadata-pre-filter', 'classify']);
 
 /**
  * `held` — a stage set the call aside for a person (a `review_queue` row was written).

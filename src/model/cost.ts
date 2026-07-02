@@ -54,10 +54,12 @@ export function estimateCostUsd(i: {
 
 /**
  * GUARANTEED upper bound on input tokens:
- * `Buffer.byteLength(system + userText + outputFormatJson, 'utf8')`
- * + `config.CLASSIFY_RESERVATION_OVERHEAD_TOKENS`. A token always encodes >= 1 byte of
- * text, so the UTF-8 byte count can never undercount; the overhead term covers
- * structured-output/request scaffolding. Reservation sizing in the caller uses
+ * `Buffer.byteLength(system + userText + outputFormatJson, 'utf8')` + `overheadTokens`.
+ * A token always encodes >= 1 byte of text, so the UTF-8 byte count can never undercount;
+ * the `overheadTokens` term covers structured-output/request scaffolding. Stage-agnostic
+ * (no `Config` dependency) so Task 5.2's extract stage can reuse it, and symmetric with
+ * `ModelRates`' no-defaults principle: the caller passes its own stage's overhead (classify:
+ * `CLASSIFY_RESERVATION_OVERHEAD_TOKENS`). Reservation sizing in the caller uses
  * `max(CLASSIFY_INPUT_TOKENS_CEILING, estimatePayloadTokens(...))` — this module only
  * provides the pieces.
  */
@@ -65,12 +67,9 @@ export function estimatePayloadTokens(i: {
   system: string;
   userText: string;
   outputFormatJson: string;
-  config: Config;
+  overheadTokens: number;
 }): number {
-  return (
-    Buffer.byteLength(i.system + i.userText + i.outputFormatJson, 'utf8') +
-    i.config.CLASSIFY_RESERVATION_OVERHEAD_TOKENS
-  );
+  return Buffer.byteLength(i.system + i.userText + i.outputFormatJson, 'utf8') + i.overheadTokens;
 }
 
 /** UTC calendar day ('YYYY-MM-DD') for `now` — the cap window boundary is UTC. */
@@ -78,6 +77,11 @@ export function utcDay(now: Date): string {
   return now.toISOString().slice(0, 10);
 }
 
+/**
+ * A held reservation against a day's cap. Each reservation must be settled OR released at
+ * most once; the module does not enforce this (a double release on a shared day-total ledger
+ * would free another reservation's budget).
+ */
 export interface BudgetReservation {
   day: string;
   reservedUsd: number;

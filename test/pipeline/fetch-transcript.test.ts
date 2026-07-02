@@ -120,9 +120,13 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
 
     await runPipeline(app, callId, createRootLogger({ level: 'silent' }), set);
 
-    // Advanced past fetch-transcript to completion, and the transcript is encrypted at rest.
+    // Advanced past fetch-transcript (the transcript is stored, encrypted at rest). The
+    // pipeline then parks at the now-real classify stage, which defers while CLASSIFY_ENABLED
+    // is false (the test config default) — so the call is still `processing`, not `completed`,
+    // and never reached fetch-transcript twice.
     const state = await getCallState(app, callId);
-    expect(state?.status).toBe('completed');
+    expect(state?.status).toBe('processing');
+    expect(state?.current_stage).toBe('classify');
     expect(await getTranscript(app, keyProvider, callId)).toBe('RAW BODY');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });

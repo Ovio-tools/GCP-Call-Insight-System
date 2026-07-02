@@ -132,6 +132,35 @@ describe.skipIf(!hasTestDb)('daily-cost-usage repo (Task 5.1 adjust path)', () =
     }
   });
 
+  it('rejects a non-finite cost at the schema boundary (Infinity never reaches pg)', async () => {
+    // Without `.finite()`, Infinity.toFixed(6) === "Infinity" would reach pg as a bad numeric.
+    const insertErr = await upsertDailyCost(app, {
+      day: '1999-02-08',
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCost: Number.POSITIVE_INFINITY,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(insertErr).toBeInstanceOf(DalError);
+    expect((insertErr as DalError).code).toBe(DAL_VALIDATION_FAILED);
+
+    const adjustErr = await adjustDailyCost(app, {
+      day: '1999-02-08',
+      inputTokensDelta: 0,
+      outputTokensDelta: 0,
+      estimatedCostDelta: Number.POSITIVE_INFINITY,
+    }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(adjustErr).toBeInstanceOf(DalError);
+    expect((adjustErr as DalError).code).toBe(DAL_VALIDATION_FAILED);
+    // Nothing was written.
+    expect(await getDay(app, '1999-02-08')).toBeUndefined();
+  });
+
   it('getDay/upsertDailyCost enlist in an open transaction (rollback leaves no row)', async () => {
     const day = '1999-02-07';
     await expect(

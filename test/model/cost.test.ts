@@ -49,8 +49,6 @@ describe('estimateCostUsd', () => {
 });
 
 describe('estimatePayloadTokens', () => {
-  const config = makeTestConfig({ CLASSIFY_RESERVATION_OVERHEAD_TOKENS: 1_000 });
-
   it('is UTF-8 byte length + overhead for punctuation-heavy ASCII', () => {
     const system = 'You are a call classifier.';
     const userText = '!!!???;;;,,,---(((...)))"quoted" [bracketed] {braced} <tagged> a.b.c-d_e';
@@ -59,9 +57,9 @@ describe('estimatePayloadTokens', () => {
     // ASCII: 1 byte per char, and a token always encodes >= 1 byte, so this bounds any
     // tokenizer's count no matter how punctuation fragments into single-char tokens.
     expect(bytes).toBe((system + userText + outputFormatJson).length);
-    expect(estimatePayloadTokens({ system, userText, outputFormatJson, config })).toBe(
-      bytes + 1_000,
-    );
+    expect(
+      estimatePayloadTokens({ system, userText, outputFormatJson, overheadTokens: 1_000 }),
+    ).toBe(bytes + 1_000);
   });
 
   it('counts bytes, not chars, for multi-byte Unicode (bytes > chars)', () => {
@@ -69,9 +67,14 @@ describe('estimatePayloadTokens', () => {
     const combined = 'sys' + userText + '{}';
     const bytes = Buffer.byteLength(combined, 'utf8');
     expect(bytes).toBeGreaterThan(combined.length); // multi-byte really in play
-    expect(estimatePayloadTokens({ system: 'sys', userText, outputFormatJson: '{}', config })).toBe(
-      bytes + 1_000,
-    );
+    expect(
+      estimatePayloadTokens({
+        system: 'sys',
+        userText,
+        outputFormatJson: '{}',
+        overheadTokens: 1_000,
+      }),
+    ).toBe(bytes + 1_000);
   });
 
   it('the overhead term alone can decide whether the reservation fits under the cap', () => {
@@ -79,11 +82,8 @@ describe('estimatePayloadTokens', () => {
     const rates: ModelRates = { inputUsdPerMtok: 1_000_000, outputUsdPerMtok: 0 };
     const payload = { system: '', userText: 'x'.repeat(1_000), outputFormatJson: '' };
     const capUsd = 1_500;
-    const withoutOverhead = estimatePayloadTokens({
-      ...payload,
-      config: makeTestConfig({ CLASSIFY_RESERVATION_OVERHEAD_TOKENS: 0 }),
-    });
-    const withOverhead = estimatePayloadTokens({ ...payload, config });
+    const withoutOverhead = estimatePayloadTokens({ ...payload, overheadTokens: 0 });
+    const withOverhead = estimatePayloadTokens({ ...payload, overheadTokens: 1_000 });
     const costOf = (tokens: number) =>
       estimateCostUsd({ inputTokens: tokens, outputTokens: 0, rates });
     expect(costOf(withoutOverhead)).toBeLessThanOrEqual(capUsd);
