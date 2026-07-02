@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { DAL_STALE_STAGE, DalError, parseOrThrow } from '../errors.js';
 import { query, toJsonParam, withTransaction } from '../sql.js';
 import { type JsonValue, jsonValueSchema } from '../types.js';
-import { type DropReason, dropReasonSchema } from '../enums.js';
+import { type DropReason, type HeldReason, dropReasonSchema, heldReasonSchema } from '../enums.js';
 import {
   type CallStateInsert,
   type CallStateRow,
@@ -121,6 +121,25 @@ export async function advanceStage(pool: Pool, input: AdvanceStageInput): Promis
   });
 }
 
+/**
+ * Stamp `transcript_wait_started_at = now()` the FIRST time fetch-transcript sees a
+ * not-ready transcript, and return the effective (first) wait-start. `COALESCE` keeps the
+ * existing value, so repeated not-ready observations never reset the window and the call
+ * is racesafe across concurrent runners. Returns null only if the call_state row is gone.
+ */
+export async function markTranscriptWaitStarted(pool: Pool, callId: string): Promise<Date | null> {
+  const rows = await query<{ transcript_wait_started_at: Date | null }>(
+    pool,
+    `UPDATE call_state
+       SET transcript_wait_started_at = COALESCE(transcript_wait_started_at, now()),
+           updated_at = now()
+     WHERE call_id = $1
+     RETURNING transcript_wait_started_at`,
+    [callId],
+  );
+  return rows[0]?.transcript_wait_started_at ?? null;
+}
+
 export interface SkipCallInput {
   callId: string;
   /** Optimistic guard: only skip a call currently at this stage. */
@@ -180,6 +199,93 @@ export async function skipCall(pool: Pool, input: SkipCallInput): Promise<CallSt
       callId: v.callId,
       stage: v.atStage,
       outcome: 'skipped',
+      detail,
+    });
+
+    return parseOrThrow(TABLE, callStateRowSchema, rows[0]);
+  });
+}
+
+export interface HoldCallInput {
+  callId: string;
+  /** Optimistic guard: only hold a call currently at this stage. */
+  atStage: string;
+  heldReason: HeldReason;
+  /** Failure-model error code recorded on the processing_log row (e.g. DIALPAD_TRANSCRIPT_MISSING). */
+  errorCode?: string;
+  /** A JSON object of PII-free extra detail merged into the processing_log row. */
+  logDetail?: Record<string, JsonValue>;
+}
+
+const holdCallSchema = z.object({
+  callId: z.string().min(1),
+  atStage: z.string().min(1),
+  heldReason: heldReasonSchema,
+  errorCode: z.string().min(1).optional(),
+  logDetail: z.record(z.string(), jsonValueSchema).optional(),
+});
+
+/**
+ * Mark a call `held`, write its `review_queue` row, AND append a `processing_log` row —
+ * all in ONE transaction, mirroring {@link skipCall}. This is the terminal-hold path a
+ * stage takes when it sets a call aside for a person (e.g. fetch-transcript's
+ * `missing_transcript`). `current_stage` is left where it is; the row is never deleted.
+ *
+ * The `status='processing'` term in the guard makes the write idempotent under
+ * concurrency: once the row is `held`, a second runner matches zero rows and gets
+ * {@link DAL_STALE_STAGE}, so no duplicate review_queue/log row is written. The SLA is
+ * seeded to now()+24h here (a coarse default; the review surface, Task 6.x, owns SLA
+ * policy). Unlike a drop, a hold IS a failure-model event, so `error_code` is recorded.
+ */
+export async function holdCall(pool: Pool, input: HoldCallInput): Promise<CallStateRow> {
+  const v = parseOrThrow(TABLE, holdCallSchema, input);
+
+  return withTransaction(pool, async (client) => {
+    // 'processing'/'held' are the pipeline layer's status vocabulary; kept as SQL literals
+    // here (like skipCall) to avoid a db -> pipeline layering dependency.
+    const rows = await query<CallStateRow>(
+      client,
+      `UPDATE call_state
+         SET status = 'held', updated_at = now()
+       WHERE call_id = $1 AND current_stage = $2 AND status = 'processing'
+       RETURNING *`,
+      [v.callId, v.atStage],
+    );
+
+    if (rows.length === 0) {
+      throw new DalError(
+        DAL_STALE_STAGE,
+        `${DAL_STALE_STAGE}: call_state ${v.callId} not holdable at stage ${v.atStage}`,
+        { table: TABLE, call_id: v.callId },
+      );
+    }
+
+    // Only insert a review_queue row if the call isn't already open/in_review — defensive,
+    // though the status guard above already serializes holds. We hold the call_state row
+    // lock via the UPDATE above, so this check is race-free within the transaction.
+    const existing = await query<{ id: string }>(
+      client,
+      `SELECT id FROM review_queue WHERE call_id = $1 AND status IN ('open', 'in_review') LIMIT 1`,
+      [v.callId],
+    );
+    if (existing.length === 0) {
+      await query(
+        client,
+        `INSERT INTO review_queue (call_id, held_reason, sla_due_at)
+         VALUES ($1, $2, now() + interval '24 hours')`,
+        [v.callId, v.heldReason],
+      );
+    }
+
+    // Trusted held_reason goes LAST so a caller's logDetail can never shadow it — the
+    // processing_log audit trail must always match the held_reason written to review_queue.
+    const detail: JsonValue = { ...(v.logDetail ?? {}), held_reason: v.heldReason };
+
+    await appendLog(client, {
+      callId: v.callId,
+      stage: v.atStage,
+      outcome: 'held',
+      ...(v.errorCode !== undefined ? { errorCode: v.errorCode } : {}),
       detail,
     });
 

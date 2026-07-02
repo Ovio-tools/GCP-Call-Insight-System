@@ -12,8 +12,11 @@ import {
 import {
   advanceStage,
   getCallState,
+  holdCall,
   upsertCallState,
 } from '../../src/db/repositories/call-state-repo.js';
+import { setStatus } from '../../src/db/repositories/review-queue-repo.js';
+import type { ReviewStatus } from '../../src/db/enums.js';
 import { listByCall } from '../../src/db/repositories/processing-log-repo.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
 import { cleanupCalls, makeAppPool } from '../db/_dal.js';
@@ -145,4 +148,107 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
 
     await expect(runPipeline(app, callId, logger, handlers)).rejects.toThrow(/inconsistent/i);
   });
+
+  it('defer stops at the stage without advancing or failing (and resumes later)', async () => {
+    const callId = 'test-sm-defer';
+    await seed(callId, 'fetch-transcript');
+
+    // A stage that defers: the handler has scheduled its own re-run, so the runner stops.
+    const deferHandlers = handlersWith({
+      'fetch-transcript': () => Promise.resolve({ action: 'defer' as const }),
+    });
+    await runPipeline(app, callId, logger, deferHandlers);
+
+    let state = await getCallState(app, callId);
+    expect(state?.status).toBe(STATUS_PROCESSING);
+    expect(state?.current_stage).toBe('fetch-transcript');
+    // No 'completed' advance log was written for the deferred stage.
+    expect(await loggedStages(callId)).not.toContain('fetch-transcript');
+
+    // On the delayed re-run the transcript is ready: the pipeline resumes and completes.
+    await runPipeline(app, callId, logger); // default stubs continue
+    state = await getCallState(app, callId);
+    expect(state?.status).toBe(STATUS_COMPLETED);
+  });
+
+  it('hold sets the call aside (held + review_queue) and is a terminal no-op on re-run', async () => {
+    const callId = 'test-sm-hold';
+    await seed(callId, 'fetch-transcript');
+
+    const holdHandlers = handlersWith({
+      'fetch-transcript': () =>
+        Promise.resolve({
+          action: 'hold' as const,
+          reason: 'missing_transcript' as const,
+          errorCode: 'DIALPAD_TRANSCRIPT_MISSING' as const,
+        }),
+    });
+    await runPipeline(app, callId, logger, holdHandlers);
+
+    const state = await getCallState(app, callId);
+    expect(state?.status).toBe('held');
+    expect(state?.current_stage).toBe('fetch-transcript');
+    const reviews = await owner.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM review_queue WHERE call_id = $1`,
+      [callId],
+    );
+    expect(reviews.rows[0]?.n).toBe('1');
+
+    // Re-enqueue of a held call: terminal no-op, the hold handler must NOT run again.
+    const heldLogsBefore = (await loggedStages(callId)).length;
+    let ran = false;
+    await runPipeline(
+      app,
+      callId,
+      logger,
+      handlersWith({
+        'fetch-transcript': () => {
+          ran = true;
+          return Promise.resolve({ action: 'continue' as const });
+        },
+      }),
+    );
+    expect(ran).toBe(false);
+    expect((await loggedStages(callId)).length).toBe(heldLogsBefore);
+  });
+
+  it('rejects a corrupt held row sitting at an unknown stage', async () => {
+    const callId = 'test-sm-held-badstage';
+    await seed(callId, 'not-a-real-stage', 'held');
+    await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
+  });
+
+  it('rejects a held row with no review_queue record (lost from review)', async () => {
+    const callId = 'test-sm-held-noreview';
+    // A held status at a valid stage but WITHOUT the review row holdCall would have written.
+    await seed(callId, 'fetch-transcript', 'held');
+    await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
+  });
+
+  // Hold the call (open review), then move its review to `reviewStatus`.
+  const holdThenSetReview = async (callId: string, reviewStatus: ReviewStatus): Promise<void> => {
+    await seed(callId, 'fetch-transcript');
+    await holdCall(app, { callId, atStage: 'fetch-transcript', heldReason: 'missing_transcript' });
+    const { rows } = await owner.query<{ id: string }>(
+      `SELECT id FROM review_queue WHERE call_id = $1`,
+      [callId],
+    );
+    await setStatus(app, rows[0]!.id, reviewStatus);
+  };
+
+  it('held + in_review review is a no-op (still an active hold)', async () => {
+    const callId = 'test-sm-held-inreview';
+    await holdThenSetReview(callId, 'in_review');
+    await runPipeline(app, callId, logger); // must not throw
+    expect((await getCallState(app, callId))?.status).toBe('held');
+  });
+
+  it.each(['resolved', 'unresolvable'] as const)(
+    'rejects a held row whose only review is %s (no active hold, call_state not moved off held)',
+    async (reviewStatus) => {
+      const callId = `test-sm-held-${reviewStatus}`;
+      await holdThenSetReview(callId, reviewStatus);
+      await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
+    },
+  );
 });

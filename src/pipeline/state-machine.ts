@@ -1,16 +1,24 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { DalError, DAL_STALE_STAGE } from '../db/index.js';
-import { advanceStage, getCallState, skipCall } from '../db/repositories/call-state-repo.js';
+import {
+  advanceStage,
+  getCallState,
+  holdCall,
+  skipCall,
+} from '../db/repositories/call-state-repo.js';
+import { hasActiveReviewForCall } from '../db/repositories/review-queue-repo.js';
 import { PipelineStageError } from './errors.js';
 import {
   FINAL_STAGE,
   PIPELINE_STAGES,
   SKIP_STAGES,
   STATUS_COMPLETED,
+  STATUS_HELD,
   STATUS_PROCESSING,
   STATUS_SKIPPED,
   defaultStageHandlers,
+  isPipelineStage,
   type PipelineStage,
   type StageHandlers,
   type StageResult,
@@ -122,6 +130,25 @@ export async function runPipeline(
     );
   }
 
+  // Terminal no-op guard for a held call — mirrors the completed/skipped guards. A valid
+  // `held` row sits at a known stage AND has an ACTIVE review_queue row (holdCall writes both
+  // atomically). Re-enqueueing it must never re-run stages. A held row missing either
+  // invariant — unknown stage, or no active review (e.g. resolved but call_state not moved
+  // off `held`) — is real corruption, not a completed hold, so surface it rather than
+  // silently dropping the call from the pipeline forever.
+  if (state.status === STATUS_HELD) {
+    const knownStage = isPipelineStage(state.current_stage);
+    const hasReview = knownStage && (await hasActiveReviewForCall(pool, callId));
+    if (knownStage && hasReview) {
+      logger.info({ stage: state.current_stage }, 'call already held — no-op');
+      return;
+    }
+    throw new Error(
+      `${callId}: held status paired with stage '${state.current_stage}' / active review ` +
+        `${String(hasReview)} — inconsistent`,
+    );
+  }
+
   // Validate the starting stage before walking, so an unknown stage can't index from -1.
   let index = dbStageIndex(state.current_stage);
   if (index === -1) {
@@ -158,6 +185,43 @@ export async function runPipeline(
         if (!raced) throw new Error(`call_state row for ${callId} vanished mid-skip`);
         if (raced.status === STATUS_SKIPPED || raced.status === STATUS_COMPLETED) return;
         throw new Error(`${callId}: skip raced but status is '${raced.status}' — inconsistent`);
+      }
+      return;
+    }
+
+    // A stage asked to defer: it has already scheduled its own delayed re-run (e.g. a
+    // not-ready transcript retry). STOP here without advancing or failing — the call stays
+    // at this stage in `processing` and resumes when the delayed job fires.
+    if (result && result.action === 'defer') {
+      logger.info({ stage }, 'stage deferred — awaiting delayed re-run');
+      return;
+    }
+
+    // A stage asked to hold the call for a person: hold it atomically (status + review_queue
+    // + processing_log) and STOP. Mirrors the drop path's stale-race handling.
+    if (result && result.action === 'hold') {
+      try {
+        await holdCall(pool, {
+          callId,
+          atStage: stage,
+          heldReason: result.reason,
+          ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
+          ...(result.detail !== undefined ? { logDetail: result.detail } : {}),
+        });
+      } catch (err) {
+        if (!isStaleStageError(err)) throw err;
+        // A concurrent runner won the race. Re-read: a terminal state is a legitimate
+        // no-op; anything else is a real inconsistency.
+        const raced = await getCallState(pool, callId);
+        if (!raced) throw new Error(`call_state row for ${callId} vanished mid-hold`);
+        if (
+          raced.status === STATUS_HELD ||
+          raced.status === STATUS_SKIPPED ||
+          raced.status === STATUS_COMPLETED
+        ) {
+          return;
+        }
+        throw new Error(`${callId}: hold raced but status is '${raced.status}' — inconsistent`);
       }
       return;
     }

@@ -32,6 +32,21 @@ export async function putTranscript(
   );
 }
 
+/**
+ * Whether a live (non-deleted) transcript row exists for a call — WITHOUT decrypting it.
+ * The transcript-availability gate uses this to confirm fetch-transcript stored something
+ * before redact, avoiding a needless decrypt of sensitive content just to check presence.
+ */
+export async function transcriptExists(pool: Pool, callId: string): Promise<boolean> {
+  const rows = await query<{ one: number }>(
+    pool,
+    `SELECT 1 AS one FROM raw_transcripts
+      WHERE call_id = $1 AND soft_deleted_at IS NULL AND hard_deleted_at IS NULL`,
+    [callId],
+  );
+  return rows.length > 0;
+}
+
 /** Decrypt and return the transcript for a call, or undefined if absent/soft-deleted. */
 export async function getTranscript(
   pool: Pool,

@@ -137,6 +137,41 @@ export const configSchema = z.object({
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
   OIDC_REDIRECT_URI: z.string().url().optional(),
   OIDC_SCOPES: z.string().min(1).default('openid profile email'),
+
+  // --- Dialpad transcript client (Task 3.3) ---
+
+  /** Dialpad API base URL (v2). Confirmed against the public API reference. */
+  DIALPAD_BASE_URL: z.string().url().default('https://dialpad.com/api/v2'),
+
+  /** Dialpad API key (used as a Bearer token; an OAuth access token works the same way).
+   * Optional at boot like DATABASE_URL — the consumer (worker / reconciliation cron)
+   * fail-fast-validates presence via requireDialpadConfig, emitting
+   * CONFIG_MISSING_OR_INVALID that NAMES this variable. Never a real value in the repo. */
+  DIALPAD_API_KEY: z.string().min(1).optional(),
+
+  /** Per-request timeout (ms) for a Dialpad HTTP call. Fail fast, never hang. */
+  DIALPAD_API_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+
+  /** Retries AFTER the first attempt for 429 / 5xx / timeout (⇒ up to 1 + this total HTTP
+   * calls). Distinct from WORKER_MAX_ATTEMPTS, which INCLUDES the first attempt. */
+  DIALPAD_API_MAX_RETRIES: z.coerce.number().int().nonnegative().default(4),
+
+  /** Base delay (ms) for the client's exponential backoff + full jitter between retries. */
+  DIALPAD_API_BACKOFF_MS: z.coerce.number().int().positive().default(500),
+
+  /** Transcript-endpoint rate limit: requests per minute (Dialpad documents 1200/min). */
+  DIALPAD_RATE_PER_MINUTE: z.coerce.number().int().positive().default(1200),
+
+  /** Company-wide rate limit: requests per second. The shared limiter enforces the tighter
+   * of this and the per-minute cap across every worker + cron instance. */
+  DIALPAD_RATE_PER_SECOND: z.coerce.number().int().positive().default(20),
+
+  /** How long (ms) a not-yet-ready transcript may be waited on before the call is held with
+   * missing_transcript. Default 30 min. */
+  DIALPAD_TRANSCRIPT_WAIT_MAX_MS: z.coerce.number().int().positive().default(1_800_000),
+
+  /** Delay (ms) between not-ready transcript retries (the delayed re-enqueue cadence). */
+  DIALPAD_TRANSCRIPT_POLL_MS: z.coerce.number().int().positive().default(60_000),
 });
 
 /** Validated, typed configuration object. */

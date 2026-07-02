@@ -22,8 +22,9 @@ replay/timestamp checks, or error shaping.
 
 Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
 per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), the shared
-HTTP hardening/auth middleware (Task 2.3), and the metadata pre-filter stage (Task 3.1)
-exist; the remaining model steps, surfaces, and crons do not yet.
+HTTP hardening/auth middleware (Task 2.3), the metadata pre-filter stage (Task 3.1),
+and the Dialpad transcript client (Task 3.3, `src/dialpad/client/`) exist; the remaining
+model steps, surfaces, and crons do not yet.
 
 ## 1. Architecture
 

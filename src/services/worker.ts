@@ -3,6 +3,9 @@ import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { keepAlive } from '../boot/keepalive.js';
 import { createAppPool } from '../db/index.js';
+import { keyProviderFromConfig } from '../crypto/index.js';
+import { createDialpadClient, RedisDualWindowLimiter } from '../dialpad/client/index.js';
+import { buildProductionStageHandlers } from '../pipeline/handlers.js';
 import { createQueueConnectionFromConfig } from '../queue/connection.js';
 import { createPipelineQueue } from '../queue/pipeline-queue.js';
 import { createPipelineWorker } from '../worker/worker.js';
@@ -21,11 +24,29 @@ async function main(): Promise<void> {
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
 
   const pool = createAppPool(config.DATABASE_URL);
-  // Separate connections: the worker's blocking BRPOPLPUSH must not tie up the queue's.
+  // Separate connections: the worker's blocking BRPOPLPUSH must not tie up the queue's, and
+  // the outbound Dialpad rate limiter (non-blocking evals) gets its own so it can't stall
+  // behind either.
   const queueConnection = createQueueConnectionFromConfig(config);
   const workerConnection = createQueueConnectionFromConfig(config);
+  const limiterConnection = createQueueConnectionFromConfig(config);
   const queue = createPipelineQueue(config, queueConnection);
-  const worker = createPipelineWorker(config, pool, workerConnection, { logger });
+
+  // Real stage handlers: the Dialpad transcript client (Task 3.3) fetches through a shared
+  // Redis limiter so the company-wide + per-endpoint caps hold across every worker instance.
+  const keyProvider = keyProviderFromConfig(config);
+  const limiter = new RedisDualWindowLimiter(limiterConnection, {
+    perSecond: config.DIALPAD_RATE_PER_SECOND,
+    perMinute: config.DIALPAD_RATE_PER_MINUTE,
+  });
+  const dialpadClient = createDialpadClient({ config, limiter, logger });
+  const handlers = buildProductionStageHandlers({
+    client: dialpadClient,
+    keyProvider,
+    queue,
+    config,
+  });
+  const worker = createPipelineWorker(config, pool, workerConnection, { handlers, logger });
 
   if (config.WORKER_KILL_SWITCH) {
     logger.warn(
@@ -48,6 +69,7 @@ async function main(): Promise<void> {
   await queue.close();
   await queueConnection.quit();
   await workerConnection.quit();
+  await limiterConnection.quit();
   await pool.end();
 }
 
