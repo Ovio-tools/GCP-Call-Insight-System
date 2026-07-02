@@ -18,3 +18,6 @@ npm-debug.log*
 .DS_Store
 .idea/
 *.tsbuildinfo
+
+# Vendored NER model weights (fetched by npm run model:fetch)
+models/

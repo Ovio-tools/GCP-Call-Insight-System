@@ -66,14 +66,30 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Build BEFORE test: `npm run model:fetch` executes from dist/, and the
+      # model-gated redaction suites (recall gate, no-egress) need the weights.
+      - name: Build
+        run: npm run build
+
+      # Vendored NER model for the Task 4.1 redaction suites. Cached by lockfile +
+      # model id; on a cache hit model:fetch is a near-no-op. The redaction ci-guard
+      # test fails if TEST_NER_MODEL_DIR is unset, so the recall gate can never
+      # silently skip on a PR.
+      - name: Cache NER model
+        uses: actions/cache@v4
+        with:
+          path: models
+          key: ner-model-${{ hashFiles('package-lock.json') }}-Xenova/bert-base-NER
+
+      - name: Fetch NER model
+        run: npm run model:fetch
+
       - name: Test
         run: npm run test
         env:
           TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
           TEST_REDIS_URL: redis://localhost:6379
-
-      - name: Build
-        run: npm run build
+          TEST_NER_MODEL_DIR: models
 
       - name: Audit dependencies
         run: npm audit --audit-level=high
