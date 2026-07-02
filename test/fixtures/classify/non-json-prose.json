@@ -1,0 +1,10 @@
+{
+  "name": "non-json-prose",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "This appears to be a customer calling to book a service visit.",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "non_json" }
+}

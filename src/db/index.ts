@@ -12,6 +12,7 @@ export {
   DAL_STALE_STAGE,
   DAL_QUERY_FAILED,
   DAL_RESTRICTED_ACCESS_DENIED,
+  DAL_COST_ADJUST_REJECTED,
   type DalErrorCode,
 } from './errors.js';
 export type { JsonValue, Queryable } from './types.js';

@@ -1,0 +1,10 @@
+{
+  "name": "schema-wrong-bucket-cased",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"Customer\",\"reason\":\"capitalized bucket value is not in the enum\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "schema_invalid" }
+}

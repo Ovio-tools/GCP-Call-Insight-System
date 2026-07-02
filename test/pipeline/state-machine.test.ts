@@ -251,4 +251,33 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
       await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
     },
   );
+
+  it("lands a continue action detail on that stage's completed processing_log row", async () => {
+    const callId = 'test-sm-continue-detail';
+    await seed(callId, 'classify');
+
+    const handlers = handlersWith({
+      classify: () =>
+        Promise.resolve({ action: 'continue' as const, detail: { bucket: 'customer' } }),
+    });
+    await runPipeline(app, callId, logger, handlers);
+
+    const logs = await listByCall(app, callId);
+    const classifyLog = logs.find((r) => r.stage === 'classify' && r.outcome === 'completed');
+    expect(classifyLog?.detail).toEqual({ bucket: 'customer' });
+  });
+
+  it('a bare continue action (no detail) writes no detail, same as a void return', async () => {
+    const callId = 'test-sm-continue-no-detail';
+    await seed(callId, 'classify');
+
+    const handlers = handlersWith({
+      classify: () => Promise.resolve({ action: 'continue' as const }),
+    });
+    await runPipeline(app, callId, logger, handlers);
+
+    const logs = await listByCall(app, callId);
+    const classifyLog = logs.find((r) => r.stage === 'classify' && r.outcome === 'completed');
+    expect(classifyLog?.detail).toBeNull();
+  });
 });

@@ -1,0 +1,10 @@
+{
+  "name": "stop-refusal",
+  "redactedTranscript": "Caller: I need help with something.",
+  "modelResponse": {
+    "text": "I'm not able to help with that request.",
+    "stopReason": "refusal",
+    "usagePresent": true
+  },
+  "expected": { "failure": "refusal" }
+}
