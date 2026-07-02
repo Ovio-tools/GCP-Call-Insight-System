@@ -426,6 +426,26 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
     owner: PLATFORM,
     runbookRef: 'runbook#internal-error',
   },
+
+  // --- Extract stage (Task 5.2) ---
+  VERBATIM_PII_DETECTED: {
+    rootCauseCategory: 'VERBATIM_PII_DETECTED',
+    // dataSafe is deliberately FALSE — do not soften this. This is a POST-extraction hit:
+    // the redacted transcript already crossed to Anthropic and may have carried the same
+    // value (a redaction recall gap, or the extractor selected risky text), and the
+    // scan-stage path transiently persisted the phrase in staging before scrubbing. The
+    // wording must never claim nothing was stored or that data is definitely safe.
+    impact:
+      'Possible residual PII was detected in an extracted verbatim marketing phrase; the phrase is held and scrubbed rather than stored in structured_knowledge or exported, and the call needs review — likely a redaction recall gap or the extractor selecting risky text.',
+    remediationNow:
+      'Review the held call, discard or correct the flagged phrase, and check whether the redacted transcript sent to Anthropic contained the same value.',
+    remediationFix:
+      'Update the deny list, the redaction corpus, or the extractor prompt as the review indicates.',
+    dataSafe: false,
+    callsState: 'held',
+    owner: OVIO,
+    runbookRef: 'runbook#verbatim-pii-detected',
+  },
 };
 
 /**

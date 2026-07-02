@@ -545,4 +545,22 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     environment: 'staging',
     affectedScope: ['component', 'environment'],
   },
+  VERBATIM_PII_DETECTED: {
+    errorCode: 'VERBATIM_PII_DETECTED',
+    severity: 'high',
+    whatBroke: 'VERBATIM_PII_DETECTED',
+    likelyRootCause: 'VERBATIM_PII_DETECTED',
+    impact:
+      'Possible residual PII was detected in an extracted verbatim marketing phrase; the phrase is held and scrubbed rather than stored in structured_knowledge or exported, and the call needs review — likely a redaction recall gap or the extractor selecting risky text.',
+    immediateRemediation:
+      'Review the held call, discard or correct the flagged phrase, and check whether the redacted transcript sent to Anthropic contained the same value.',
+    longerTermFix:
+      'Update the deny list, the redaction corpus, or the extractor prompt as the review indicates.',
+    dataSafe: false,
+    callsState: 'held',
+    runbookRef: 'runbook#verbatim-pii-detected',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    environment: 'staging',
+    affectedScope: ['call_id', 'environment'],
+  },
 };
