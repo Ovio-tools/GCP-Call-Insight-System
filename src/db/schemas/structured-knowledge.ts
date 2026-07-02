@@ -1,11 +1,16 @@
 import { z } from 'zod';
-import { callIntentSchema, urgencySchema } from '../enums.js';
+import {
+  callIntentSchema,
+  sentimentSchema,
+  serviceCategorySchema,
+  urgencySchema,
+} from '../enums.js';
 
 /** structured_knowledge — the durable extracted record (execution plan 5.2). PK: call_id. */
 export const structuredKnowledgeRowSchema = z.object({
   call_id: z.string(),
   call_intent: callIntentSchema,
-  service_category: z.string(),
+  service_category: serviceCategorySchema,
   problem_statement: z.string().nullable(),
   symptoms: z.array(z.string()),
   customer_language: z.array(z.string()),
@@ -14,8 +19,8 @@ export const structuredKnowledgeRowSchema = z.object({
   prior_attempts: z.string().nullable(),
   urgency: urgencySchema,
   concerns: z.array(z.string()),
-  // Internal-only; controlled-value set finalized in Task 5.2. Text now.
-  sentiment: z.string(),
+  // Internal-only (ADR: sentiment internal only); controlled vocabulary owned by 5.2.
+  sentiment: sentimentSchema,
   acquisition_source: z.string().nullable(),
   competitor_mentions: z.array(z.string()),
   schema_version: z.number().int(),
@@ -28,7 +33,7 @@ export type StructuredKnowledgeRow = z.infer<typeof structuredKnowledgeRowSchema
 export const structuredKnowledgeInsertSchema = z.object({
   callId: z.string().min(1),
   callIntent: callIntentSchema,
-  serviceCategory: z.string().min(1),
+  serviceCategory: serviceCategorySchema,
   problemStatement: z.string().nullable().optional(),
   symptoms: z.array(z.string()).optional(),
   customerLanguage: z.array(z.string()).optional(),
@@ -37,7 +42,7 @@ export const structuredKnowledgeInsertSchema = z.object({
   priorAttempts: z.string().nullable().optional(),
   urgency: urgencySchema,
   concerns: z.array(z.string()).optional(),
-  sentiment: z.string().min(1),
+  sentiment: sentimentSchema,
   acquisitionSource: z.string().nullable().optional(),
   competitorMentions: z.array(z.string()).optional(),
   schemaVersion: z.number().int().positive(),

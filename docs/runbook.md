@@ -15,11 +15,12 @@ No section may contain transcript content or PII; refer to calls by `call_id` on
 **Code:** `VERBATIM_PII_DETECTED` · **Severity:** high · **Calls:** held · **Owner:** OVIO on-call
 
 The extract stage's second PII scan found possible residual PII in a model-extracted
-verbatim `customer_language` marketing phrase. The phrase was held/scrubbed and was not
-stored in `structured_knowledge` and will not be exported — but this is a
+verbatim `customer_language` marketing phrase. The phrase was held/scrubbed, was not
+stored in `structured_knowledge`, and will not be exported — but this is a
 **post-extraction** hit, so do not assume data is safe: the redacted transcript that
 produced the phrase already crossed to Anthropic and may have carried the same value,
-and the scan-stage path transiently persisted the phrase in staging before scrubbing.
+and the scan-stage path transiently persisted the phrase in the extraction staging
+table (`extraction_candidates`) before scrubbing.
 
 ### 1. Was it egressed? (do this first)
 

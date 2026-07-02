@@ -9,9 +9,10 @@ import { z } from 'zod';
  * duplicated here and a runtime parity test (`test/db/enum-parity.test.ts`) asserts
  * they match `enum_range(...)` in a live database.
  *
- * `current_stage`, `status`, `service_category`, `sentiment`, `gate_type` are `text`
- * columns in the schema (their value sets are owned by later tasks), so they are NOT
- * enums here.
+ * `current_stage`, `status`, `gate_type` are `text` columns in the schema (their value
+ * sets are owned by later tasks), so they are NOT enums here. `service_category` and
+ * `sentiment` are also `text` columns, but their value sets are owned by THIS file
+ * (Task 5.2: `SERVICE_CATEGORIES` / `SENTIMENTS` below, mirrored by CHECK constraints).
  */
 
 export const SEVERITY = ['critical', 'high', 'medium', 'low'] as const;
@@ -91,7 +92,7 @@ export const URGENCY = ['emergency', 'urgent', 'routine'] as const;
 /**
  * Extract-stage controlled vocabularies (Task 5.2). Text + CHECK vocabularies — NOT
  * native pg enums: the columns are `text` guarded by CHECK constraints that migration
- * `1782864000009_extract_stage.cjs` (upcoming) adds to `extraction_candidates` (and to
+ * `1782864000009_extract_stage.cjs` adds to `extraction_candidates` (and to
  * `structured_knowledge` for `service_category` / `sentiment`). These tuples MUST stay
  * in sync with those CHECK lists by hand (same duplication convention as `DROP_REASONS`
  * above). Do NOT add to `PG_ENUMS`.

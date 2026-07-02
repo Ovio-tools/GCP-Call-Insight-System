@@ -88,9 +88,9 @@ describe.skipIf(!hasTestDb)('upsert idempotency', () => {
     const base = {
       callId,
       callIntent: 'new_booking' as const,
-      serviceCategory: 'hvac',
+      serviceCategory: 'water_heater' as const,
       urgency: 'routine' as const,
-      sentiment: 'neutral',
+      sentiment: 'neutral' as const,
       schemaVersion: 1,
       promptVersion: 'v1',
       modelId: 'claude-haiku-4-5',
@@ -102,6 +102,25 @@ describe.skipIf(!hasTestDb)('upsert idempotency', () => {
     });
     expect(second.urgency).toBe('emergency');
     expect(await countActive('structured_knowledge', callId)).toBe(1);
+  });
+
+  it('structured_knowledge CHECKs reject uncontrolled category/sentiment at the SQL layer', async () => {
+    const callId = 'test-idem-sk-chk';
+    await seedCall(callId);
+    const insertRaw = (serviceCategory: string, sentiment: string) =>
+      owner.query(
+        `INSERT INTO structured_knowledge (
+           call_id, call_intent, service_category, urgency, sentiment,
+           schema_version, prompt_version, model_id)
+         VALUES ($1, 'new_booking', $2, 'routine', $3, 1, 'v1', 'm1')`,
+        [callId, serviceCategory, sentiment],
+      );
+    await expect(insertRaw('hvac', 'neutral')).rejects.toThrow(
+      /structured_knowledge_service_category_chk/,
+    );
+    await expect(insertRaw('water_heater', 'ecstatic')).rejects.toThrow(
+      /structured_knowledge_sentiment_chk/,
+    );
   });
 
   it('token_vault upsert on (call_id, token) keeps one row and re-encrypts', async () => {

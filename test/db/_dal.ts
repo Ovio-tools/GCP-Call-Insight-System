@@ -27,6 +27,7 @@ export async function cleanupCalls(owner: Pool, pattern: string): Promise<void> 
     'raw_transcripts',
     'clean_transcripts',
     'redaction_findings',
+    'extraction_candidates',
     'structured_knowledge',
     'processing_log',
     'dead_letter',
