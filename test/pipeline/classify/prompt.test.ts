@@ -79,6 +79,10 @@ describe('buildClassifyUserMessage', () => {
 });
 
 describe('wire schema / validation schema cross-check', () => {
+  // Both CLASSIFY_OUTPUT_FORMAT.schema.properties.bucket.enum and classificationSchema's
+  // bucket enum are derived from the single CLASSIFY_BUCKETS constant. This test guards
+  // against someone hardcoding one side out of sync with CLASSIFY_BUCKETS — it does NOT
+  // guard against a bad change to CLASSIFY_BUCKETS itself (both sides would still agree).
   it('the zod bucket enum equals the wire-schema bucket enum', () => {
     const wireEnum = CLASSIFY_OUTPUT_FORMAT.schema.properties.bucket.enum;
     // Derive the zod enum values by probing the schema.

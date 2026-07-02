@@ -30,6 +30,12 @@ export async function findParkedClassifyCalls(pool: Pool): Promise<string[]> {
     `SELECT cs.call_id
        FROM call_state cs
        JOIN LATERAL (
+         -- The id DESC tie-break assumes distinct created_at per row (processing_log.id is a
+         -- random uuid, not monotonic, so it cannot itself order same-timestamp rows). This
+         -- holds because the park marker and any later genuine classify log are always written
+         -- in separate transactions, so their created_at (transaction_timestamp) differ.
+         -- This per-call LATERAL subquery rides the existing processing_log_call_id_idx access
+         -- path and is acceptable for this bounded, one-shot operational script.
          SELECT pl.detail->>'reason' AS reason
            FROM processing_log pl
           WHERE pl.call_id = cs.call_id AND pl.stage = 'classify'

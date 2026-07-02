@@ -17,6 +17,8 @@ import { z } from 'zod';
 export const SEVERITY = ['critical', 'high', 'medium', 'low'] as const;
 
 /**
+ * `review_queue.held_reason` — why a call was held rather than dropped or stored.
+ *
  * `classified_spam` (Task 5.1): appended because the classify stage's spam outcome must
  * carry a `review_queue.held_reason` and no pre-existing value fits — spam is neither a
  * redaction failure, a model malfunction, nor a ServiceTitan-match problem. It is a

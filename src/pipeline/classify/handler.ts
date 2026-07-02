@@ -89,6 +89,9 @@ async function parkDisabled(pool: Pool, callId: string): Promise<void> {
     ]);
     // Is the LATEST classify processing_log row already the disabled marker? If so, this is a
     // re-run of an already-parked call — append nothing (idempotency).
+    // The id DESC tie-break assumes distinct created_at per row (processing_log.id is a random
+    // uuid, not monotonic); this holds because the park marker and any later genuine classify
+    // log are always written in separate transactions, so their created_at differs.
     const rows = await query<{ reason: string | null }>(
       client,
       `SELECT detail->>'reason' AS reason

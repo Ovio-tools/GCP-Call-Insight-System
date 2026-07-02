@@ -23,9 +23,12 @@ replay/timestamp checks, or error shaping.
 Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
 per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), the shared
 HTTP hardening/auth middleware (Task 2.3), the metadata pre-filter stage (Task 3.1),
-the Dialpad transcript client (Task 3.3, `src/dialpad/client/`), and the reconciliation
-cron (Task 3.4, `src/reconciliation/` + `src/services/reconciliation-cron.ts`) exist;
-the remaining model steps, surfaces, and the retention cron do not yet.
+the Dialpad transcript client (Task 3.3, `src/dialpad/client/`), the reconciliation
+cron (Task 3.4, `src/reconciliation/` + `src/services/reconciliation-cron.ts`), and the
+classify stage (Task 5.1, `src/pipeline/classify/`) with its Anthropic client wrapper
+(`src/anthropic/`), the shared model-cost guardrail (`src/model/cost.ts`), and the
+parked-call requeue script (`src/scripts/requeue-parked-classify.ts`) exist; the
+remaining model steps, surfaces, and the retention cron do not yet.
 
 ## 1. Architecture
 
