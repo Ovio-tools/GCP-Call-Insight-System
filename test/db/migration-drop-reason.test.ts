@@ -14,10 +14,16 @@ describe.skipIf(!hasTestDb)('migration 6 precondition (pre-existing skipped rows
     await pool.end();
   });
 
+  // Migrations added AFTER migration 6 (drop_reason) that must be rolled back to expose it.
+  // Bump this when a later migration is stacked on top: currently migration 7
+  // (call_state.transcript_wait) sits above 6, so we roll back 2 to reach the pre-6 schema.
+  const MIGRATIONS_ABOVE_6 = 2;
+
   it('fails loudly if a skipped call_state row pre-exists', async () => {
     const callId = 'test-drop-preexisting-skipped';
-    // Roll migration 6 back so drop_reason and its constraints are gone.
-    await migrate('down', 1);
+    // Roll back through the later migrations and migration 6, so drop_reason + its
+    // constraints are gone while call_state itself (migration 2) still exists.
+    await migrate('down', MIGRATIONS_ABOVE_6);
     try {
       // A legacy 'skipped' row with no drop_reason column present.
       await pool.query(
@@ -26,11 +32,14 @@ describe.skipIf(!hasTestDb)('migration 6 precondition (pre-existing skipped rows
         [callId],
       );
 
-      await expect(migrate('up', 1)).rejects.toThrow(/pre-existing skipped call_state rows/i);
+      // Re-applying stops at migration 6's precondition, which refuses to migrate.
+      await expect(migrate('up', MIGRATIONS_ABOVE_6)).rejects.toThrow(
+        /pre-existing skipped call_state rows/i,
+      );
     } finally {
-      // Remediate and restore migration 6 for the rest of the suite.
+      // Remediate and restore every migration for the rest of the suite.
       await pool.query(`DELETE FROM call_state WHERE call_id = $1`, [callId]);
-      await migrate('up', 1);
+      await migrate('up');
     }
   });
 });

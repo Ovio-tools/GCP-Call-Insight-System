@@ -1,7 +1,8 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { JsonValue } from '../db/types.js';
-import type { DropReason } from '../db/enums.js';
+import type { DropReason, HeldReason } from '../db/enums.js';
+import type { ErrorCode } from '../failure-model/categories.js';
 
 /**
  * The per-call pipeline stages, in order (build plan §3). This is the single source of
@@ -53,6 +54,15 @@ export const STATUS_SKIPPED = 'skipped';
  */
 export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set(['metadata-pre-filter']);
 
+/**
+ * `held` — a stage set the call aside for a person (a `review_queue` row was written).
+ * Terminal, paired with `current_stage` staying at the holding stage. Never advances.
+ * Introduced by Task 3.3 (fetch-transcript's `missing_transcript` hold); other model
+ * stages reuse it for their own holds. `holdCall` writes the status + review_queue row +
+ * processing_log row atomically, so a `held` status always has its review_queue entry.
+ */
+export const STATUS_HELD = 'held';
+
 /** True for a stage name that is a real member of the pipeline. */
 export function isPipelineStage(stage: string): stage is PipelineStage {
   return (PIPELINE_STAGES as readonly string[]).includes(stage);
@@ -63,10 +73,24 @@ export function isPipelineStage(stage: string): stage is PipelineStage {
  * - `continue` — advance to the next stage (the default; `void`/`undefined` also means this).
  * - `drop` — stop the pipeline before the next stage; the runner calls `skipCall` with
  *   `reason` (a controlled `DropReason`), leaving the call `skipped` and recoverable.
+ * - `defer` — stop WITHOUT advancing and WITHOUT failing; the call stays at this stage in
+ *   `processing`. The handler has already scheduled its own delayed re-run (e.g. a not-ready
+ *   transcript retry), so the pipeline simply resumes here when that job fires. The runner
+ *   performs no DB write for a defer.
+ * - `hold` — set the call aside for a person; the runner calls `holdCall` with a controlled
+ *   `HeldReason`, leaving the call `held` (status + a `review_queue` row) and recoverable.
+ *   `errorCode` (a failure-model code) is recorded on the processing_log row.
  */
 export type StageResult =
   | { action: 'continue' }
-  | { action: 'drop'; reason: DropReason; detail?: Record<string, JsonValue> };
+  | { action: 'drop'; reason: DropReason; detail?: Record<string, JsonValue> }
+  | { action: 'defer' }
+  | {
+      action: 'hold';
+      reason: HeldReason;
+      errorCode?: ErrorCode;
+      detail?: Record<string, JsonValue>;
+    };
 
 /** Context handed to each stage handler. `pool` lets a real stage read/write the DB. */
 export interface StageContext {
