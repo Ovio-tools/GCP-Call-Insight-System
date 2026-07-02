@@ -16,6 +16,15 @@ import { z } from 'zod';
 
 export const SEVERITY = ['critical', 'high', 'medium', 'low'] as const;
 
+/**
+ * `classified_spam` (Task 5.1): appended because the classify stage's spam outcome must
+ * carry a `review_queue.held_reason` and no pre-existing value fits — spam is neither a
+ * redaction failure, a model malfunction, nor a ServiceTitan-match problem. It is a
+ * distinct routing outcome from the classifier itself. Appended at the END so the value
+ * ordinal matches the migration's `addTypeValue` (default end position) — the parity
+ * test compares `enum_range` order exactly.
+ * TODO(Task 6.1): assign SLA/retention policy for classified_spam in the review surface.
+ */
 export const HELD_REASON = [
   'redaction_failed',
   'residual_pii_detected',
@@ -26,19 +35,28 @@ export const HELD_REASON = [
   'missing_transcript',
   'cost_cap_held',
   'weak_servicetitan_match',
+  'classified_spam',
 ] as const;
 
 /**
- * Metadata pre-filter drop reasons (Task 3.1). A controlled `call_state.drop_reason`
- * vocabulary — NOT a native pg enum: the column is `text` guarded by a CHECK constraint
- * (migration 1782864000006). This tuple MUST stay in sync with that CHECK list by hand
- * (same duplication convention as the `ENUMS` mirror above). Do NOT add to `PG_ENUMS`.
+ * Metadata pre-filter drop reasons (Task 3.1) plus the classify-stage non-customer drop
+ * reason (Task 5.1). A controlled `call_state.drop_reason` vocabulary — NOT a native pg
+ * enum: the column is `text` guarded by a CHECK constraint, originally added by migration
+ * 1782864000006 and extended by migration 1782864000008. This tuple MUST stay in sync
+ * with that CHECK list by hand (same duplication convention as the `ENUMS` mirror above).
+ * Do NOT add to `PG_ENUMS`.
+ *
+ * `classified_non_customer` (Task 5.1): appended because the classify stage's
+ * non-customer outcome must carry a controlled `call_state.drop_reason` and no
+ * pre-existing value fits — it is a classifier judgment, not a metadata pre-filter
+ * signal (direction, duration, call state, related-call graph).
  */
 export const DROP_REASONS = [
   'zero_duration',
   'non_conversation_call_state',
   'outbound_no_customer_conversation',
   'internal_transfer_non_operator_leg',
+  'classified_non_customer',
 ] as const;
 
 export const REVIEW_STATUS = ['open', 'in_review', 'resolved', 'unresolvable'] as const;
