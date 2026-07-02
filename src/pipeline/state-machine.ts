@@ -1,16 +1,19 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import { DalError, DAL_STALE_STAGE } from '../db/index.js';
-import { advanceStage, getCallState } from '../db/repositories/call-state-repo.js';
+import { advanceStage, getCallState, skipCall } from '../db/repositories/call-state-repo.js';
 import { PipelineStageError } from './errors.js';
 import {
   FINAL_STAGE,
   PIPELINE_STAGES,
+  SKIP_STAGES,
   STATUS_COMPLETED,
   STATUS_PROCESSING,
+  STATUS_SKIPPED,
   defaultStageHandlers,
   type PipelineStage,
   type StageHandlers,
+  type StageResult,
 } from './stages.js';
 
 const LAST_INDEX = PIPELINE_STAGES.length - 1;
@@ -102,6 +105,23 @@ export async function runPipeline(
     );
   }
 
+  // Terminal no-op guard for a dropped call — mirrors the completed guard. A valid
+  // `skipped` row sits at a skip-stage with a non-null drop_reason; anything else is a
+  // real inconsistency, not a completed drop.
+  if (state.status === STATUS_SKIPPED) {
+    if (SKIP_STAGES.has(state.current_stage as PipelineStage) && state.drop_reason !== null) {
+      logger.info(
+        { stage: state.current_stage, drop_reason: state.drop_reason },
+        'call already skipped — no-op',
+      );
+      return;
+    }
+    throw new Error(
+      `${callId}: skipped status paired with stage '${state.current_stage}' / drop_reason ` +
+        `'${state.drop_reason ?? 'null'}' — inconsistent`,
+    );
+  }
+
   // Validate the starting stage before walking, so an unknown stage can't index from -1.
   let index = dbStageIndex(state.current_stage);
   if (index === -1) {
@@ -111,12 +131,35 @@ export async function runPipeline(
   while (index <= LAST_INDEX) {
     const stage = PIPELINE_STAGES[index] as PipelineStage;
 
+    let result: StageResult | void;
     try {
-      await handlers[stage]({ callId, stage, logger });
+      result = await handlers[stage]({ callId, stage, logger, pool });
     } catch (cause) {
       // Wrap so the worker's failed-handler knows exactly which stage failed. Fail-closed:
       // PipelineStageError never carries the raw error message.
       throw new PipelineStageError(stage, callId, cause);
+    }
+
+    // A stage asked to drop the call: skip it atomically and STOP before the next stage,
+    // so a dropped call can never reach fetch-transcript.
+    if (result && result.action === 'drop') {
+      try {
+        await skipCall(pool, {
+          callId,
+          atStage: stage,
+          dropReason: result.reason,
+          ...(result.detail !== undefined ? { logDetail: result.detail } : {}),
+        });
+      } catch (err) {
+        if (!isStaleStageError(err)) throw err;
+        // A concurrent runner won the race. Re-read: if it landed on a terminal state,
+        // this is a legitimate no-op; otherwise it is a real inconsistency.
+        const raced = await getCallState(pool, callId);
+        if (!raced) throw new Error(`call_state row for ${callId} vanished mid-skip`);
+        if (raced.status === STATUS_SKIPPED || raced.status === STATUS_COMPLETED) return;
+        throw new Error(`${callId}: skip raced but status is '${raced.status}' — inconsistent`);
+      }
+      return;
     }
 
     const isFinal = index === LAST_INDEX;

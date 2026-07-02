@@ -28,6 +28,19 @@ export const HELD_REASON = [
   'weak_servicetitan_match',
 ] as const;
 
+/**
+ * Metadata pre-filter drop reasons (Task 3.1). A controlled `call_state.drop_reason`
+ * vocabulary — NOT a native pg enum: the column is `text` guarded by a CHECK constraint
+ * (migration 1782864000006). This tuple MUST stay in sync with that CHECK list by hand
+ * (same duplication convention as the `ENUMS` mirror above). Do NOT add to `PG_ENUMS`.
+ */
+export const DROP_REASONS = [
+  'zero_duration',
+  'non_conversation_call_state',
+  'outbound_no_customer_conversation',
+  'internal_transfer_non_operator_leg',
+] as const;
+
 export const REVIEW_STATUS = ['open', 'in_review', 'resolved', 'unresolvable'] as const;
 
 export const OPERATOR_ACTION = [
@@ -69,6 +82,7 @@ export const PG_ENUMS = {
 
 export const severitySchema = z.enum(SEVERITY);
 export const heldReasonSchema = z.enum(HELD_REASON);
+export const dropReasonSchema = z.enum(DROP_REASONS);
 export const reviewStatusSchema = z.enum(REVIEW_STATUS);
 export const operatorActionSchema = z.enum(OPERATOR_ACTION);
 export const keyVersionStatusSchema = z.enum(KEY_VERSION_STATUS);
@@ -78,6 +92,7 @@ export const urgencySchema = z.enum(URGENCY);
 
 export type Severity = z.infer<typeof severitySchema>;
 export type HeldReason = z.infer<typeof heldReasonSchema>;
+export type DropReason = z.infer<typeof dropReasonSchema>;
 export type ReviewStatus = z.infer<typeof reviewStatusSchema>;
 export type OperatorActionKind = z.infer<typeof operatorActionSchema>;
 export type KeyVersionStatus = z.infer<typeof keyVersionStatusSchema>;

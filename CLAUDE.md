@@ -21,9 +21,9 @@ surface rolls its own body limit, rate limiting, auth/session, CSRF, webhook sig
 replay/timestamp checks, or error shaping.
 
 Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
-per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), and the shared
-HTTP hardening/auth middleware (Task 2.3) exist; the model steps, surfaces, and crons do
-not yet.
+per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), the shared
+HTTP hardening/auth middleware (Task 2.3), and the metadata pre-filter stage (Task 3.1)
+exist; the remaining model steps, surfaces, and crons do not yet.
 
 ## 1. Architecture
 
@@ -67,26 +67,26 @@ the same retention bookkeeping: `retention_eligible_at`, `soft_deleted_at`,
 findings store hashes or token references, never raw PII in clear. Sensitive values
 are minimized in logs, dead-letter rows, and raw webhook events.
 
-| Table                  | Contents                                                          | Sensitivity | Retention                                  |
-| ---------------------- | ----------------------------------------------------------------- | ----------- | ------------------------------------------ |
-| `call_state`           | per-call status, current stage, metadata                          | low         | indefinite (not purged)                    |
-| `raw_webhook_events`   | allowlisted metadata only; phone/name hashed; no message content  | low–medium  | short, purgeable                           |
-| `raw_transcripts`      | original transcript text, envelope-encrypted                      | high        | short, purged after window                 |
-| `token_vault`          | token→value map, envelope-encrypted; restricted role only         | highest     | tight access, purged with raw              |
-| `clean_transcripts`    | redacted text, risk score, reasons                                | medium      | kept for re-runs, purgeable                |
-| `redaction_findings`   | detected entities + residual-scan results; no raw values in clear | medium      | purged with the clean transcript           |
-| `structured_knowledge` | extracted records, schema + prompt version                        | medium      | the durable asset                          |
-| `review_queue`         | held calls, held reason, status, assignee, SLA timestamps         | medium      | held-call retention policy (§6.1)          |
-| `operator_actions`     | who did what in the review surface (audit trail)                  | low         | indefinite                                 |
-| `model_invocations`    | per call: model ID, prompt version, token counts, outcome         | low         | indefinite                                 |
-| `daily_cost_usage`     | per-day token and cost totals                                     | low         | indefinite                                 |
-| `alert_events`         | emitted alerts with error code and dedup key                      | low         | indefinite                                 |
-| `backfill_runs`        | backfill batches and checkpoints                                  | low         | indefinite                                 |
-| `match_keys`           | salted HMAC hashes of phone/name for ServiceTitan matching        | medium      | short, own window, purgeable               |
-| `consent_gates`        | recorded consents and legal gates with timestamps                 | low         | indefinite                                 |
-| `key_versions`         | DEK metadata + reference only (no recoverable key bytes)          | low–medium  | indefinite metadata; key material external |
-| `processing_log`       | per-stage audit trail with call ID                                | low         | indefinite                                 |
-| `dead_letter`          | jobs that exhausted retries, with sanitized root-cause metadata   | low         | indefinite until cleared                   |
+| Table                  | Contents                                                                 | Sensitivity | Retention                                  |
+| ---------------------- | ------------------------------------------------------------------------ | ----------- | ------------------------------------------ |
+| `call_state`           | per-call status, current stage, metadata, drop_reason (set when skipped) | low         | indefinite (not purged)                    |
+| `raw_webhook_events`   | allowlisted metadata only; phone/name hashed; no message content         | low–medium  | short, purgeable                           |
+| `raw_transcripts`      | original transcript text, envelope-encrypted                             | high        | short, purged after window                 |
+| `token_vault`          | token→value map, envelope-encrypted; restricted role only                | highest     | tight access, purged with raw              |
+| `clean_transcripts`    | redacted text, risk score, reasons                                       | medium      | kept for re-runs, purgeable                |
+| `redaction_findings`   | detected entities + residual-scan results; no raw values in clear        | medium      | purged with the clean transcript           |
+| `structured_knowledge` | extracted records, schema + prompt version                               | medium      | the durable asset                          |
+| `review_queue`         | held calls, held reason, status, assignee, SLA timestamps                | medium      | held-call retention policy (§6.1)          |
+| `operator_actions`     | who did what in the review surface (audit trail)                         | low         | indefinite                                 |
+| `model_invocations`    | per call: model ID, prompt version, token counts, outcome                | low         | indefinite                                 |
+| `daily_cost_usage`     | per-day token and cost totals                                            | low         | indefinite                                 |
+| `alert_events`         | emitted alerts with error code and dedup key                             | low         | indefinite                                 |
+| `backfill_runs`        | backfill batches and checkpoints                                         | low         | indefinite                                 |
+| `match_keys`           | salted HMAC hashes of phone/name for ServiceTitan matching               | medium      | short, own window, purgeable               |
+| `consent_gates`        | recorded consents and legal gates with timestamps                        | low         | indefinite                                 |
+| `key_versions`         | DEK metadata + reference only (no recoverable key bytes)                 | low–medium  | indefinite metadata; key material external |
+| `processing_log`       | per-stage audit trail with call ID                                       | low         | indefinite                                 |
+| `dead_letter`          | jobs that exhausted retries, with sanitized root-cause metadata          | low         | indefinite until cleared                   |
 
 ## 3. Pipeline stages (per-call state machine)
 
@@ -98,7 +98,11 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
 
 - **metadata pre-filter** — runs first, on call metadata only (direction, duration,
   call state, related-call graph). No text, no model, no PII, no transcript fetch.
-  Drops obvious junk before a transcript is pulled.
+  Drops obvious junk before a transcript is pulled: a drop sets `status='skipped'` and a
+  specific `call_state.drop_reason` (`zero_duration`, `non_conversation_call_state`,
+  `outbound_no_customer_conversation`, `internal_transfer_non_operator_leg`), writes a
+  `processing_log` row, and stops the pipeline before fetch-transcript. The call and its
+  metadata are never deleted. Fails safe: anything missing, unknown, or ambiguous passes.
 - **fetch transcript** — only for calls that survive the pre-filter. A call with no
   transcript yet is handled by the availability check, not treated as a failure.
 - **redact** — produces redacted text, a token vault, and a risk score with reasons.
