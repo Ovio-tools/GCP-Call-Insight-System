@@ -1,0 +1,10 @@
+{
+  "name": "schema-missing-bucket",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "{\"reason\":\"no bucket field present\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "schema_invalid" }
+}

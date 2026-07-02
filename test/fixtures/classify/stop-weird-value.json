@@ -1,0 +1,10 @@
+{
+  "name": "stop-weird-value",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"schema-valid but stop reason is an unknown value\"}",
+    "stopReason": "weird_new_value",
+    "usagePresent": true
+  },
+  "expected": { "failure": "unexpected_stop_reason" }
+}

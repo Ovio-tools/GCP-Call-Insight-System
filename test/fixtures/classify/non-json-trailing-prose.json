@@ -1,0 +1,10 @@
+{
+  "name": "non-json-trailing-prose",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"service booking\"} — hope that helps!",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "non_json" }
+}

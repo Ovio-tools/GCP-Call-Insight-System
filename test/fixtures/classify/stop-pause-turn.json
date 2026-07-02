@@ -1,0 +1,10 @@
+{
+  "name": "stop-pause-turn",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"schema-valid but stop reason is pause_turn\"}",
+    "stopReason": "pause_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "unexpected_stop_reason" }
+}

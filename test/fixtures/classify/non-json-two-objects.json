@@ -1,0 +1,10 @@
+{
+  "name": "non-json-two-objects",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"first\"}\n{\"bucket\":\"spam\",\"reason\":\"second\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "non_json" }
+}

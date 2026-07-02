@@ -1,0 +1,10 @@
+{
+  "name": "bucket-non-customer",
+  "redactedTranscript": "Agent: Good morning, [NAME_1] speaking.\nCaller: Hi, this is [NAME_2] from the parts supplier. I'm confirming the delivery window for the compressors we shipped.\nAgent: Great, let me connect you to purchasing.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"non-customer\",\"reason\":\"vendor confirming a supplier delivery, not a customer service need\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "bucket": "non-customer" }
+}
