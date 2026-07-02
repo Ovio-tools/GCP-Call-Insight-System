@@ -23,8 +23,12 @@ replay/timestamp checks, or error shaping.
 Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
 per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), the shared
 HTTP hardening/auth middleware (Task 2.3), the metadata pre-filter stage (Task 3.1),
-and the Dialpad transcript client (Task 3.3, `src/dialpad/client/`) exist; the remaining
-model steps, surfaces, and crons do not yet.
+the Dialpad transcript client (Task 3.3, `src/dialpad/client/`), and the redaction
+stage (Task 4.1, `src/redaction/` + `src/pipeline/redact.ts` — the privacy boundary;
+see `docs/adr/0002-redaction-tokens-and-fail-closed.md`) exist; the remaining model
+steps, surfaces, and crons do not yet. The NER model is vendored by `npm run
+model:fetch` into `models/` (gitignored); model stages read ONLY `clean_transcripts`
+(enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
 ## 1. Architecture
 
@@ -106,9 +110,15 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
   metadata are never deleted. Fails safe: anything missing, unknown, or ambiguous passes.
 - **fetch transcript** — only for calls that survive the pre-filter. A call with no
   transcript yet is handled by the availability check, not treated as a failure.
-- **redact** — produces redacted text, a token vault, and a risk score with reasons.
-  If the residual scan finds anything or the risk score is too high, the call is
-  held with reason `redaction_failed` and never sent.
+- **redact** (Task 4.1, built) — layered detection (in-process ONNX NER dual-pass +
+  regex variants + config deny-list), stable per-call tokens (`[NAME_1]`) vaulted in
+  `token_vault`, findings with per-call value hashes, a reason-based risk score, and
+  an independent residual scan over the output. Every NER candidate is redacted
+  regardless of confidence. A residual hit holds `residual_pii_detected`; a forced
+  reason or `score >= REDACTION_RISK_THRESHOLD` holds `redaction_failed` — never
+  sent. A held call keeps its clean row only when every risk reason is
+  safe-after-redaction; the corpus recall / no-egress / adversarial gates run in CI
+  against the real model (`REDACTION_RECALL_REGRESSION` on regression).
 - **classify** (Haiku) — sorts into customer, non-customer, spam, or held. Held and
   spam are set aside, never silently dropped.
 - **extract** (Sonnet) — returns a structured record against a fixed schema. A
