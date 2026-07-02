@@ -30,7 +30,7 @@ const HASH_KEY = Buffer.alloc(32, 0x5a).toString('base64');
 function fakeDetector(name: string, result: Partial<DetectorResult>): Detector {
   return {
     name,
-    detect: () => Promise.resolve({ detections: [], riskSignals: [], ...result } as DetectorResult),
+    detect: () => Promise.resolve({ detections: [], riskSignals: [], ...result }),
   };
 }
 
