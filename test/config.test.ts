@@ -196,6 +196,13 @@ describe('classify stage config (Task 5.1)', () => {
     expect(result.error.invalid).toContain('CLASSIFY_MAX_TOKENS');
   });
 
+  it('rejects a negative CLASSIFY_COST_USD_PER_MTOK_INPUT, naming the variable', () => {
+    const result = validateEnv({ ...validEnv(), CLASSIFY_COST_USD_PER_MTOK_INPUT: '-1' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('CLASSIFY_COST_USD_PER_MTOK_INPUT');
+  });
+
   it('is present in .env.example (kept in lockstep with the schema)', () => {
     const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
     for (const key of [

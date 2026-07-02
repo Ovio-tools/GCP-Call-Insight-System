@@ -220,8 +220,8 @@ export const configSchema = z.object({
    * payload estimate when reserving against the daily cost cap. */
   CLASSIFY_RESERVATION_OVERHEAD_TOKENS: z.coerce.number().int().nonnegative().default(1_000),
 
-  /** Anthropic TS SDK request timeout. Unlike DIALPAD_API_TIMEOUT_MS's HTTP client, the SDK
-   * takes this in milliseconds directly. */
+  /** Anthropic TS SDK request timeout in milliseconds. The SDK accepts a `timeout` client
+   * option natively; the Dialpad client hand-rolls an AbortController timer around fetch. */
   ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
 
   /** Daily hard cap (USD) on model spend, enforced across ALL model stages, not just
