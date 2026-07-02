@@ -1,0 +1,128 @@
+{
+  "description": "Adversarial fixtures for Task 4.1: variants engineered to defeat individual detection layers. Every labeled value must be redacted or the call held - none may pass. All synthetic.",
+  "denyTerms": ["Acme Plumbing", "Golden State HVAC"],
+  "cases": [
+    {
+      "id": "adv-name-spaced",
+      "text": "The last name is spelled W I L L I A M S O N, first name Gregory, he is the one who signed the original service contract.",
+      "entities": [{ "type": "name", "value": "Gregory" }]
+    },
+    {
+      "id": "adv-name-lower-run",
+      "text": "yeah the owner is sarah jane mccormick she said just bill whatever it costs to get the heat back on before the weekend",
+      "entities": [{ "type": "name", "value": "sarah jane mccormick" }]
+    },
+    {
+      "id": "adv-name-greeting",
+      "text": "hello hello can you hear me ok good so my name is Tobias Eriksen and the appointment got double booked somehow",
+      "entities": [{ "type": "name", "value": "Tobias Eriksen" }]
+    },
+    {
+      "id": "adv-name-misspell",
+      "text": "It comes up as Jonh Smtih in your system, the letters got flipped when the office typed it in, but it is the same account.",
+      "entities": [{ "type": "name", "value": "Jonh Smtih" }]
+    },
+    {
+      "id": "adv-phone-mixed-sep",
+      "text": "The number is 916/555.0161 or maybe ends 0162, try both, one of them is the site foreman's cell and he always answers.",
+      "entities": [{ "type": "phone", "value": "916/555.0161" }]
+    },
+    {
+      "id": "adv-phone-spoken-mixed",
+      "text": "It is nine one six, five five five, zero one six three, sorry I always have to read it off my own business card.",
+      "entities": [
+        { "type": "phone", "value": "nine one six, five five five, zero one six three" }
+      ],
+      "expectHold": true
+    },
+    {
+      "id": "adv-phone-double",
+      "text": "The after hours line is five five five double zero one six four, they pick up around the clock even on the holidays.",
+      "entities": [{ "type": "phone", "value": "five five five double zero one six four" }],
+      "expectHold": true
+    },
+    {
+      "id": "adv-phone-pauses",
+      "text": "Okay it is 9 1 6 . 5 5 5 . 0 1 6 5 and if nobody answers just leave a voicemail with the job number and the address.",
+      "entities": [{ "type": "phone", "value": "9 1 6 . 5 5 5 . 0 1 6 5" }]
+    },
+    {
+      "id": "adv-email-confusable",
+      "text": "Billing goes to accounts＠example.com with the little at sign, our email system does something weird with the encoding.",
+      "entities": [{ "type": "email", "value": "accounts＠example.com" }],
+      "expectHold": true
+    },
+    {
+      "id": "adv-email-spaced-dots",
+      "text": "Send it to tह... sorry, to tom dot b dot wright at example dot com, my accent makes the transcription mess it up.",
+      "entities": [{ "type": "email", "value": "tom dot b dot wright at example dot com" }]
+    },
+    {
+      "id": "adv-email-bracket-mix",
+      "text": "The office prefers office [at] example (dot) com for anything with attachments bigger than a couple of megabytes.",
+      "entities": [{ "type": "email", "value": "office [at] example (dot) com" }]
+    },
+    {
+      "id": "adv-addr-no-suffix",
+      "text": "The house is the 4482 Kensington Meadows place, the one with the circular driveway and the fountain out front.",
+      "entities": [{ "type": "street_address", "value": "4482 Kensington Meadows" }]
+    },
+    {
+      "id": "adv-addr-punct",
+      "text": "It is 1 2 3 ... Main ... Street, sorry the connection keeps cutting out, did you get that? The gate code is on file.",
+      "entities": [{ "type": "street_address", "value": "1 2 3 ... Main ... Street" }],
+      "expectHold": false
+    },
+    {
+      "id": "adv-addr-ordinal",
+      "text": "Delivery goes to 700 West 22nd Ave, the loading dock entrance is on the alley side past the dumpsters, honk twice.",
+      "entities": [{ "type": "street_address", "value": "700 West 22nd Ave" }]
+    },
+    {
+      "id": "adv-cross-lower",
+      "text": "we are at main and 5th street by the taco place, the van can park in the red zone if the driver stays close by",
+      "entities": [{ "type": "cross_street", "value": "main and 5th street" }]
+    },
+    {
+      "id": "adv-cross-near",
+      "text": "The yard is near Florin Road and Franklin Blvd, follow the chain link fence until you see the gate with the yellow sign.",
+      "entities": [{ "type": "cross_street", "value": "Florin Road and Franklin Blvd" }]
+    },
+    {
+      "id": "adv-biz-caps",
+      "text": "The vendor shows as GOLDEN STATE HVAC in all capital letters on the purchase order, same outfit, same license number.",
+      "entities": [{ "type": "deny_list", "value": "GOLDEN STATE HVAC" }]
+    },
+    {
+      "id": "adv-biz-dashes",
+      "text": "Look under A-c-m-e P-l-u-m-b-i-n-g, the intake system put dashes between every letter for some reason, it is one word.",
+      "entities": [{ "type": "deny_list", "value": "A-c-m-e P-l-u-m-b-i-n-g" }],
+      "expectHold": true
+    },
+    {
+      "id": "adv-card-dashes",
+      "text": "The card ends up as 4111-1111-1111-1111 on the receipt, run it for the deposit and email me the confirmation please.",
+      "entities": [{ "type": "credit_card", "value": "4111-1111-1111-1111" }]
+    },
+    {
+      "id": "adv-ssn-spaces",
+      "text": "The social is 123 45 6789 for the credit check, and my husband will send his over separately once he lands tonight.",
+      "entities": [{ "type": "government_id", "value": "123 45 6789" }]
+    },
+    {
+      "id": "adv-license-context",
+      "text": "My drivers licence number is X9876543 if the gate guard asks, they are strict about visitors after the break in last month.",
+      "entities": [{ "type": "government_id", "value": "X9876543" }]
+    },
+    {
+      "id": "adv-multi",
+      "text": "This is Wanda Okafor at 88 Birchwood Ct, call me back on (916) 555-0166 or wanda at example dot com, whichever is easier.",
+      "entities": [
+        { "type": "name", "value": "Wanda Okafor" },
+        { "type": "street_address", "value": "88 Birchwood Ct" },
+        { "type": "phone", "value": "(916) 555-0166" },
+        { "type": "email", "value": "wanda at example dot com" }
+      ]
+    }
+  ]
+}
