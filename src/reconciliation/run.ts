@@ -6,6 +6,7 @@ import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
 import type { DialpadClient, RecentCall } from '../dialpad/client/index.js';
 import { DialpadError } from '../dialpad/client/index.js';
 import { getCallState, seedCallStateIfAbsent } from '../db/repositories/call-state-repo.js';
+import { hasDeadLetter } from '../db/repositories/dead-letter-repo.js';
 import { enqueueCall, type PipelineJobData } from '../queue/pipeline-queue.js';
 import { PIPELINE_STAGES, STATUS_PROCESSING } from '../pipeline/stages.js';
 
@@ -57,6 +58,31 @@ export function requireReconciliationCheckUrl(config: Config): void {
   }
 }
 
+/** States that POSITIVELY mean the call has not concluded yet. Anything else — including an
+ * unknown or absent state — fails open, because the state vocabulary is provisional. */
+const NON_TERMINAL_CALL_STATES: ReadonlySet<string> = new Set([
+  'active',
+  'in_progress',
+  'ringing',
+  'queued',
+]);
+
+/**
+ * Whether a listed call belongs in this sweep. Three-tier decision, most reliable signal
+ * first:
+ *  - a parseable end timestamp → in the sweep iff it concluded inside the window;
+ *  - no end timestamp but a recognised in-progress state → not concluded yet, skip (the
+ *    webhook fires at conclusion, and later sweeps still list it by start time);
+ *  - otherwise → fail OPEN. Excluding on an absent/unknown field could silently blind the
+ *    whole backstop; over-inclusion is idempotent-safe.
+ */
+function shouldSweepListedCall(call: RecentCall, concludedSince: number): boolean {
+  if (call.endedAt !== undefined) return call.endedAt >= concludedSince;
+  const state = call.state?.toLowerCase();
+  if (state !== undefined && NON_TERMINAL_CALL_STATES.has(state)) return false;
+  return true;
+}
+
 /** Default check ping: a GET that treats any non-2xx as a failure. PII-free by nature. */
 async function httpPing(url: string): Promise<void> {
   const res = await fetch(url, { method: 'GET' });
@@ -80,6 +106,8 @@ export async function runReconciliation(deps: ReconciliationDeps): Promise<Recon
   const now = deps.clock?.now() ?? Date.now();
   const windowMinutes = config.RECONCILIATION_WINDOW_MINUTES;
   const since = now - (windowMinutes + config.RECONCILIATION_MAX_CALL_MINUTES) * 60_000;
+  /** The window the spec actually means: calls CONCLUDED after this instant. */
+  const concludedSince = now - windowMinutes * 60_000;
 
   const seen = new Set<string>();
   let gapsEnqueued = 0;
@@ -97,6 +125,10 @@ export async function runReconciliation(deps: ReconciliationDeps): Promise<Recon
       // call_id-keyed job id keep the overlap idempotent.
       if (seen.has(call.callId)) continue;
       seen.add(call.callId);
+
+      // The widened started_after also lists calls that concluded BEFORE the window and
+      // calls still IN PROGRESS; neither is "concluded in the recent window".
+      if (!shouldSweepListedCall(call, concludedSince)) continue;
 
       if (await deps.alreadyInPipeline(call.callId)) continue;
       await deps.ingestGap(call);
@@ -166,7 +198,11 @@ export function createPgReconciliationIngest(deps: {
       // never created (the stranding this predicate exists to rescue).
       const pristineSeed =
         row.current_stage === PIPELINE_STAGES[0] && row.status === STATUS_PROCESSING;
-      return !pristineSeed;
+      if (!pristineSeed) return true;
+      // A dead-lettered call is IN the pipeline even when its row never advanced: it
+      // exhausted retries and DEAD_LETTER_CREATED handed it to the manual re-drive path.
+      // Automated rescue must not silently restart it.
+      return hasDeadLetter(pool, callId);
     },
     async ingestGap(call: RecentCall): Promise<void> {
       await seedCallStateIfAbsent(pool, {

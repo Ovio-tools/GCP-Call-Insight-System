@@ -139,6 +139,88 @@ describe('runReconciliation', () => {
     );
   });
 
+  it('enqueues a call that started before the window but CONCLUDED inside it', async () => {
+    const h = makeHarness({
+      windowMinutes: 45,
+      maxCallMinutes: 180,
+      // Started 2h ago (outside the 45-min window), ended 5 min ago (inside it).
+      pages: [{ calls: [{ callId: 'rc-long', endedAt: NOW - 5 * 60_000 }] }],
+    });
+
+    const summary = await runReconciliation(h.deps);
+
+    expect(h.ingestGap).toHaveBeenCalledTimes(1);
+    expect(summary).toEqual({ callsChecked: 1, gapsEnqueued: 1 });
+  });
+
+  it('skips a call the widened lookback listed but which concluded BEFORE the window', async () => {
+    const h = makeHarness({
+      windowMinutes: 45,
+      pages: [
+        {
+          calls: [
+            { callId: 'rc-old', endedAt: NOW - 46 * 60_000 },
+            { callId: 'rc-fresh', endedAt: NOW - 44 * 60_000 },
+          ],
+        },
+      ],
+    });
+
+    const summary = await runReconciliation(h.deps);
+
+    expect(h.ingestGap).toHaveBeenCalledTimes(1);
+    expect(h.ingestGap).toHaveBeenCalledWith(expect.objectContaining({ callId: 'rc-fresh' }));
+    expect(summary).toEqual({ callsChecked: 2, gapsEnqueued: 1 });
+  });
+
+  it('a call with NO end timestamp and no recognisable state is still swept — fail open', async () => {
+    // date_ended and state are provisional fields (docs are login-gated). Excluding on their
+    // ABSENCE could silently blind the whole sweep; inclusion is idempotent-safe and the
+    // transcript-wait machinery absorbs a not-yet-ended call.
+    const h = makeHarness({
+      pages: [{ calls: [{ callId: 'rc-no-end' }, { callId: 'rc-odd-state', state: 'wibble' }] }],
+    });
+
+    const summary = await runReconciliation(h.deps);
+
+    expect(h.ingestGap).toHaveBeenCalledTimes(2);
+    expect(summary).toEqual({ callsChecked: 2, gapsEnqueued: 2 });
+  });
+
+  it('a call with no end timestamp but a POSITIVELY in-progress state is not swept yet', async () => {
+    // An active call has not "concluded in a recent window"; enqueueing it now could burn the
+    // bounded transcript wait and hold it missing_transcript before it even ends. It is only
+    // skipped on affirmative evidence — a recognised non-terminal state — never on absence.
+    const h = makeHarness({
+      pages: [
+        {
+          calls: [
+            { callId: 'rc-active', state: 'active' },
+            { callId: 'rc-mid', state: 'In_Progress' },
+            { callId: 'rc-ring', state: 'ringing' },
+            { callId: 'rc-queued', state: 'queued' },
+            { callId: 'rc-done', state: 'hangup' },
+          ],
+        },
+      ],
+    });
+
+    const summary = await runReconciliation(h.deps);
+
+    expect(h.ingestGap).toHaveBeenCalledTimes(1);
+    expect(h.ingestGap).toHaveBeenCalledWith(expect.objectContaining({ callId: 'rc-done' }));
+    expect(summary).toEqual({ callsChecked: 5, gapsEnqueued: 1 });
+  });
+
+  it('a terminal-state call with no end timestamp is swept', async () => {
+    const h = makeHarness({ pages: [{ calls: [{ callId: 'rc-hangup', state: 'hangup' }] }] });
+
+    const summary = await runReconciliation(h.deps);
+
+    expect(h.ingestGap).toHaveBeenCalledTimes(1);
+    expect(summary).toEqual({ callsChecked: 1, gapsEnqueued: 1 });
+  });
+
   it('exits cleanly on an empty window and logs checked=0 enqueued=0', async () => {
     const h = makeHarness({ pages: [{ calls: [] }] });
 

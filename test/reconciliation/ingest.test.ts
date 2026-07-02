@@ -16,6 +16,7 @@ import {
   PIPELINE_JOB_NAME,
   type PipelineJobData,
 } from '../../src/queue/pipeline-queue.js';
+import { recordDeadLetter } from '../../src/db/repositories/dead-letter-repo.js';
 import { PIPELINE_STAGES, STATUS_PROCESSING } from '../../src/pipeline/stages.js';
 import { makeTestConfig } from '../_config.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
@@ -127,6 +128,28 @@ describe.skipIf(!hasTestDb)('createPgReconciliationIngest', () => {
     expect(await ingest.alreadyInPipeline('test-rc-seed-rec')).toBe(false);
     expect(await ingest.alreadyInPipeline('test-rc-seed-hook')).toBe(false);
     expect(await ingest.alreadyInPipeline('test-rc-absent')).toBe(false);
+  });
+
+  it('alreadyInPipeline is true for a dead-lettered call even if its row never advanced', async () => {
+    // A job that exhausted retries while still at the first stage belongs to the manual
+    // re-drive path (dead_letter + DEAD_LETTER_CREATED alert). The sweep must not treat it
+    // as a gap and quietly restart it.
+    const callId = 'test-rc-dead';
+    await upsertCallState(app, {
+      callId,
+      source: 'dialpad-webhook',
+      currentStage: PIPELINE_STAGES[0],
+      status: STATUS_PROCESSING,
+    });
+    await recordDeadLetter(app, {
+      callId,
+      jobPayload: { callId },
+      errorCode: 'QUEUE_RETRY_EXHAUSTED',
+      rootCauseCategory: 'QUEUE_RETRY_EXHAUSTED',
+    });
+
+    const ingest = makeIngest();
+    expect(await ingest.alreadyInPipeline(callId)).toBe(true);
   });
 
   it('an enqueue failure does not strand the call: the next sweep still sees a gap and enqueues it', async () => {
