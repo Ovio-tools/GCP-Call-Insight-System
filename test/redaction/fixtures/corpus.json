@@ -1,0 +1,284 @@
+{
+  "description": "Labeled synthetic PII corpus for the Task 4.1 recall gate. Every case is invented call-transcript-like text; entities list the PII values that must be redacted OR the call held. No real customer data.",
+  "denyTerms": ["Acme Plumbing", "Golden State HVAC"],
+  "cases": [
+    {
+      "id": "name-01",
+      "text": "Hi, this is John Smith calling about the water heater we talked about last Tuesday, it is still making that noise.",
+      "entities": [{ "type": "name", "value": "John Smith" }]
+    },
+    {
+      "id": "name-02",
+      "text": "My name is Maria Gonzalez-Ruiz and I would like to reschedule the maintenance visit for the following week please.",
+      "entities": [{ "type": "name", "value": "Maria Gonzalez-Ruiz" }]
+    },
+    {
+      "id": "name-03",
+      "text": "You can ask for Deshawn Williams at the front desk when the technician arrives, he will show you where the furnace is.",
+      "entities": [{ "type": "name", "value": "Deshawn Williams" }]
+    },
+    {
+      "id": "name-04",
+      "text": "It is for my mother, her name is Esperanza Villanueva, she lives alone and the air conditioning has been out for two days.",
+      "entities": [{ "type": "name", "value": "Esperanza Villanueva" }]
+    },
+    {
+      "id": "name-05",
+      "text": "yeah so uh my landlord kevin oconnor said to call you guys about the leak under the kitchen sink before it gets worse",
+      "entities": [{ "type": "name", "value": "kevin oconnor" }]
+    },
+    {
+      "id": "name-06",
+      "text": "hey its mike delgado from the gym on the corner, our rooftop unit is short cycling again, can someone come by today",
+      "entities": [{ "type": "name", "value": "mike delgado" }]
+    },
+    {
+      "id": "name-07",
+      "text": "Jean-Pierre Dubois left a message yesterday evening about the estimate, could someone call him back this morning?",
+      "entities": [{ "type": "name", "value": "Jean-Pierre Dubois" }]
+    },
+    {
+      "id": "name-08",
+      "text": "Please tell Mr. Nakamura that the technician is on the way and should arrive within the next forty five minutes or so.",
+      "entities": [{ "type": "name", "value": "Nakamura" }]
+    },
+    {
+      "id": "name-09",
+      "text": "This is Priya Ramanathan, that is spelled R A M A N A T H A N, I called last week about the thermostat replacement.",
+      "entities": [{ "type": "name", "value": "Priya Ramanathan" }]
+    },
+    {
+      "id": "name-10",
+      "text": "The account should be under D'Angelo Harris, we bought the maintenance plan back in the spring when you had the special.",
+      "entities": [{ "type": "name", "value": "D'Angelo Harris" }]
+    },
+    {
+      "id": "name-11",
+      "text": "Siobhan Murphy here, following up on the invoice you sent, I think we were charged twice for the filter replacement.",
+      "entities": [{ "type": "name", "value": "Siobhan Murphy" }]
+    },
+    {
+      "id": "name-12",
+      "text": "The tenant is Olusegun Adeyemi, he works nights so please have the crew knock loudly or call ahead before they arrive.",
+      "entities": [{ "type": "name", "value": "Olusegun Adeyemi" }]
+    },
+    {
+      "id": "name-13",
+      "text": "Katarzyna Wojcik is the property manager, she approved the repair over email this morning so you are good to schedule it.",
+      "entities": [{ "type": "name", "value": "Katarzyna Wojcik" }]
+    },
+    {
+      "id": "name-14",
+      "text": "Hi this is Bob, Bob Kowalski, we spoke on Friday about the tankless unit, I have a question about the venting.",
+      "entities": [{ "type": "name", "value": "Bob Kowalski" }]
+    },
+    {
+      "id": "loc-01",
+      "text": "I am calling from Sacramento about the estimate you emailed over, we would like to move forward with the second option.",
+      "entities": [{ "type": "location", "value": "Sacramento" }]
+    },
+    {
+      "id": "loc-02",
+      "text": "The property is in Elk Grove near the big shopping center, the gate code is the same one we gave you last time.",
+      "entities": [{ "type": "location", "value": "Elk Grove" }]
+    },
+    {
+      "id": "loc-03",
+      "text": "We just moved to Citrus Heights from Stockton and need someone to look at the ducting in the new place before summer.",
+      "entities": [
+        { "type": "location", "value": "Citrus Heights" },
+        { "type": "location", "value": "Stockton" }
+      ]
+    },
+    {
+      "id": "loc-04",
+      "text": "The office building in Roseville has three units on the roof, two of them are fine but the third one trips the breaker.",
+      "entities": [{ "type": "location", "value": "Roseville" }]
+    },
+    {
+      "id": "org-01",
+      "text": "I got your number from Acme Plumbing over on the west side, they said you handle the bigger commercial jobs now.",
+      "entities": [{ "type": "deny_list", "value": "Acme Plumbing" }]
+    },
+    {
+      "id": "org-02",
+      "text": "We used Home Depot for the parts before, but Bob's Heating and Air quoted us a better price on the full install.",
+      "entities": [
+        { "type": "organization", "value": "Home Depot" },
+        { "type": "organization", "value": "Bob's Heating and Air" }
+      ]
+    },
+    {
+      "id": "org-03",
+      "text": "Golden State HVAC did the original install about six years ago, the paperwork should have the model number on it.",
+      "entities": [{ "type": "deny_list", "value": "Golden State HVAC" }]
+    },
+    {
+      "id": "org-04",
+      "text": "We are with Sunrise Senior Living, the facility over in the north end, and we need the boiler inspected this quarter.",
+      "entities": [{ "type": "organization", "value": "Sunrise Senior Living" }]
+    },
+    {
+      "id": "org-05",
+      "text": "The office is right next to Raley's, you cannot miss it, park around the back where the loading dock is and ring the bell.",
+      "entities": [{ "type": "organization", "value": "Raley's" }]
+    },
+    {
+      "id": "org-06",
+      "text": "Elite Roofing LLC subcontracts their sheet metal work to us, they asked me to coordinate the crane schedule with you.",
+      "entities": [{ "type": "organization", "value": "Elite Roofing LLC" }]
+    },
+    {
+      "id": "phone-01",
+      "text": "You can reach me at (916) 555-0142 any time after lunch, mornings are bad because I am on the road for work.",
+      "entities": [{ "type": "phone", "value": "(916) 555-0142" }]
+    },
+    {
+      "id": "phone-02",
+      "text": "My cell is 916-555-0143 and the office line is different, but the cell is better if you need to reach me quickly.",
+      "entities": [{ "type": "phone", "value": "916-555-0143" }]
+    },
+    {
+      "id": "phone-03",
+      "text": "Try the tenant first on 916.555.0144 before you head over, sometimes he is out walking the dog in the morning.",
+      "entities": [{ "type": "phone", "value": "916.555.0144" }]
+    },
+    {
+      "id": "phone-04",
+      "text": "The best callback number is +1 916 555 0145, that is my direct line at the office, it rings straight to my desk.",
+      "entities": [{ "type": "phone", "value": "+1 916 555 0145" }]
+    },
+    {
+      "id": "phone-05",
+      "text": "Let me give you my number, it is 9165550146, and please text before calling because I am in meetings most of the day.",
+      "entities": [{ "type": "phone", "value": "9165550146" }]
+    },
+    {
+      "id": "phone-06",
+      "text": "Write this down, the number is 9 1 6, 5 5 5, 0 1 4 7, got it? That is the property manager's direct cell phone.",
+      "entities": [{ "type": "phone", "value": "9 1 6, 5 5 5, 0 1 4 7" }]
+    },
+    {
+      "id": "phone-07",
+      "text": "The callback number is nine one six five five five zero one four eight, please read that back to me before we hang up.",
+      "entities": [{ "type": "phone", "value": "nine one six five five five zero one four eight" }],
+      "expectHold": true
+    },
+    {
+      "id": "phone-08",
+      "text": "It is five five five, oh one, four nine, that is the short local number for the answering service we use after hours.",
+      "entities": [{ "type": "phone", "value": "five five five, oh one, four nine" }],
+      "expectHold": true
+    },
+    {
+      "id": "email-01",
+      "text": "Send the invoice to mark.lee@example.com and copy the office manager so we can get it paid before the end of the month.",
+      "entities": [{ "type": "email", "value": "mark.lee@example.com" }]
+    },
+    {
+      "id": "email-02",
+      "text": "My email is jenny [at] example [dot] com, I spell it out like that because the transcription always mangles it otherwise.",
+      "entities": [{ "type": "email", "value": "jenny [at] example [dot] com" }]
+    },
+    {
+      "id": "email-03",
+      "text": "Reach me at sam dot ortiz at gmail dot com with the quote, and please include the parts breakdown like last time.",
+      "entities": [{ "type": "email", "value": "sam dot ortiz at gmail dot com" }]
+    },
+    {
+      "id": "email-04",
+      "text": "The billing address is billing(at)example(dot)com, that goes straight to our accounts payable team in the back office.",
+      "entities": [{ "type": "email", "value": "billing(at)example(dot)com" }]
+    },
+    {
+      "id": "addr-01",
+      "text": "I live at 123 Main Street, the house with the green door, and the unit is in the side yard behind the wooden gate.",
+      "entities": [{ "type": "street_address", "value": "123 Main Street" }]
+    },
+    {
+      "id": "addr-02",
+      "text": "The rental is at 4482 Folsom Blvd Apt 3, parking is on the street, and the breaker panel is in the hallway closet.",
+      "entities": [{ "type": "street_address", "value": "4482 Folsom Blvd Apt 3" }]
+    },
+    {
+      "id": "addr-03",
+      "text": "head over to 88 elm st. whenever the crew is free, the side gate is unlocked and the dog will be inside all day",
+      "entities": [{ "type": "street_address", "value": "88 elm st." }]
+    },
+    {
+      "id": "addr-04",
+      "text": "The ranch property is at 21500 Old Ranch Rd, it is a long gravel driveway so tell the driver to watch for the potholes.",
+      "entities": [{ "type": "street_address", "value": "21500 Old Ranch Rd" }]
+    },
+    {
+      "id": "addr-05",
+      "text": "The duplex is at 950 J Street Unit B, the tenant in unit A has the spare key if nobody answers the front door.",
+      "entities": [{ "type": "street_address", "value": "950 J Street Unit B" }]
+    },
+    {
+      "id": "cross-01",
+      "text": "The shop is on the corner of Main and 5th Street, right across from the pharmacy, you can park in the alley behind us.",
+      "entities": [{ "type": "cross_street", "value": "Main and 5th Street" }]
+    },
+    {
+      "id": "cross-02",
+      "text": "We are between Folsom Blvd and Watt Avenue, closer to the Watt side, look for the blue awning over the front entrance.",
+      "entities": [{ "type": "cross_street", "value": "Folsom Blvd and Watt Avenue" }]
+    },
+    {
+      "id": "cross-03",
+      "text": "Take the exit at Elm Street and Oak, then follow the frontage road until you see the storage yard on the right hand side.",
+      "entities": [{ "type": "cross_street", "value": "Elm Street and Oak" }]
+    },
+    {
+      "id": "card-01",
+      "text": "Put the deposit on the card, the number is 4111 1111 1111 1111, expiration is next year, same card we always use.",
+      "entities": [{ "type": "credit_card", "value": "4111 1111 1111 1111" }]
+    },
+    {
+      "id": "card-02",
+      "text": "The company card is 5500-0000-0000-0004, it should have plenty of room on it for the permit fees and the materials.",
+      "entities": [{ "type": "credit_card", "value": "5500-0000-0000-0004" }]
+    },
+    {
+      "id": "gov-01",
+      "text": "For the financing application my social is 123-45-6789, and my co-signer will send hers separately through the portal.",
+      "entities": [{ "type": "government_id", "value": "123-45-6789" }]
+    },
+    {
+      "id": "gov-02",
+      "text": "The company EIN is 12-3456789 for the W9, and the mailing address on file is the same one you have for the invoices.",
+      "entities": [{ "type": "government_id", "value": "12-3456789" }]
+    },
+    {
+      "id": "gov-03",
+      "text": "My driver's license is D1234567 if you need identification for the gate, the guard shack checks everyone after six.",
+      "entities": [{ "type": "government_id", "value": "D1234567" }]
+    },
+    {
+      "id": "variant-01",
+      "text": "The name on the account is J O H N S O N, Marcus Johnson, sometimes it gets entered wrong as Jonson without the h.",
+      "entities": [{ "type": "name", "value": "Marcus Johnson" }]
+    },
+    {
+      "id": "variant-02",
+      "text": "It is under ACME-PLUMBING in your vendor system I think, all caps with the dash, at least that is how the invoice reads.",
+      "entities": [{ "type": "deny_list", "value": "ACME-PLUMBING" }]
+    },
+    {
+      "id": "clean-01",
+      "text": "The water heater is still leaking from the relief valve and we would like someone to come take a look at it this week.",
+      "entities": []
+    },
+    {
+      "id": "clean-02",
+      "text": "I am following up on the maintenance plan renewal, we want to keep the twice a year schedule the same as before.",
+      "entities": []
+    },
+    {
+      "id": "clean-03",
+      "text": "The upstairs zone is not cooling like it should, it runs all afternoon and never gets below seventy eight degrees.",
+      "entities": []
+    }
+  ]
+}
