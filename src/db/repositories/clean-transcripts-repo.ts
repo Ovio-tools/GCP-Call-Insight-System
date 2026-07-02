@@ -61,6 +61,22 @@ export async function softDeleteCleanTranscript(pool: Pool, callId: string): Pro
   );
 }
 
+/**
+ * True iff retention has HARD-deleted this call's clean transcript. The redact
+ * stage preflights on this before writing ANYTHING (vault included): a known
+ * retention-final call must not get partial vault/findings writes before the
+ * clean-transcript guard would throw.
+ */
+export async function hasHardDeletedCleanTranscript(pool: Pool, callId: string): Promise<boolean> {
+  const rows = await query(
+    pool,
+    `SELECT 1 AS present FROM clean_transcripts
+      WHERE call_id = $1 AND hard_deleted_at IS NOT NULL`,
+    [callId],
+  );
+  return rows.length > 0;
+}
+
 export async function getCleanTranscript(
   pool: Pool,
   callId: string,

@@ -1,9 +1,11 @@
 import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
+import { DAL_QUERY_FAILED, DalError } from '../db/errors.js';
 import { createFailure, dedupKey } from '../failure-model/index.js';
 import { recordAlert } from '../db/repositories/alert-events-repo.js';
 import {
+  hasHardDeletedCleanTranscript,
   softDeleteCleanTranscript,
   upsertCleanTranscript,
 } from '../db/repositories/clean-transcripts-repo.js';
@@ -113,6 +115,18 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
 
   return async (ctx: StageContext): Promise<StageResult> => {
     const { callId, stage, logger, pool } = ctx;
+
+    // 0. Retention preflight: a call whose clean transcript was HARD-deleted is
+    //    retention-final. Abort before writing ANYTHING — otherwise vault/findings
+    //    rows would be partially rewritten before the clean-transcript guard threw.
+    //    (putToken carries its own hard-delete guard as the second layer.)
+    if (await hasHardDeletedCleanTranscript(pool, callId)) {
+      throw new DalError(
+        DAL_QUERY_FAILED,
+        `${DAL_QUERY_FAILED}: clean_transcripts row for this call is hard-deleted; redaction may not repopulate it (retention conflict)`,
+        { table: 'clean_transcripts', call_id: callId },
+      );
+    }
 
     // 1. Input: raw transcript only, via envelope decryption. Absent ⇒ fail closed.
     const transcript = await getTranscript(pool, deps.keyProvider, callId);

@@ -271,7 +271,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     expect(restored?.redacted_text).toContain('[NAME_1]');
   });
 
-  it('hard-delete guard: a retention-final clean row is never rewritten nor soft-deleted', async () => {
+  it('hard-delete guard: a retention-final call aborts BEFORE any write — nothing repopulated', async () => {
     const callId = 'test-rd-harddel';
     await seedProcessing(callId);
     await upsertCleanTranscript(app, {
@@ -288,15 +288,23 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
       callId,
     ]);
 
-    // (a) A passing rerun throws (retention conflict) rather than repopulating.
+    // The retention preflight rejects on BOTH dispositions (would-pass and
+    // would-hold) — a known retention conflict must dead-letter, not partially
+    // write vault/findings first.
     await expect(makeHandler([happyDetector()])(ctx(callId))).rejects.toThrow(/hard-deleted/);
+    await expect(makeHandler([fakeDetector('fake', {})])(ctx(callId))).rejects.toThrow(
+      /hard-deleted/,
+    );
 
-    // (b) A residual/unsafe hold path leaves the row untouched too.
-    const held = await makeHandler([fakeDetector('fake', {})])(ctx(callId));
-    expect(held).toMatchObject({ action: 'hold' });
-
+    // The clean row is byte-for-byte unchanged and NOTHING was written for the call.
     const after = await owner.query(`SELECT * FROM clean_transcripts WHERE call_id = $1`, [callId]);
     expect(after.rows).toEqual(before.rows);
+    const vault = await owner.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM token_vault WHERE call_id = $1`,
+      [callId],
+    );
+    expect(Number(vault.rows[0]?.n)).toBe(0);
+    expect(await getFindings(app, callId)).toEqual([]);
   });
 
   it('safe risk hold: only safe reasons past threshold — held redaction_failed WITH a clean row', async () => {
