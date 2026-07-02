@@ -43,6 +43,10 @@ export function shouldHoldForRisk(result: RiskResult, threshold: number): boolea
 /** More detections per 1000 chars than this ⇒ high_entity_density. */
 const DENSITY_PER_1000_CHARS = 15;
 
+/** Density is meaningless on a handful of spans: a short transcript with two
+ * detections is normal, not dense. The signal needs volume to mean anything. */
+const MIN_SPANS_FOR_DENSITY = 5;
+
 /** Transcripts shorter than this give NER too little context to be trusted. */
 const SHORT_TRANSCRIPT_CHARS = 80;
 
@@ -66,7 +70,9 @@ export function deriveSpanSignals(input: SpanSignalInput): RiskSignal[] {
   if (input.spans.some((s) => s.entityType === 'deny_list')) reasons.add('deny_list_hit');
 
   const density = (input.spans.length / Math.max(1, input.text.length)) * 1000;
-  if (density > DENSITY_PER_1000_CHARS) reasons.add('high_entity_density');
+  if (input.spans.length >= MIN_SPANS_FOR_DENSITY && density > DENSITY_PER_1000_CHARS) {
+    reasons.add('high_entity_density');
+  }
 
   if (
     input.nerMinScore !== undefined &&

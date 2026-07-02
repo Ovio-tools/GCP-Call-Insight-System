@@ -102,7 +102,13 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
   });
 
   function handlers(client: DialpadClient, queue = fakeQueue(), overrides = {}) {
-    const config = makeTestConfig({ DIALPAD_API_KEY: 'k', ...overrides });
+    // buildProductionStageHandlers now also constructs the redact handler (Task 4.1),
+    // which fail-fast-validates its value-hash key at factory time.
+    const config = makeTestConfig({
+      DIALPAD_API_KEY: 'k',
+      REDACTION_VALUE_HASH_KEY: Buffer.alloc(32, 7).toString('base64'),
+      ...overrides,
+    });
     return {
       set: buildProductionStageHandlers({ client, keyProvider, queue, config }),
       queue,

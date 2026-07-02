@@ -1,6 +1,8 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
-import { DalError, DAL_STALE_STAGE } from '../db/index.js';
+// Imported from db/errors.js directly (not the db barrel): the model-stage import
+// guard forbids pipeline modules from reaching modules that re-export raw/vault access.
+import { DalError, DAL_STALE_STAGE } from '../db/errors.js';
 import {
   advanceStage,
   getCallState,
