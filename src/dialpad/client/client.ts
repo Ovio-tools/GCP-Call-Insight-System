@@ -18,6 +18,10 @@ export interface RecentCall {
   state?: string;
   direction?: string;
   duration?: number;
+  /** Epoch ms the call CONCLUDED, when Dialpad provides `date_ended` in a parseable form.
+   * Absent for in-progress calls (no end yet) and for unrecognised formats — consumers must
+   * fail open on absence (the field name is provisional; see schemas.ts). */
+  endedAt?: number;
 }
 
 export interface RecentCallsPage {
@@ -59,6 +63,17 @@ export interface CreateDialpadClientOptions {
 }
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Parse Dialpad's `date_ended` (epoch ms number, numeric string, or ISO string) into epoch
+ * ms; undefined when absent or unrecognisable — never a throw, the sweep fails open. */
+function parseEndedAt(raw: string | number | undefined): number | undefined {
+  if (raw === undefined) return undefined;
+  if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined;
+  const asNumber = Number(raw);
+  if (raw.trim() !== '' && Number.isFinite(asNumber)) return asNumber;
+  const asDate = Date.parse(raw);
+  return Number.isFinite(asDate) ? asDate : undefined;
+}
 
 /** Parse a `Retry-After` header (integer seconds) into ms, or null if absent/unparseable. */
 function retryAfterMs(res: Response): number | null {
@@ -224,12 +239,16 @@ export function createDialpadClient(opts: CreateDialpadClientOptions): DialpadCl
         throw new DialpadError('api_changed', { endpoint: 'calls', status, attempts: 1 });
       }
 
-      const calls: RecentCall[] = parsed.data.items.map((item) => ({
-        callId: String(item.call_id),
-        ...(item.state !== undefined ? { state: item.state } : {}),
-        ...(item.direction !== undefined ? { direction: item.direction } : {}),
-        ...(item.duration !== undefined ? { duration: item.duration } : {}),
-      }));
+      const calls: RecentCall[] = parsed.data.items.map((item) => {
+        const endedAt = parseEndedAt(item.date_ended);
+        return {
+          callId: String(item.call_id),
+          ...(item.state !== undefined ? { state: item.state } : {}),
+          ...(item.direction !== undefined ? { direction: item.direction } : {}),
+          ...(item.duration !== undefined ? { duration: item.duration } : {}),
+          ...(endedAt !== undefined ? { endedAt } : {}),
+        };
+      });
       return { calls, ...(parsed.data.cursor !== undefined ? { cursor: parsed.data.cursor } : {}) };
     },
   };
