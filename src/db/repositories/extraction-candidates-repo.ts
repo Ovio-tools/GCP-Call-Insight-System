@@ -17,7 +17,13 @@ const TABLE = 'extraction_candidates';
  * clean extraction is the ONLY path that resets the pii-scan latch: the conflict branch
  * puts `pii_scan_status` back to 'pending', clears the failure marker columns, and
  * clears a soft delete, because the new candidate is new content that the scan stage
- * must (re-)verify from scratch. A HARD-deleted row is never updated at all —
+ * must (re-)verify from scratch. The conflict branch also clears
+ * `retention_eligible_at`: Task 5.3 stamps it after copying the candidate to
+ * structured_knowledge, and a re-extracted candidate that inherited the old stamp would
+ * be a fresh in-flight row the retention cron could hard-delete mid-scan. (Deliberate
+ * divergence: clean_transcripts keeps its stamp because re-redaction reuses the same
+ * source content; a re-extracted candidate is a new record awaiting a new store+stamp
+ * cycle.) A HARD-deleted row is never updated at all —
  * retention's hard delete is final and extraction must not repopulate it: the guarded
  * conflict matches zero rows and this throws instead of silently succeeding (same
  * pattern as upsertCleanTranscript).
@@ -58,6 +64,7 @@ export async function upsertExtractionCandidate(
        pii_scan_failure_kind = NULL,
        pii_scan_failed_at = NULL,
        pii_scan_counts = NULL,
+       retention_eligible_at = NULL,
        soft_deleted_at = NULL
      WHERE extraction_candidates.hard_deleted_at IS NULL
      RETURNING *`,

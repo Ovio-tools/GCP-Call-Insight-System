@@ -73,6 +73,11 @@ export type ExtractionCandidateInsert = z.infer<typeof extractionCandidateInsert
  * Residual-scan hit counts keyed by the CLOSED residual-scan category vocabulary
  * (src/redaction/residual-scan.ts). Keys outside that vocabulary are rejected, so a
  * PII-shaped key (a name, a street) can never ride into `pii_scan_counts`.
+ *
+ * zod v4 forward-compat: in zod v3 an enum-keyed `z.record` is a PARTIAL record (any
+ * subset of keys, each validated against the enum); zod 4 makes enum-keyed records
+ * exhaustive (every enum key required). On the v4 upgrade this must switch to
+ * `z.partialRecord(...)` — tests will fail loudly if it doesn't.
  */
 export const piiScanCountsSchema = z.record(
   z.enum(RESIDUAL_SCAN_CATEGORIES),
@@ -94,7 +99,17 @@ export type PiiScanCounts = z.infer<typeof piiScanCountsSchema>;
  *   model reconstructed or paraphrased text it should have quoted).
  */
 export const piiScanFailureSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('residual_pii'), counts: piiScanCountsSchema }).strict(),
+  z
+    .object({
+      kind: z.literal('residual_pii'),
+      // The refine sits on the FIELD (not the branch object): zod v3's
+      // discriminatedUnion only accepts plain ZodObject options. A recorded residual
+      // failure with zero hits is nonsensical, so empty counts are unrepresentable.
+      counts: piiScanCountsSchema.refine((c) => Object.keys(c).length > 0, {
+        message: 'residual_pii failure must carry at least one category count',
+      }),
+    })
+    .strict(),
   z
     .object({ kind: z.literal('tokened_phrase'), dropped_count: z.number().int().nonnegative() })
     .strict(),

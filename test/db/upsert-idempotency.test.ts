@@ -1,6 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { DEK_BYTES, LocalKeyProvider } from '../../src/crypto/index.js';
+import { SENTIMENTS, SERVICE_CATEGORIES } from '../../src/db/enums.js';
 import { repositories, restricted } from '../../src/db/index.js';
 import { hasTestDb, makePool, migrate } from './_pg.js';
 import { cleanupCalls, makeAppPool, seedKeyVersion } from './_dal.js';
@@ -121,6 +122,46 @@ describe.skipIf(!hasTestDb)('upsert idempotency', () => {
     await expect(insertRaw('water_heater', 'ecstatic')).rejects.toThrow(
       /structured_knowledge_sentiment_chk/,
     );
+  });
+
+  // Positive TS/DB parity loops (convention: call-state-drop.test.ts "stores every
+  // DROP_REASONS value"): every value the TS tuples allow must also pass the SQL
+  // CHECKs, so the two vocabularies cannot drift apart silently in either direction.
+  function skBase(callId: string) {
+    return {
+      callId,
+      callIntent: 'new_booking' as const,
+      serviceCategory: 'water_heater' as const,
+      urgency: 'routine' as const,
+      sentiment: 'neutral' as const,
+      schemaVersion: 1,
+      promptVersion: 'v1',
+      modelId: 'm1',
+    };
+  }
+
+  it('structured_knowledge accepts every SERVICE_CATEGORIES value (TS/DB parity)', async () => {
+    for (const category of SERVICE_CATEGORIES) {
+      const callId = `test-idem-sk-parity-cat-${category}`;
+      await seedCall(callId);
+      const row = await repositories.structuredKnowledge.upsertStructuredKnowledge(app, {
+        ...skBase(callId),
+        serviceCategory: category,
+      });
+      expect(row.service_category).toBe(category);
+    }
+  });
+
+  it('structured_knowledge accepts every SENTIMENTS value (TS/DB parity)', async () => {
+    for (const sentiment of SENTIMENTS) {
+      const callId = `test-idem-sk-parity-sent-${sentiment}`;
+      await seedCall(callId);
+      const row = await repositories.structuredKnowledge.upsertStructuredKnowledge(app, {
+        ...skBase(callId),
+        sentiment,
+      });
+      expect(row.sentiment).toBe(sentiment);
+    }
   });
 
   it('token_vault upsert on (call_id, token) keeps one row and re-encrypts', async () => {

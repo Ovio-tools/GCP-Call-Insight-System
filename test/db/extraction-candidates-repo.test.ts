@@ -1,6 +1,12 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { repositories } from '../../src/db/index.js';
+import {
+  PII_SCAN_FAILURE_KINDS,
+  PII_SCAN_STATUSES,
+  SENTIMENTS,
+  SERVICE_CATEGORIES,
+} from '../../src/db/enums.js';
 import type { ExtractionCandidateInsert } from '../../src/db/schemas/extraction-candidates.js';
 import { hasTestDb, makePool, migrate } from './_pg.js';
 import { cleanupCalls, makeAppPool } from './_dal.js';
@@ -103,6 +109,25 @@ describe.skipIf(!hasTestDb)('extraction_candidates repository', () => {
     expect(rerun.pii_scan_failed_at).toBeNull();
     expect(rerun.pii_scan_counts).toBeNull();
     expect(rerun.soft_deleted_at).toBeNull();
+  });
+
+  it('upsert clears retention_eligible_at (re-extracted candidate awaits a new store+stamp cycle)', async () => {
+    const callId = 'test-exc-retention-reset';
+    await seedCall(callId);
+    await repositories.extractionCandidates.upsertExtractionCandidate(app, baseInsert(callId));
+    // Simulate Task 5.3 stamping retention after copying to structured_knowledge.
+    await owner.query(
+      `UPDATE extraction_candidates SET retention_eligible_at = now() WHERE call_id = $1`,
+      [callId],
+    );
+
+    const rerun = await repositories.extractionCandidates.upsertExtractionCandidate(
+      app,
+      baseInsert(callId),
+    );
+    // A stale stamp here would let the retention cron hard-delete the fresh
+    // in-flight candidate mid-scan.
+    expect(rerun.retention_eligible_at).toBeNull();
   });
 
   it('upsert refuses to repopulate a hard-deleted row', async () => {
@@ -208,6 +233,89 @@ describe.skipIf(!hasTestDb)('extraction_candidates repository', () => {
         insertRaw({ pii_scan_status: 'pending', pii_scan_failure_kind: 'residual_pii' }),
       ).rejects.toThrow(/extraction_candidates_failed_kind_chk/);
     });
+
+    // Positive TS/DB parity loops (convention: call-state-drop.test.ts "stores every
+    // DROP_REASONS value"): every value the TS tuples allow must also pass the SQL
+    // CHECKs, so the two vocabularies cannot drift apart silently in either direction.
+    async function insertParityRaw(
+      id: string,
+      overrides: Record<string, string | null>,
+    ): Promise<void> {
+      const cols = {
+        service_category: 'water_heater',
+        sentiment: 'neutral',
+        pii_scan_status: 'pending',
+        pii_scan_failure_kind: null,
+        ...overrides,
+      };
+      await seedCall(id);
+      await owner.query(
+        `INSERT INTO extraction_candidates (
+           call_id, call_intent, service_category, urgency, sentiment,
+           pii_scan_status, pii_scan_failure_kind, schema_version, prompt_version, model_id)
+         VALUES ($1, 'new_booking', $2, 'routine', $3, $4, $5, 1, 'v1', 'm1')`,
+        [
+          id,
+          cols.service_category,
+          cols.sentiment,
+          cols.pii_scan_status,
+          cols.pii_scan_failure_kind,
+        ],
+      );
+    }
+
+    it('accepts every SERVICE_CATEGORIES value (TS/DB parity)', async () => {
+      for (const category of SERVICE_CATEGORIES) {
+        const id = `test-exc-parity-cat-${category}`;
+        await seedCall(id);
+        const row = await repositories.extractionCandidates.upsertExtractionCandidate(app, {
+          ...baseInsert(id),
+          serviceCategory: category,
+        });
+        expect(row.service_category).toBe(category);
+      }
+    });
+
+    it('accepts every SENTIMENTS value (TS/DB parity)', async () => {
+      for (const sentiment of SENTIMENTS) {
+        const id = `test-exc-parity-sent-${sentiment}`;
+        await seedCall(id);
+        const row = await repositories.extractionCandidates.upsertExtractionCandidate(app, {
+          ...baseInsert(id),
+          sentiment,
+        });
+        expect(row.sentiment).toBe(sentiment);
+      }
+    });
+
+    it('accepts every PII_SCAN_STATUSES value (TS/DB parity)', async () => {
+      for (const status of PII_SCAN_STATUSES) {
+        const id = `test-exc-parity-status-${status}`;
+        // The failed⇔kind row CHECK: 'failed' must carry a kind, others must not.
+        await insertParityRaw(id, {
+          pii_scan_status: status,
+          pii_scan_failure_kind: status === 'failed' ? 'residual_pii' : null,
+        });
+        const res = await owner.query<{ pii_scan_status: string }>(
+          `SELECT pii_scan_status FROM extraction_candidates WHERE call_id = $1`,
+          [id],
+        );
+        expect(res.rows[0]?.pii_scan_status).toBe(status);
+      }
+    });
+
+    it('accepts every PII_SCAN_FAILURE_KINDS value (TS/DB parity)', async () => {
+      for (const kind of PII_SCAN_FAILURE_KINDS) {
+        const id = `test-exc-parity-kind-${kind}`;
+        // The failed⇔kind row CHECK: a kind is only legal alongside status='failed'.
+        await insertParityRaw(id, { pii_scan_status: 'failed', pii_scan_failure_kind: kind });
+        const res = await owner.query<{ pii_scan_failure_kind: string }>(
+          `SELECT pii_scan_failure_kind FROM extraction_candidates WHERE call_id = $1`,
+          [id],
+        );
+        expect(res.rows[0]?.pii_scan_failure_kind).toBe(kind);
+      }
+    });
   });
 
   describe('markPiiScanFailed', () => {
@@ -257,6 +365,7 @@ describe.skipIf(!hasTestDb)('extraction_candidates repository', () => {
       await seedCall(callId);
       await repositories.extractionCandidates.upsertExtractionCandidate(app, baseInsert(callId));
       const before = await rawRow(callId);
+      expect(before).toBeDefined();
 
       const badPayloads: unknown[] = [
         // value is a phone number, key uncontrolled
@@ -268,6 +377,8 @@ describe.skipIf(!hasTestDb)('extraction_candidates repository', () => {
         { kind: 'residual_pii', counts: { main_street: 1 } },
         // unknown kind
         { kind: 'name_leak', counts: { digit_run: 1 } },
+        // a recorded residual failure with zero hits is nonsensical
+        { kind: 'residual_pii', counts: {} },
       ];
       for (const payload of badPayloads) {
         await expect(
@@ -275,7 +386,7 @@ describe.skipIf(!hasTestDb)('extraction_candidates repository', () => {
         ).rejects.toMatchObject({ code: 'DAL_VALIDATION_FAILED' });
       }
 
-      // No SQL ran: the row is byte-for-byte what it was.
+      // No SQL ran: the row's values are unchanged.
       expect(await rawRow(callId)).toEqual(before);
     });
 
