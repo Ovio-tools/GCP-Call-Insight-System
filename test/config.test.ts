@@ -221,3 +221,59 @@ describe('classify stage config (Task 5.1)', () => {
     }
   });
 });
+
+describe('per-component heartbeat config (Task 7.1)', () => {
+  it('resolves defaults when unset', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // The two component URLs are consumer-validated (fail-fast in staging/prod), not at boot.
+    expect(result.config.WORKER_CHECK_URL).toBeUndefined();
+    expect(result.config.RETENTION_CHECK_URL).toBeUndefined();
+    expect(result.config.WORKER_HEARTBEAT_INTERVAL_MS).toBe(60_000);
+    expect(result.config.HEARTBEAT_PING_TIMEOUT_MS).toBe(5_000);
+  });
+
+  it('accepts valid check URLs for the worker and retention cron', () => {
+    const result = validateEnv({
+      ...validEnv(),
+      WORKER_CHECK_URL: 'https://checks.example.com/ping/worker',
+      RETENTION_CHECK_URL: 'https://checks.example.com/ping/retention',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.WORKER_CHECK_URL).toBe('https://checks.example.com/ping/worker');
+    expect(result.config.RETENTION_CHECK_URL).toBe('https://checks.example.com/ping/retention');
+  });
+
+  it('rejects a non-URL WORKER_CHECK_URL, naming the variable', () => {
+    const result = validateEnv({ ...validEnv(), WORKER_CHECK_URL: 'not-a-url' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('WORKER_CHECK_URL');
+  });
+
+  it('coerces numeric-string overrides for the interval and timeout', () => {
+    const result = validateEnv({
+      ...validEnv(),
+      WORKER_HEARTBEAT_INTERVAL_MS: '15000',
+      HEARTBEAT_PING_TIMEOUT_MS: '2000',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.WORKER_HEARTBEAT_INTERVAL_MS).toBe(15_000);
+    expect(result.config.HEARTBEAT_PING_TIMEOUT_MS).toBe(2_000);
+  });
+
+  it('is present in .env.example (kept in lockstep with the schema)', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    for (const key of [
+      'WORKER_CHECK_URL',
+      'RETENTION_CHECK_URL',
+      'WORKER_HEARTBEAT_INTERVAL_MS',
+      'HEARTBEAT_PING_TIMEOUT_MS',
+    ]) {
+      expect(example).toContain(key);
+    }
+  });
+});

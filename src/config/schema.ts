@@ -188,8 +188,29 @@ export const configSchema = z.object({
 
   /** The reconciliation cron's OWN dead-man's-switch URL, pinged only after a fully
    * successful sweep. Optional in the schema (local dev / tests skip the ping), but the
-   * cron entrypoint REQUIRES it in production via requireReconciliationCheckUrl. */
+   * cron entrypoint REQUIRES it in staging/production via requireCheckUrl. */
   RECONCILIATION_CHECK_URL: z.string().url().optional(),
+
+  // --- Per-component dead-man's switches (Task 7.1) ---
+
+  /** The WORKER's OWN external check URL, pinged every WORKER_HEARTBEAT_INTERVAL_MS to prove
+   * liveness (not throughput). Optional in the schema (dev/test skip it); the worker
+   * entrypoint REQUIRES it in staging/production via requireCheckUrl(config, 'worker'). Kept
+   * separate from the cron URLs on purpose — a shared check would stay green while one
+   * component is dead. */
+  WORKER_CHECK_URL: z.string().url().optional(),
+
+  /** The RETENTION cron's OWN external check URL, pinged only after a fully successful run.
+   * Optional in the schema; REQUIRED in staging/production via requireCheckUrl. */
+  RETENTION_CHECK_URL: z.string().url().optional(),
+
+  /** How often (ms) the worker pings its liveness check while booted and its queue/Redis
+   * dependencies are healthy. Must be shorter than the external monitor's grace period. */
+  WORKER_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Per-request timeout (ms) for the provider-neutral heartbeat HTTP GET. Fail fast, never
+   * hang a beat waiting on an unreachable monitor. */
+  HEARTBEAT_PING_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
 
   // --- Classify stage / model spend (Task 5.1) ---
 
