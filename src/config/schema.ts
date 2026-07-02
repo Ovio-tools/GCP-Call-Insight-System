@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+/** True iff `v` is canonical base64 that decodes to at least `minBytes` bytes.
+ * Node's base64 decoder is lenient (silently drops invalid chars), so validity is
+ * checked structurally before measuring the decoded length. */
+function isBase64OfAtLeast(v: string, minBytes: number): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(v) || v.length % 4 !== 0) return false;
+  return Buffer.from(v, 'base64').length >= minBytes;
+}
+
 /**
  * Single source of truth for runtime configuration.
  *
@@ -172,6 +180,49 @@ export const configSchema = z.object({
 
   /** Delay (ms) between not-ready transcript retries (the delayed re-enqueue cadence). */
   DIALPAD_TRANSCRIPT_POLL_MS: z.coerce.number().int().positive().default(60_000),
+
+  // --- Redaction stage (Task 4.1) ---
+
+  /** Risk score at or above which a call is held with redaction_failed. Forced-hold
+   * reasons (offset alignment failure, residual hit) hold regardless of this value. */
+  REDACTION_RISK_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
+
+  /** Labeled-corpus recall the CI gate enforces; below it the suite fails with
+   * REDACTION_RECALL_REGRESSION. Consumed by tests, not the per-call path. */
+  REDACTION_RECALL_TARGET: z.coerce.number().min(0).max(1).default(0.95),
+
+  /** Path to a newline-delimited file of client-specific deny-list terms that must never
+   * pass redaction. Absent ⇒ empty deny list. The file lives outside the repo. */
+  REDACTION_DENY_LIST_PATH: z.string().min(1).optional(),
+
+  /** transformers.js model id for the NER pass. Vendored locally at build time by
+   * `npm run model:fetch`; never downloaded in the per-call path. */
+  REDACTION_NER_MODEL_ID: z.string().min(1).default('Xenova/bert-base-NER'),
+
+  /** Local directory the vendored NER model lives in (transformers.js cacheDir). */
+  REDACTION_NER_MODEL_DIR: z.string().min(1).default('models'),
+
+  /** NER spans below this confidence still get redacted (fail closed) but raise the
+   * ner_low_confidence risk reason. */
+  REDACTION_NER_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
+
+  /** Chunk size (chars) for splitting long transcripts under the model's token window. */
+  REDACTION_NER_CHUNK_CHARS: z.coerce.number().int().positive().default(1500),
+
+  /** Overlap (chars) between adjacent chunks so boundary-spanning entities are seen
+   * whole in at least one chunk. */
+  REDACTION_NER_CHUNK_OVERLAP_CHARS: z.coerce.number().int().nonnegative().default(250),
+
+  /** Base64 key (>= 32 bytes decoded) for the per-call HMAC over normalized detected
+   * values stored in redaction_findings.value_hash. Optional at boot like
+   * CRYPTO_LOCAL_MASTER_KEY — requireRedactionConfig enforces presence wherever the
+   * redaction stage is actually built. Never a real value in the repo. */
+  REDACTION_VALUE_HASH_KEY: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || isBase64OfAtLeast(v, 32), {
+      message: 'must be base64 that decodes to at least 32 bytes',
+    }),
 });
 
 /** Validated, typed configuration object. */
