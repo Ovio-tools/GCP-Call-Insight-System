@@ -190,6 +190,50 @@ export const configSchema = z.object({
    * successful sweep. Optional in the schema (local dev / tests skip the ping), but the
    * cron entrypoint REQUIRES it in production via requireReconciliationCheckUrl. */
   RECONCILIATION_CHECK_URL: z.string().url().optional(),
+
+  // --- Classify stage / model spend (Task 5.1) ---
+
+  /** Anthropic API key. Optional here — like DIALPAD_API_KEY, the consumer (the Anthropic
+   * client construction) validates presence, not boot. Never a real value in the repo. */
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+
+  /** Model ID for the classify stage. Never hardcoded outside config — a model swap is a
+   * config change, not a code change. */
+  CLASSIFY_MODEL_ID: z.string().min(1).default('claude-haiku-4-5-20251001'),
+
+  /** Kill switch: explicit string enum, never truthy-coerced (the EXACT WORKER_KILL_SWITCH
+   * pattern). Defaults false: while off, the classify stage makes no Anthropic calls. */
+  CLASSIFY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** Max output tokens requested per classify call. */
+  CLASSIFY_MAX_TOKENS: z.coerce.number().int().positive().default(512),
+
+  /** Cost-reservation floor (input tokens): the classify handler reserves against
+   * max(this ceiling, payload byte-estimate) so short-transcript calls never under-reserve
+   * against the daily cap. */
+  CLASSIFY_INPUT_TOKENS_CEILING: z.coerce.number().int().positive().default(30_000),
+
+  /** Fixed structured-output/request-scaffolding overhead (tokens) added to the byte-bound
+   * payload estimate when reserving against the daily cost cap. */
+  CLASSIFY_RESERVATION_OVERHEAD_TOKENS: z.coerce.number().int().nonnegative().default(1_000),
+
+  /** Anthropic TS SDK request timeout. Unlike DIALPAD_API_TIMEOUT_MS's HTTP client, the SDK
+   * takes this in milliseconds directly. */
+  ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+
+  /** Daily hard cap (USD) on model spend, enforced across ALL model stages, not just
+   * classify. */
+  DAILY_MODEL_COST_CAP_USD: z.coerce.number().positive().default(25),
+
+  /** Haiku 4.5 list price per million input/output tokens (USD). Deliberately
+   * classify-scoped, not shared: Task 5.2 adds its own EXTRACT_* rates for Sonnet, and the
+   * shared cost helper takes explicit rates with no defaults so a different model can never
+   * silently inherit Haiku pricing. */
+  CLASSIFY_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(1),
+  CLASSIFY_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(5),
 });
 
 /** Validated, typed configuration object. */

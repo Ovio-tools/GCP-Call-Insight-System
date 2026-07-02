@@ -121,3 +121,96 @@ describe('ALERT_ESCALATION_WINDOW_MINUTES (Task 2.2)', () => {
     expect(example).toContain('ALERT_ESCALATION_WINDOW_MINUTES');
   });
 });
+
+describe('classify stage config (Task 5.1)', () => {
+  it('resolves defaults when unset', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(result.config.CLASSIFY_MODEL_ID).toBe('claude-haiku-4-5-20251001');
+    expect(result.config.CLASSIFY_ENABLED).toBe(false);
+    expect(result.config.CLASSIFY_MAX_TOKENS).toBe(512);
+    expect(result.config.CLASSIFY_INPUT_TOKENS_CEILING).toBe(30_000);
+    expect(result.config.CLASSIFY_RESERVATION_OVERHEAD_TOKENS).toBe(1_000);
+    expect(result.config.ANTHROPIC_TIMEOUT_MS).toBe(30_000);
+    expect(result.config.DAILY_MODEL_COST_CAP_USD).toBe(25);
+    expect(result.config.CLASSIFY_COST_USD_PER_MTOK_INPUT).toBe(1);
+    expect(result.config.CLASSIFY_COST_USD_PER_MTOK_OUTPUT).toBe(5);
+  });
+
+  it("transforms CLASSIFY_ENABLED='true' to a boolean true (WORKER_KILL_SWITCH pattern)", () => {
+    const result = validateEnv({ ...validEnv(), CLASSIFY_ENABLED: 'true' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.CLASSIFY_ENABLED).toBe(true);
+  });
+
+  it("transforms CLASSIFY_ENABLED='false' to a boolean false explicitly", () => {
+    const result = validateEnv({ ...validEnv(), CLASSIFY_ENABLED: 'false' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.CLASSIFY_ENABLED).toBe(false);
+  });
+
+  it('rejects a non-enum CLASSIFY_ENABLED value, naming the variable', () => {
+    const result = validateEnv({ ...validEnv(), CLASSIFY_ENABLED: 'yes' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('CLASSIFY_ENABLED');
+  });
+
+  it('coerces numeric string overrides for the token/cost settings', () => {
+    const result = validateEnv({
+      ...validEnv(),
+      CLASSIFY_MAX_TOKENS: '256',
+      CLASSIFY_INPUT_TOKENS_CEILING: '10000',
+      CLASSIFY_RESERVATION_OVERHEAD_TOKENS: '0',
+      ANTHROPIC_TIMEOUT_MS: '5000',
+      DAILY_MODEL_COST_CAP_USD: '50.5',
+      CLASSIFY_COST_USD_PER_MTOK_INPUT: '0.8',
+      CLASSIFY_COST_USD_PER_MTOK_OUTPUT: '4',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.CLASSIFY_MAX_TOKENS).toBe(256);
+    expect(result.config.CLASSIFY_INPUT_TOKENS_CEILING).toBe(10_000);
+    expect(result.config.CLASSIFY_RESERVATION_OVERHEAD_TOKENS).toBe(0);
+    expect(result.config.ANTHROPIC_TIMEOUT_MS).toBe(5000);
+    expect(result.config.DAILY_MODEL_COST_CAP_USD).toBe(50.5);
+    expect(result.config.CLASSIFY_COST_USD_PER_MTOK_INPUT).toBe(0.8);
+    expect(result.config.CLASSIFY_COST_USD_PER_MTOK_OUTPUT).toBe(4);
+  });
+
+  it('accepts an ANTHROPIC_API_KEY string (consumer-validated, like DIALPAD_API_KEY)', () => {
+    const result = validateEnv({ ...validEnv(), ANTHROPIC_API_KEY: 'sk-ant-test-key' });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.ANTHROPIC_API_KEY).toBe('sk-ant-test-key');
+  });
+
+  it('rejects a non-positive CLASSIFY_MAX_TOKENS, naming the variable', () => {
+    const result = validateEnv({ ...validEnv(), CLASSIFY_MAX_TOKENS: '0' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('CLASSIFY_MAX_TOKENS');
+  });
+
+  it('is present in .env.example (kept in lockstep with the schema)', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    for (const key of [
+      'ANTHROPIC_API_KEY',
+      'CLASSIFY_MODEL_ID',
+      'CLASSIFY_ENABLED',
+      'CLASSIFY_MAX_TOKENS',
+      'CLASSIFY_INPUT_TOKENS_CEILING',
+      'CLASSIFY_RESERVATION_OVERHEAD_TOKENS',
+      'ANTHROPIC_TIMEOUT_MS',
+      'DAILY_MODEL_COST_CAP_USD',
+      'CLASSIFY_COST_USD_PER_MTOK_INPUT',
+      'CLASSIFY_COST_USD_PER_MTOK_OUTPUT',
+    ]) {
+      expect(example).toContain(key);
+    }
+  });
+});
