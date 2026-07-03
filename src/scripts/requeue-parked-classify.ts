@@ -6,66 +6,33 @@ import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { createAppPool } from '../db/index.js';
 import { createQueueConnectionFromConfig } from '../queue/connection.js';
-import { createPipelineQueue, enqueueCall, type PipelineJobData } from '../queue/pipeline-queue.js';
+import { createPipelineQueue, type PipelineJobData } from '../queue/pipeline-queue.js';
 import type { Config } from '../config/schema.js';
-import { query } from '../db/sql.js';
+import { CLASSIFY_DISABLED_REASON } from '../pipeline/classify/handler.js';
+import { findParkedCalls, requeueParkedCalls } from './requeue-parked-core.js';
+
+/** The classify stage/marker pair the kill-switch park writes (see `parkStageDisabled`). */
+const CLASSIFY_PARK = { stage: 'classify', marker: CLASSIFY_DISABLED_REASON } as const;
 
 /**
- * Testable core: the call_ids parked at classify by the kill switch.
- *
- * A call is "parked" iff BOTH hold:
- *  - its `call_state` is still `status='processing'` at `current_stage='classify'` (the
- *    kill-switch park leaves the row exactly there — `parkDisabled` never advances it), and
- *  - its LATEST `processing_log` row for the classify stage is the `classify_disabled`
- *    deferred marker.
- *
- * "LATEST" is load-bearing: a call parked earlier and later genuinely processed has a NEWER
- * classify log row whose reason is not `classify_disabled`, and must NOT be requeued. The
- * `DISTINCT ON (call_id) … ORDER BY created_at DESC, id DESC` tie-break mirrors exactly the
- * ordering `parkDisabled` uses to decide idempotency, so the two agree on which row is latest.
+ * Testable core: the call_ids parked at classify by the kill switch. Thin delegate to the
+ * stage-parameterized `findParkedCalls` (see `requeue-parked-core.ts` for the semantics).
  */
 export async function findParkedClassifyCalls(pool: Pool): Promise<string[]> {
-  const rows = await query<{ call_id: string }>(
-    pool,
-    `SELECT cs.call_id
-       FROM call_state cs
-       JOIN LATERAL (
-         -- The id DESC tie-break assumes distinct created_at per row (processing_log.id is a
-         -- random uuid, not monotonic, so it cannot itself order same-timestamp rows). This
-         -- holds because the park marker and any later genuine classify log are always written
-         -- in separate transactions, so their created_at (transaction_timestamp) differ.
-         -- This per-call LATERAL subquery rides the existing processing_log_call_id_idx access
-         -- path and is acceptable for this bounded, one-shot operational script.
-         SELECT pl.detail->>'reason' AS reason
-           FROM processing_log pl
-          WHERE pl.call_id = cs.call_id AND pl.stage = 'classify'
-          ORDER BY pl.created_at DESC, pl.id DESC
-          LIMIT 1
-       ) latest ON true
-      WHERE cs.status = 'processing'
-        AND cs.current_stage = 'classify'
-        AND latest.reason = 'classify_disabled'
-      ORDER BY cs.call_id`,
-  );
-  return rows.map((r) => r.call_id);
+  return findParkedCalls(pool, CLASSIFY_PARK);
 }
 
 /**
- * Find the parked classify calls and re-enqueue each. Enqueue is idempotent — `enqueueCall`
- * keys the job by `jobIdForCall(callId)`, so a double run (or a call that already has a live
- * job) collapses to a single job. Returns the count re-enqueued. Kept separate from the CLI
- * so tests exercise it without a real Redis.
+ * Find the parked classify calls and re-enqueue each. Thin delegate to the
+ * stage-parameterized `requeueParkedCalls`; enqueue idempotency and the Redis-free test seam
+ * are documented there.
  */
 export async function requeueParkedClassifyCalls(deps: {
   pool: Pool;
   queue: Queue<PipelineJobData>;
   config: Config;
 }): Promise<number> {
-  const callIds = await findParkedClassifyCalls(deps.pool);
-  for (const callId of callIds) {
-    await enqueueCall(deps.queue, callId, deps.config);
-  }
-  return callIds.length;
+  return requeueParkedCalls(deps, CLASSIFY_PARK);
 }
 
 /**
