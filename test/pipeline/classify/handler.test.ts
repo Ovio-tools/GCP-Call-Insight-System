@@ -9,6 +9,7 @@ import {
 } from '../../../src/anthropic/client.js';
 import * as anthropicClient from '../../../src/anthropic/client.js';
 import { createClassifyHandler } from '../../../src/pipeline/classify/handler.js';
+import { getLatestClassificationBucket } from '../../../src/pipeline/classify/classification-marker.js';
 import * as alertRepo from '../../../src/db/repositories/alert-events-repo.js';
 import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
 import { runPipeline } from '../../../src/pipeline/state-machine.js';
@@ -194,6 +195,22 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
 
     // Settled to ACTUAL (1234*1 + 56*5)/1e6, NOT stacked on the reservation.
     expect(await dayCost()).toBeCloseTo((1234 * 1 + 56 * 5) / 1_000_000, 10);
+  });
+
+  it('classification marker: getLatestClassificationBucket reads the completed classify row (shape pin)', async () => {
+    // Pins the classify `detail` contract the extract handler's classification guard depends
+    // on. If classify's completed-row shape ever drifts, THIS test (classify's own) breaks at
+    // CI, not extract in production.
+    const callId = 'test-cls-marker';
+    await seed(callId);
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    await runPipeline(
+      app,
+      callId,
+      silent,
+      set(() => model),
+    );
+    expect(await getLatestClassificationBucket(app, callId)).toBe('customer');
   });
 
   it('non-customer → skipped with drop_reason, no review row, re-run is a no-op', async () => {
