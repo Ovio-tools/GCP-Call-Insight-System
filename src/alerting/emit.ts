@@ -2,13 +2,12 @@ import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
 import type { Severity } from '../db/enums.js';
-import type { JsonValue } from '../db/types.js';
 import {
   type ErrorCode,
-  type FailureError,
   type ProcessingState,
   createFailure,
   dedupKey,
+  failureSnapshot,
 } from '../failure-model/index.js';
 import { recordAlertWithInsertStatus } from '../db/repositories/alert-events-repo.js';
 import { type DeliverDeps, type DeliveryOutcome, deliverAlertRow } from './deliver.js';
@@ -34,25 +33,6 @@ export function requireAlertWebhookUrl(config: Config): void {
 /** Coarse, log-safe token for an unknown throwable. */
 function coarse(err: unknown): string {
   return err instanceof Error ? err.name || err.constructor.name : typeof err;
-}
-
-/** The full sanitized failure fields persisted into `failure_snapshot`, so a later retry
- * renders the exact alert text from the row alone (`renderAlertEventText` path 1). */
-function toSnapshot(f: FailureError): Record<string, JsonValue> {
-  return {
-    error_code: f.error_code,
-    root_cause_category: f.root_cause_category,
-    severity: f.severity,
-    impact: f.impact,
-    processing_state: f.processing_state,
-    remediation_now: f.remediation_now,
-    remediation_fix: f.remediation_fix,
-    data_safe: f.data_safe,
-    calls_state: f.calls_state,
-    owner: f.owner,
-    runbook_ref: f.runbook_ref,
-    context: f.context,
-  };
 }
 
 export interface EmitAlertInput {
@@ -98,7 +78,7 @@ export async function emitAlert(
       rootCauseCategory: failure.root_cause_category,
       severity: failure.severity,
       dedupKey: dedupKey(failure),
-      failureSnapshot: toSnapshot(failure),
+      failureSnapshot: failureSnapshot(failure),
     });
     if (!inserted) {
       return { recorded: true, inserted: false, delivery: 'not-attempted' };

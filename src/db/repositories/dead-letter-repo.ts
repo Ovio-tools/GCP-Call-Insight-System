@@ -60,3 +60,18 @@ export async function countUncleared(pool: Pool): Promise<number> {
   );
   return rows[0]?.count ?? 0;
 }
+
+/** Dead-letter counts grouped by error_code — a low-cardinality metric counter (Task 7.4). */
+export interface DeadLetterCodeCount {
+  error_code: string;
+  count: number;
+}
+export async function countDeadLettersByCode(pool: Pool): Promise<DeadLetterCodeCount[]> {
+  return query<DeadLetterCodeCount>(
+    pool,
+    `SELECT error_code, count(*)::int AS count
+       FROM dead_letter
+      GROUP BY error_code
+      ORDER BY error_code`,
+  );
+}

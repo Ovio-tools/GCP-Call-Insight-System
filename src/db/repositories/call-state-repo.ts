@@ -234,6 +234,10 @@ export interface HoldCallInput {
   errorCode?: string;
   /** A JSON object of PII-free extra detail merged into the processing_log row. */
   logDetail?: Record<string, JsonValue>;
+  /** The full sanitized failure_snapshot (Task 2.2 §4 fields) persisted on the held
+   *  processing_log row, so a hold stays explainable after its alert is gone (Task 7.4).
+   *  Built via `failureSnapshot(failure)`; it already carries only sanitized context. */
+  failureSnapshot?: JsonValue;
 }
 
 const holdCallSchema = z.object({
@@ -242,6 +246,7 @@ const holdCallSchema = z.object({
   heldReason: heldReasonSchema,
   errorCode: z.string().min(1).optional(),
   logDetail: z.record(z.string(), jsonValueSchema).optional(),
+  failureSnapshot: jsonValueSchema.optional(),
 });
 
 /**
@@ -306,6 +311,7 @@ export async function holdCall(pool: Pool, input: HoldCallInput): Promise<CallSt
       outcome: 'held',
       ...(v.errorCode !== undefined ? { errorCode: v.errorCode } : {}),
       detail,
+      ...(v.failureSnapshot !== undefined ? { failureSnapshot: v.failureSnapshot } : {}),
     });
 
     return parseOrThrow(TABLE, callStateRowSchema, rows[0]);
@@ -332,6 +338,17 @@ export async function countByProcessingStage(pool: Pool): Promise<StageCount[]> 
       WHERE status = 'processing'
       GROUP BY current_stage`,
   );
+}
+
+/** Total calls ever ingested into the pipeline — the `calls_ingested_total` metric (Task 7.4).
+ *  `call_state` is the durable per-call spine (never purged), so its row count is the ingest
+ *  total. Read-only; touches no content column. */
+export async function countAllCalls(pool: Pool): Promise<number> {
+  const rows = await query<{ count: number }>(
+    pool,
+    `SELECT count(*)::int AS count FROM call_state`,
+  );
+  return rows[0]?.count ?? 0;
 }
 
 /**

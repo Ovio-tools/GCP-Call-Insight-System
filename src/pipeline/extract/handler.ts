@@ -7,7 +7,7 @@ import {
   reserveModelBudget,
   settleModelUsage,
 } from '../../model/cost.js';
-import { createFailure, dedupKey } from '../../failure-model/index.js';
+import { createFailure, dedupKey, failureSnapshot } from '../../failure-model/index.js';
 import { recordAlert } from '../../db/repositories/alert-events-repo.js';
 import { getCleanTranscript } from '../../db/repositories/clean-transcripts-repo.js';
 import { recordModelInvocation } from '../../db/repositories/model-invocations-repo.js';
@@ -192,6 +192,7 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
         severity: failure.severity,
         dedupKey: dedupKey(failure),
         failureSnapshot: {
+          ...failureSnapshot(failure),
           call_id: callId,
           stage,
           ...(result.usagePresent ? {} : { usage_missing: true }),
