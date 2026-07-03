@@ -2,13 +2,20 @@ import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
 import type { DialpadClient } from '../dialpad/client/index.js';
 import type { DelayedRetryQueue } from '../queue/pipeline-queue.js';
-import { type ClassifyModelClient, createAnthropicClassifyClient } from '../anthropic/client.js';
+import {
+  type ClassifyModelClient,
+  type ExtractModelClient,
+  createAnthropicClassifyClient,
+  createAnthropicExtractClient,
+} from '../anthropic/client.js';
 import {
   type Clock,
   createFetchTranscriptHandler,
   createTranscriptAvailabilityHandler,
 } from './fetch-transcript.js';
 import { createClassifyHandler } from './classify/handler.js';
+import { createExtractHandler } from './extract/handler.js';
+import { createVerbatimPiiScanHandler } from './verbatim-pii-scan.js';
 import { metadataPreFilterHandler } from './metadata-prefilter.js';
 import { createRedactionHandler } from './redact.js';
 import { defaultStageHandlers, type StageHandlers } from './stages.js';
@@ -35,6 +42,10 @@ export interface ProductionHandlerDeps {
    * Anthropic client lazily so a missing ANTHROPIC_API_KEY only fails a real classify call,
    * never boot or an earlier stage. */
   getClassifyModel?: () => ClassifyModelClient;
+  /** Override the extract model client (tests inject a fake); production builds the
+   * Anthropic client lazily so a missing ANTHROPIC_API_KEY only fails a real extract call,
+   * never boot or an earlier stage. */
+  getExtractModel?: () => ExtractModelClient;
 }
 
 /**
@@ -54,6 +65,17 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
       return classifyModel;
     });
 
+  // Same lazy memoization for the extract client: a disabled/gated call never constructs it
+  // (the thunk is only invoked past extract's kill-switch + retention + classification +
+  // transcript + cost-cap gates).
+  let extractModel: ExtractModelClient | undefined;
+  const getExtractModel =
+    deps.getExtractModel ??
+    ((): ExtractModelClient => {
+      extractModel ??= createAnthropicExtractClient(deps.config);
+      return extractModel;
+    });
+
   return {
     ...defaultStageHandlers,
     'metadata-pre-filter': metadataPreFilterHandler,
@@ -67,5 +89,12 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
       config: deps.config,
       ...(deps.clock ? { clock: deps.clock } : {}),
     }),
+    // Validates its deny-list config at factory time (same as redact/verbatim-pii-scan).
+    extract: createExtractHandler({
+      getModel: getExtractModel,
+      config: deps.config,
+      ...(deps.clock ? { clock: deps.clock } : {}),
+    }),
+    'verbatim-pii-scan': createVerbatimPiiScanHandler({ config: deps.config }),
   };
 }

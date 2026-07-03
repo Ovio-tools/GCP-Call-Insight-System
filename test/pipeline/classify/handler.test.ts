@@ -164,7 +164,7 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
 
   // ---- routing -----------------------------------------------------------------
 
-  it('customer → advances to completion, one success invocation, spend settled to actual', async () => {
+  it('customer → advances past classify (parks at disabled extract), one success invocation, spend settled to actual', async () => {
     const callId = 'test-cls-customer';
     await seed(callId);
     const { model } = fakeModel(() => Promise.resolve(result()));
@@ -175,8 +175,13 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
       set(() => model),
     );
 
+    // Extract is now wired but disabled by default (EXTRACT_ENABLED=false), so a customer call
+    // advances PAST classify and parks (defers) at the now-real extract stage — still
+    // `processing`, not `completed`. Classify's own contract (one settled success invocation)
+    // is unchanged.
     const state = await getCallState(app, callId);
-    expect(state?.status).toBe('completed');
+    expect(state?.status).toBe('processing');
+    expect(state?.current_stage).toBe('extract');
     const log = (await listLogs(app, callId)).find(
       (r) => r.stage === 'classify' && r.outcome === 'completed',
     );
@@ -734,9 +739,11 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
     expect(req.system).not.toContain(injected);
     expect(req.userText).toContain(injected);
 
-    // Routing unchanged: customer → advances.
+    // Routing unchanged: customer → advances past classify and parks (defers) at the now-real
+    // extract stage (EXTRACT_ENABLED defaults false) — still `processing`, not held/skipped.
     const state = await getCallState(app, callId);
-    expect(state?.status).toBe('completed');
+    expect(state?.status).toBe('processing');
+    expect(state?.current_stage).toBe('extract');
   });
 
   it.each([

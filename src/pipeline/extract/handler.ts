@@ -27,7 +27,7 @@ import { getLatestClassificationBucket } from '../classify/classification-marker
 import { EXTRACT_PROMPT_VERSION, EXTRACT_SCHEMA_VERSION, EXTRACT_SYSTEM_PROMPT } from './prompt.js';
 import { buildExtractUserMessage } from './prompt.js';
 import { parseExtraction } from './parse.js';
-import { emergencyRule, scanCustomerLanguage, tokenGate, verbatimGate } from './gates.js';
+import { emergencyRule, scanPhrasesForResidual, tokenGate, verbatimGate } from './gates.js';
 import type { StageContext, StageHandler, StageResult } from '../stages.js';
 
 /** The detail marker the kill-switch parks a call with, in the processing_log. */
@@ -222,7 +222,7 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
     //     verbatim gate so a fabricated phrase containing PII holds as a PII detection, not as
     //     output badness (PII precedence). The alert is resilient: its failure must not block
     //     or convert the hold. Persist NOTHING. Snapshot/detail carry COUNTS + category ids only.
-    const scan = scanCustomerLanguage(record, denyTerms);
+    const scan = scanPhrasesForResidual(record.customer_language, denyTerms);
     if (scan.hit) {
       await recordVerbatimPiiDetectedAlertResilient(
         pool,

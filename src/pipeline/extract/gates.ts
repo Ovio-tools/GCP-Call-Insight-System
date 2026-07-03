@@ -14,18 +14,22 @@ import type { ExtractionRecord } from './parse.js';
  */
 
 /**
- * Runs the independent residual-PII scan over each ORIGINAL `customer_language`
- * phrase (before any token handling) and merges the per-category counts. A single
- * hit in any phrase fails the gate. Returns COUNTS ONLY, never phrase text.
+ * Runs the independent residual-PII scan over each ORIGINAL phrase (before any token
+ * handling) and merges the per-category counts. A single hit in any phrase fails the
+ * gate. Returns COUNTS ONLY, never phrase text.
+ *
+ * Takes a plain `string[]` so BOTH content gates share one audited merge: the extract
+ * handler passes `record.customer_language`, and the verbatim-pii-scan stage passes the
+ * PERSISTED `candidate.customer_language`.
  */
-export function scanCustomerLanguage(
-  record: ExtractionRecord,
+export function scanPhrasesForResidual(
+  phrases: readonly string[],
   denyTerms: readonly string[],
 ): { hit: false } | { hit: true; counts: Record<string, number> } {
   const merged: Record<string, number> = {};
   let any = false;
 
-  for (const phrase of record.customer_language) {
+  for (const phrase of phrases) {
     const { counts } = residualScan({ redactedText: phrase, vaultPlaintexts: [], denyTerms });
     for (const [category, n] of Object.entries(counts)) {
       if (n > 0) {

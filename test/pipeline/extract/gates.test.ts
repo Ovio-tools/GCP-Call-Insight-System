@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  scanCustomerLanguage,
+  scanPhrasesForResidual,
   verbatimGate,
   tokenGate,
   emergencyRule,
@@ -50,12 +50,11 @@ describe('verbatimGate', () => {
   });
 });
 
-describe('scanCustomerLanguage (residual PII)', () => {
+describe('scanPhrasesForResidual (residual PII)', () => {
   const denyTerms = ['acmeplumbco'];
 
   it('hits a planted digit-run phrase and returns counts only', () => {
-    const record = baseRecord({ customer_language: ['call me at 5551234567 anytime'] });
-    const result = scanCustomerLanguage(record, denyTerms);
+    const result = scanPhrasesForResidual(['call me at 5551234567 anytime'], denyTerms);
     expect(result.hit).toBe(true);
     if (result.hit) {
       expect(result.counts.digit_run).toBeGreaterThan(0);
@@ -65,51 +64,49 @@ describe('scanCustomerLanguage (residual PII)', () => {
   });
 
   it('hits spelled-out digits', () => {
-    const record = baseRecord({
-      customer_language: ['five five five one two three four five six seven'],
-    });
-    const result = scanCustomerLanguage(record, denyTerms);
+    const result = scanPhrasesForResidual(
+      ['five five five one two three four five six seven'],
+      denyTerms,
+    );
     expect(result.hit).toBe(true);
     if (result.hit) expect(result.counts.spelled_out_digits).toBeGreaterThan(0);
   });
 
   it('hits an injected deny-term', () => {
-    const record = baseRecord({ customer_language: ['I usually go with AcmePlumbCo instead'] });
-    const result = scanCustomerLanguage(record, denyTerms);
+    const result = scanPhrasesForResidual(['I usually go with AcmePlumbCo instead'], denyTerms);
     expect(result.hit).toBe(true);
     if (result.hit) expect(result.counts.deny_list_term).toBeGreaterThan(0);
   });
 
   it('passes a clean phrase', () => {
-    const record = baseRecord({ customer_language: ['stopped making hot water this morning'] });
-    expect(scanCustomerLanguage(record, denyTerms)).toEqual({ hit: false });
+    expect(scanPhrasesForResidual(['stopped making hot water this morning'], denyTerms)).toEqual({
+      hit: false,
+    });
   });
 
   it('scans the ORIGINAL phrase — risky text adjacent to a token still hits', () => {
     // The residual scan strips tokens then scans; the digit run beside [PHONE_1] still trips.
-    const record = baseRecord({ customer_language: ['reach me [PHONE_1] or at 5551234567'] });
-    const result = scanCustomerLanguage(record, denyTerms);
+    const result = scanPhrasesForResidual(['reach me [PHONE_1] or at 5551234567'], denyTerms);
     expect(result.hit).toBe(true);
     if (result.hit) expect(result.counts.digit_run).toBeGreaterThan(0);
   });
 
   it('merges counts across phrases', () => {
-    const record = baseRecord({
-      customer_language: ['digits 5551234567', 'more digits 9876543210'],
-    });
-    const result = scanCustomerLanguage(record, denyTerms);
+    const result = scanPhrasesForResidual(
+      ['digits 5551234567', 'more digits 9876543210'],
+      denyTerms,
+    );
     expect(result.hit).toBe(true);
     if (result.hit) expect(result.counts.digit_run).toBe(2);
   });
 
   it('PRECEDENCE: a phrase that is BOTH non-verbatim AND has planted PII is reported by the scan', () => {
-    // scanCustomerLanguage is what the handler consults FIRST (PII precedence over
+    // scanPhrasesForResidual is what the handler consults FIRST (PII precedence over
     // the verbatim mismatch). The phrase is not in the transcript, yet the scan hits.
     const transcript = 'Caller: the sink is leaking.';
     const phrase = 'phone number 5551234567 not in transcript';
-    const record = baseRecord({ customer_language: [phrase] });
 
-    const scan = scanCustomerLanguage(record, denyTerms);
+    const scan = scanPhrasesForResidual([phrase], denyTerms);
     expect(scan.hit).toBe(true);
     if (scan.hit) expect(scan.counts.digit_run).toBeGreaterThan(0);
 
