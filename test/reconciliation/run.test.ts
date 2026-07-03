@@ -51,7 +51,6 @@ interface HarnessOptions {
   existing?: string[];
   checkUrl?: string | undefined;
   ingestGap?: ReconciliationDeps['ingestGap'];
-  pingCheck?: ReconciliationDeps['pingCheck'];
   heartbeat?: ReconciliationDeps['heartbeat'];
   windowMinutes?: number;
   maxCallMinutes?: number;
@@ -65,7 +64,6 @@ function makeHarness(opts: HarnessOptions = {}) {
   const existing = new Set(opts.existing ?? []);
   const alreadyInPipeline = vi.fn((callId: string) => Promise.resolve(existing.has(callId)));
   const ingestGap = vi.fn(opts.ingestGap ?? ((_call: RecentCall) => Promise.resolve()));
-  const pingCheck = vi.fn(opts.pingCheck ?? ((_url: string) => Promise.resolve()));
   const config = makeTestConfig({
     RECONCILIATION_CHECK_URL: 'checkUrl' in opts ? opts.checkUrl : CHECK_URL,
     ...(opts.windowMinutes !== undefined
@@ -82,7 +80,6 @@ function makeHarness(opts: HarnessOptions = {}) {
     client,
     alreadyInPipeline,
     ingestGap,
-    pingCheck,
     ...(heartbeat ? { heartbeat } : {}),
     clock: { now: () => NOW },
   };
@@ -93,7 +90,6 @@ function makeHarness(opts: HarnessOptions = {}) {
     fetchSpy,
     alreadyInPipeline,
     ingestGap,
-    pingCheck,
     heartbeat,
     config,
   };
@@ -120,18 +116,15 @@ describe('runReconciliation', () => {
 
     expect(h.heartbeat).toHaveBeenCalledTimes(1);
     expect(h.heartbeat).toHaveBeenCalledWith({ callsChecked: 1, gapsEnqueued: 1 });
-    expect(h.pingCheck).toHaveBeenCalledTimes(1);
   });
 
-  it('a failing heartbeat mirror is sanitized-logged and never skips the external ping or fails the run', async () => {
+  it('a failing heartbeat mirror is sanitized-logged and never fails the run', async () => {
     const h = makeHarness({
       pages: [{ calls: [] }],
       heartbeat: () => Promise.reject(new Error('db write failed')),
     });
 
     await expect(runReconciliation(h.deps)).resolves.toEqual({ callsChecked: 0, gapsEnqueued: 0 });
-    // The authoritative external ping still fired despite the DB-mirror failure.
-    expect(h.pingCheck).toHaveBeenCalledTimes(1);
     expect(h.lines.some((l) => l.includes('heartbeat DB mirror failed'))).toBe(true);
   });
 
@@ -272,60 +265,25 @@ describe('runReconciliation', () => {
     expect(parsed).toMatchObject({ calls_checked: 0, gaps_enqueued: 0 });
   });
 
-  it('pings its own external check exactly once, only after full success', async () => {
-    const h = makeHarness({ pages: [{ calls: [{ callId: 'rc-ping-1' }] }] });
-
-    await runReconciliation(h.deps);
-
-    expect(h.pingCheck).toHaveBeenCalledTimes(1);
-    expect(h.pingCheck).toHaveBeenCalledWith(CHECK_URL);
-    // Ordering: the ping is the LAST thing that happens, after every gap is enqueued.
-    expect(h.pingCheck.mock.invocationCallOrder[0]).toBeGreaterThan(
-      h.ingestGap.mock.invocationCallOrder[0]!,
-    );
-  });
-
-  it('does not ping when no check URL is configured', async () => {
-    const h = makeHarness({ checkUrl: undefined });
-
-    await runReconciliation(h.deps);
-
-    expect(h.pingCheck).not.toHaveBeenCalled();
-  });
-
-  it('a ping failure is logged but does not fail the run — the monitor itself is the alarm', async () => {
-    const h = makeHarness({
-      pingCheck: () => Promise.reject(new Error('monitor unreachable')),
-    });
-
-    const summary = await runReconciliation(h.deps);
-
-    expect(summary).toEqual({ callsChecked: 0, gapsEnqueued: 0 });
-    expect(h.lines.some((l) => l.includes('external check ping failed'))).toBe(true);
-  });
-
-  it('a Dialpad listing failure rejects, enqueues nothing, and never pings', async () => {
+  it('a Dialpad listing failure rejects and enqueues nothing (the entrypoint withholds the ping)', async () => {
     const err = new DialpadError('rate_limited', { endpoint: 'calls', status: 429, attempts: 5 });
     const h = makeHarness({ pages: err });
 
     await expect(runReconciliation(h.deps)).rejects.toBe(err);
 
     expect(h.ingestGap).not.toHaveBeenCalled();
-    expect(h.pingCheck).not.toHaveBeenCalled();
   });
 
-  it('an enqueue failure rejects and never pings', async () => {
+  it('an enqueue failure rejects (the entrypoint withholds the ping)', async () => {
     const h = makeHarness({
       pages: [{ calls: [{ callId: 'rc-boom' }] }],
       ingestGap: () => Promise.reject(new Error('redis down')),
     });
 
     await expect(runReconciliation(h.deps)).rejects.toThrow('redis down');
-
-    expect(h.pingCheck).not.toHaveBeenCalled();
   });
 
-  it('a mid-pagination failure after some enqueues still rejects without pinging', async () => {
+  it('a mid-pagination failure after some enqueues still rejects', async () => {
     const err = new DialpadError('unavailable', { endpoint: 'calls', attempts: 5 });
     const h = makeHarness();
     h.listSpy
@@ -335,7 +293,6 @@ describe('runReconciliation', () => {
     await expect(runReconciliation(h.deps)).rejects.toBe(err);
 
     expect(h.ingestGap).toHaveBeenCalledTimes(1);
-    expect(h.pingCheck).not.toHaveBeenCalled();
   });
 
   it('a cursor that does not advance is surfaced as an api_changed contract failure', async () => {
@@ -347,7 +304,6 @@ describe('runReconciliation', () => {
     });
 
     await expect(runReconciliation(h.deps)).rejects.toMatchObject({ kind: 'api_changed' });
-    expect(h.pingCheck).not.toHaveBeenCalled();
   });
 
   it('never calls the transcript-fetch method', async () => {

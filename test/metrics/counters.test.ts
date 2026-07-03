@@ -4,7 +4,7 @@ import { hasTestDb, makePool, migrate } from '../db/_pg.js';
 import { makeAppPool } from '../db/_dal.js';
 import { COUNTER_LABEL_KEYS, type Counter, collectCounters } from '../../src/metrics/counters.js';
 import { createRootLogger } from '../../src/logging/logger.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import {
   defaultStageHandlers,
   type StageHandlers,

@@ -12,7 +12,7 @@ import { recordDeadLetter } from '../../src/db/repositories/dead-letter-repo.js'
 import { appendLog, listByCall } from '../../src/db/repositories/processing-log-repo.js';
 import { upsertCallState } from '../../src/db/repositories/call-state-repo.js';
 import { createRootLogger } from '../../src/logging/logger.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import { defaultStageHandlers, type StageHandlers } from '../../src/pipeline/stages.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
 import { cleanupCalls, makeAppPool } from '../db/_dal.js';

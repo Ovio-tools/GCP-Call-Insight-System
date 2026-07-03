@@ -11,7 +11,10 @@ import {
   holdCall,
   skipCall,
 } from '../db/repositories/call-state-repo.js';
-import { hasActiveReviewForCall } from '../db/repositories/review-queue-repo.js';
+import {
+  hasActiveReviewForCall,
+  hasTerminalReviewForCall,
+} from '../db/repositories/review-queue-repo.js';
 import { PipelineStageError } from './errors.js';
 import {
   FINAL_STAGE,
@@ -21,9 +24,11 @@ import {
   STATUS_HELD,
   STATUS_PROCESSING,
   STATUS_SKIPPED,
+  STATUS_REVIEW_CLOSED,
   defaultStageHandlers,
   isPipelineStage,
   type PipelineStage,
+  type SlaResolver,
   type StageHandlers,
   type StageResult,
 } from './stages.js';
@@ -94,12 +99,21 @@ async function resolveStale(
  * Handlers must themselves be idempotent: a crash after a handler runs but before its advance
  * commits re-runs that handler on retry. Trivial for the stubs; a convention real stages inherit.
  */
+export interface RunPipelineOptions {
+  /** Stage handlers; injectable so tests can force a stage to hold/fail. Defaults to the stubs. */
+  handlers?: StageHandlers;
+  /** Resolves the review SLA (minutes) for a hold's `held_reason`. REQUIRED — no default; the
+   * worker builds it from config, tests supply a fixed resolver (Task 6.1). */
+  slaMinutesFor: SlaResolver;
+}
+
 export async function runPipeline(
   pool: Pool,
   callId: string,
   logger: Logger,
-  handlers: StageHandlers = defaultStageHandlers,
+  options: RunPipelineOptions,
 ): Promise<void> {
+  const handlers = options.handlers ?? defaultStageHandlers;
   const state = await getCallState(pool, callId);
   if (!state) {
     throw new Error(`call_state row for ${callId} does not exist — call was not seeded`);
@@ -150,6 +164,25 @@ export async function runPipeline(
     throw new Error(
       `${callId}: held status paired with stage '${state.current_stage}' / active review ` +
         `${String(hasReview)} — inconsistent`,
+    );
+  }
+
+  // Terminal no-op guard for a review-closed call (Task 6.1) — mirrors the held guard strictly.
+  // A valid `review_closed` row sits at a known stage AND has a matching TERMINAL review row
+  // (`review_queue.status='unresolvable'`), which `markUnresolvable` writes in one transaction.
+  // Re-enqueueing it must be a no-op. A `review_closed` missing either invariant — unknown stage,
+  // or no terminal review — is real corruption (a stray terminal status), so surface it rather
+  // than silently dropping the call from the pipeline.
+  if (state.status === STATUS_REVIEW_CLOSED) {
+    const knownStage = isPipelineStage(state.current_stage);
+    const hasTerminal = knownStage && (await hasTerminalReviewForCall(pool, callId));
+    if (knownStage && hasTerminal) {
+      logger.info({ stage: state.current_stage }, 'call review-closed — no-op');
+      return;
+    }
+    throw new Error(
+      `${callId}: review_closed status paired with stage '${state.current_stage}' / terminal ` +
+        `review ${String(hasTerminal)} — inconsistent`,
     );
   }
 
@@ -231,6 +264,7 @@ export async function runPipeline(
           callId,
           atStage: stage,
           heldReason: result.reason,
+          slaMinutes: options.slaMinutesFor(result.reason),
           ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
           ...(result.detail !== undefined ? { logDetail: result.detail } : {}),
           ...(holdSnapshot !== undefined ? { failureSnapshot: holdSnapshot } : {}),

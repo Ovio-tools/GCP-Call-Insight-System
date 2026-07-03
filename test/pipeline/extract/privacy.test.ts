@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import type { ExtractModelClient, ModelTextResult } from '../../../src/anthropic/client.js';
 import { createExtractHandler } from '../../../src/pipeline/extract/handler.js';
 import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
-import { runPipeline } from '../../../src/pipeline/state-machine.js';
+import { runPipeline } from '../../_run-pipeline.js';
 import {
   EXTRACT_SYSTEM_PROMPT,
   buildExtractUserMessage,

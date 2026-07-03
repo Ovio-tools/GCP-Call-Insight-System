@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { Pool } from 'pg';
 import { createVerbatimPiiScanHandler } from '../../src/pipeline/verbatim-pii-scan.js';
 import { buildProductionStageHandlers } from '../../src/pipeline/handlers.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import type { StageContext, StageResult } from '../../src/pipeline/stages.js';
 import type { DialpadClient } from '../../src/dialpad/client/index.js';
 import { DEK_BYTES, LocalKeyProvider } from '../../src/crypto/index.js';

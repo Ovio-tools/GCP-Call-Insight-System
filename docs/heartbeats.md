@@ -23,12 +23,20 @@ no single "system healthy" URL.
 | Component           | Config variable            | Cadence                              | Pings when                                                                                        |
 | ------------------- | -------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
 | worker              | `WORKER_CHECK_URL`         | every `WORKER_HEARTBEAT_INTERVAL_MS` | it is booted, readiness passed, its run loop is running, and its own consuming connection answers |
-| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | the sweep completes fully successfully                                                            |
+| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | BOTH the sweep AND the SLA-breach scan complete fully successfully (Task 6.1)                     |
 | retention-cron      | `RETENTION_CHECK_URL`      | once per run                         | the run completes without throwing                                                                |
 
 `WORKER_HEARTBEAT_INTERVAL_MS` (default 60s) and `HEARTBEAT_PING_TIMEOUT_MS` (default 5s) tune
 the worker cadence and the per-ping timeout. Set each component's check period/grace on the
 monitor **longer** than the component's cadence so a single slow beat does not false-alarm.
+
+**Reconciliation cron runs two independent duties (Task 6.1).** Its entrypoint attempts the
+Dialpad metadata sweep AND the review-SLA-breach scan, and the ping now covers **both**: it fires
+only when both succeed. The two are attempted independently — the scan runs even if the sweep
+failed, so overdue held calls still escalate/alert when reconciliation is broken — and **either
+duty failing withholds the ping** (a non-zero scan `failed` or `lockedSkipped` count also counts
+as incomplete). The `pingSuccess` call was moved out of `runReconciliation` into the entrypoint
+(`runReconciliationCron`) so it is a combined-health signal, not coupled to the sweep alone.
 
 ## Rules
 

@@ -8,6 +8,7 @@ import { createCallLogger } from '../logging/logger.js';
 import { runPipeline } from '../pipeline/state-machine.js';
 import type { StageHandlers } from '../pipeline/stages.js';
 import { productionStageHandlers } from '../pipeline/handlers.js';
+import { slaMinutesFor } from '../review-queue/sla.js';
 import type { PipelineJobData } from '../queue/pipeline-queue.js';
 import { createFailure, failureSnapshot } from '../failure-model/index.js';
 import { handleExhaustedJob } from './dead-letter.js';
@@ -87,7 +88,10 @@ export function createPipelineWorker(
     async (job) => {
       const callId = job.data.callId;
       const callLogger = createCallLogger(callId, parentLogger);
-      await runPipeline(pool, callId, callLogger, handlers);
+      await runPipeline(pool, callId, callLogger, {
+        handlers,
+        slaMinutesFor: (reason) => slaMinutesFor(config, reason),
+      });
     },
     { connection, concurrency: config.WORKER_CONCURRENCY, autorun: false },
   );

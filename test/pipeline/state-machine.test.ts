@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { createRootLogger } from '../../src/logging/logger.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import {
   PIPELINE_STAGES,
   STATUS_COMPLETED,
@@ -15,7 +15,7 @@ import {
   holdCall,
   upsertCallState,
 } from '../../src/db/repositories/call-state-repo.js';
-import { setStatus } from '../../src/db/repositories/review-queue-repo.js';
+import { markUnresolvable, setStatus } from '../../src/db/repositories/review-queue-repo.js';
 import type { ReviewStatus } from '../../src/db/enums.js';
 import { listByCall } from '../../src/db/repositories/processing-log-repo.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
@@ -328,7 +328,12 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
   // Hold the call (open review), then move its review to `reviewStatus`.
   const holdThenSetReview = async (callId: string, reviewStatus: ReviewStatus): Promise<void> => {
     await seed(callId, 'fetch-transcript');
-    await holdCall(app, { callId, atStage: 'fetch-transcript', heldReason: 'missing_transcript' });
+    await holdCall(app, {
+      callId,
+      atStage: 'fetch-transcript',
+      heldReason: 'missing_transcript',
+      slaMinutes: 60,
+    });
     const { rows } = await owner.query<{ id: string }>(
       `SELECT id FROM review_queue WHERE call_id = $1`,
       [callId],
@@ -351,6 +356,46 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
       await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
     },
   );
+
+  it('a markUnresolvable-d call: a requeued job no-ops via the review_closed guard', async () => {
+    const callId = 'test-sm-unres';
+    await seed(callId, 'redact');
+    await holdCall(app, {
+      callId,
+      atStage: 'redact',
+      heldReason: 'redaction_failed',
+      slaMinutes: 60,
+    });
+    await markUnresolvable(app, callId, 'alice');
+
+    await runPipeline(app, callId, logger); // must not throw — terminal no-op
+    expect((await getCallState(app, callId))?.status).toBe('review_closed');
+  });
+
+  it('a stray review_closed with NO terminal review throws inconsistent', async () => {
+    const callId = 'test-sm-stray-reviewclosed';
+    await seed(callId, 'redact');
+    await owner.query(`UPDATE call_state SET status='review_closed' WHERE call_id=$1`, [callId]);
+
+    await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
+  });
+
+  it('a review_closed at an unknown stage throws inconsistent', async () => {
+    const callId = 'test-sm-reviewclosed-badstage';
+    await seed(callId, 'redact');
+    await holdCall(app, {
+      callId,
+      atStage: 'redact',
+      heldReason: 'redaction_failed',
+      slaMinutes: 60,
+    });
+    await markUnresolvable(app, callId, 'alice');
+    await owner.query(`UPDATE call_state SET current_stage='not-a-stage' WHERE call_id=$1`, [
+      callId,
+    ]);
+
+    await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
+  });
 
   it("lands a continue action detail on that stage's completed processing_log row", async () => {
     const callId = 'test-sm-continue-detail';

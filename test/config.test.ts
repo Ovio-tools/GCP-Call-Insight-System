@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import { CONFIG_ERROR_CODE, ConfigError, loadConfig, validateEnv } from '../src/config/index.js';
+import { HELD_REASON } from '../src/db/enums.js';
+import { REVIEW_SLA_SCAN_CADENCE_MINUTES } from '../src/config/schema.js';
+import { DEFAULT_REVIEW_SLA_MINUTES_BY_REASON, REQUIRED_REVIEW_ENV } from './_config.js';
 
 /** A complete, valid environment. Individual tests remove keys to force failures. */
 function validEnv(): NodeJS.ProcessEnv {
@@ -10,6 +13,8 @@ function validEnv(): NodeJS.ProcessEnv {
     LOG_LEVEL: 'info',
     SERVICE_NAME: 'gcp-call-insights',
     PORT: '8080',
+    // Task 6.1 required-without-default review settings, so the base env validates.
+    ...REQUIRED_REVIEW_ENV,
   };
 }
 
@@ -217,6 +222,104 @@ describe('classify stage config (Task 5.1)', () => {
       'CLASSIFY_COST_USD_PER_MTOK_INPUT',
       'CLASSIFY_COST_USD_PER_MTOK_OUTPUT',
     ]) {
+      expect(example).toContain(key);
+    }
+  });
+});
+
+describe('review-queue / held-call retention config (Task 6.1)', () => {
+  it('parses a valid SLA map + retention cap', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    for (const reason of HELD_REASON) {
+      expect(result.config.REVIEW_SLA_MINUTES_BY_REASON[reason]).toBe(
+        DEFAULT_REVIEW_SLA_MINUTES_BY_REASON[reason],
+      );
+    }
+    expect(result.config.REVIEW_HELD_RAW_RETENTION_CAP_HOURS).toBe(24);
+  });
+
+  it('rejects a map missing a HELD_REASON key, naming the variable', () => {
+    const partial = { ...DEFAULT_REVIEW_SLA_MINUTES_BY_REASON };
+    delete (partial as Record<string, number>).classified_spam;
+    const result = validateEnv({
+      ...validEnv(),
+      REVIEW_SLA_MINUTES_BY_REASON: JSON.stringify(partial),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REVIEW_SLA_MINUTES_BY_REASON');
+    expect(result.error.message).toContain('classified_spam');
+  });
+
+  it('rejects a missing REVIEW_HELD_RAW_RETENTION_CAP_HOURS, naming the variable', () => {
+    const env = validEnv();
+    delete env.REVIEW_HELD_RAW_RETENTION_CAP_HOURS;
+    const result = validateEnv(env);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REVIEW_HELD_RAW_RETENTION_CAP_HOURS');
+  });
+
+  it('rejects a missing REVIEW_SLA_MINUTES_BY_REASON, naming the variable', () => {
+    const env = validEnv();
+    delete env.REVIEW_SLA_MINUTES_BY_REASON;
+    const result = validateEnv(env);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REVIEW_SLA_MINUTES_BY_REASON');
+  });
+
+  it('rejects when emergency_review is not the strict minimum', () => {
+    const map = { ...DEFAULT_REVIEW_SLA_MINUTES_BY_REASON, redaction_failed: 15 }; // ties emergency
+    const result = validateEnv({
+      ...validEnv(),
+      REVIEW_SLA_MINUTES_BY_REASON: JSON.stringify(map),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REVIEW_SLA_MINUTES_BY_REASON');
+    expect(result.error.message).toContain('emergency_review');
+  });
+
+  it('rejects an SLA value below the scan cadence', () => {
+    const map = {
+      ...DEFAULT_REVIEW_SLA_MINUTES_BY_REASON,
+      classifier_uncertain: REVIEW_SLA_SCAN_CADENCE_MINUTES - 1,
+    };
+    const result = validateEnv({
+      ...validEnv(),
+      REVIEW_SLA_MINUTES_BY_REASON: JSON.stringify(map),
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REVIEW_SLA_MINUTES_BY_REASON');
+  });
+
+  it('rejects malformed JSON without crashing (named config error, not a SyntaxError)', () => {
+    const result = validateEnv({ ...validEnv(), REVIEW_SLA_MINUTES_BY_REASON: 'not-json' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REVIEW_SLA_MINUTES_BY_REASON');
+  });
+
+  it('rejects a non-positive / non-int SLA value, naming the variable', () => {
+    for (const bad of [0, -1, 1.5]) {
+      const map = { ...DEFAULT_REVIEW_SLA_MINUTES_BY_REASON, cost_cap_held: bad };
+      const result = validateEnv({
+        ...validEnv(),
+        REVIEW_SLA_MINUTES_BY_REASON: JSON.stringify(map),
+      });
+      expect(result.ok, `value ${bad} should be rejected`).toBe(false);
+      if (result.ok) continue;
+      expect(result.error.invalid).toContain('REVIEW_SLA_MINUTES_BY_REASON');
+    }
+  });
+
+  it('is present in .env.example (kept in lockstep with the schema)', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    for (const key of ['REVIEW_SLA_MINUTES_BY_REASON', 'REVIEW_HELD_RAW_RETENTION_CAP_HOURS']) {
       expect(example).toContain(key);
     }
   });

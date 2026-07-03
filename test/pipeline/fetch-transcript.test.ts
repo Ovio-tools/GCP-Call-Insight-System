@@ -8,7 +8,7 @@ import {
   createTranscriptAvailabilityHandler,
 } from '../../src/pipeline/fetch-transcript.js';
 import { buildProductionStageHandlers } from '../../src/pipeline/handlers.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import type { StageContext } from '../../src/pipeline/stages.js';
 import {
   getCallState,
