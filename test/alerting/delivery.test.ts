@@ -127,6 +127,9 @@ describe.skipIf(!hasTestDb)('alert delivery reliability (Task 7.3)', () => {
     expect(row.delivery_state).toBe('failed');
     expect(row.delivery_attempts).toBe(1);
     expect(row.next_attempt_at.getTime()).toBeGreaterThan(NOW.getTime());
+    // Backoff is base * 2^(attempts already made). The FIRST failed attempt (0 prior) schedules
+    // at exactly `base`, NOT 2*base — the claim's own increment must not shift the formula.
+    expect(row.next_attempt_at.getTime()).toBe(NOW.getTime() + 60_000);
     expect(row.last_delivery_error).toBe('alert webhook returned status 500');
     expect(row.last_delivery_error).not.toContain(WEBHOOK);
 

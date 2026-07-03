@@ -25,26 +25,30 @@ function coarse(err: unknown): string {
   return err instanceof Error ? err.name || err.constructor.name : typeof err;
 }
 
-/** Exponential backoff instant for the next attempt: base * 2^(attempts already made). */
+/**
+ * Exponential backoff instant for THIS attempt: `base * 2^attemptsSoFar`, where `attemptsSoFar`
+ * is the number of attempts made BEFORE this one (the pre-claim `delivery_attempts`). So the
+ * first attempt (0 prior) schedules at `base`, the second at `2 * base`, etc. The caller
+ * computes this once from the pre-claim count and uses the SAME instant for the claim's lease
+ * and for the failure reschedule, so the two never drift and the counting is unaffected by the
+ * claim's own increment.
+ */
 function nextAttemptAt(config: Config, now: Date, attemptsSoFar: number): Date {
   const factor = 2 ** Math.min(attemptsSoFar, 20); // cap the exponent, never overflow
   return new Date(now.getTime() + config.ALERT_DELIVERY_BACKOFF_MS * factor);
 }
 
-/** Mark a row failed, swallowing (sanitized-logging) any DB error so delivery never throws. */
+/** Mark a row failed at a precomputed next-attempt instant, swallowing (sanitized-logging) any
+ * DB error so delivery never throws. */
 async function safeMarkFailed(
   pool: Pool,
-  config: Config,
-  row: AlertEventRow,
-  now: Date,
+  id: string,
+  nextAttempt: Date,
   reason: string,
   logger: Logger,
 ): Promise<void> {
   try {
-    await markFailed(pool, row.id, {
-      nextAttemptAt: nextAttemptAt(config, now, row.delivery_attempts),
-      error: reason,
-    });
+    await markFailed(pool, id, { nextAttemptAt: nextAttempt, error: reason });
   } catch (err) {
     logger.warn({ component: 'alerting' }, `alert delivery bookkeeping failed (${coarse(err)})`);
   }
@@ -80,6 +84,11 @@ export async function deliverAlertRow(
     return 'skipped';
   }
 
+  // Backoff instant for THIS attempt, from the pre-claim count. One value serves BOTH the
+  // claim's lease and the failure reschedule, so the documented `base * 2^attemptsSoFar` holds
+  // regardless of the claim's own increment (first attempt → base, not 2*base).
+  const nextRetryAt = nextAttemptAt(config, now, row.delivery_attempts);
+
   // Claim exactly one attempt before rendering/POSTing, leasing the row out of retry-
   // eligibility for one backoff interval so a concurrent sweep can't also send it (and so a
   // crash mid-POST self-heals once the lease elapses). If we lose the race, the row is already
@@ -88,7 +97,7 @@ export async function deliverAlertRow(
     id: row.id,
     expectedAttempts: row.delivery_attempts,
     maxAttempts: config.ALERT_DELIVERY_MAX_ATTEMPTS,
-    leaseUntil: nextAttemptAt(config, now, row.delivery_attempts),
+    leaseUntil: nextRetryAt,
   });
   if (!claimed) {
     return 'skipped';
@@ -98,7 +107,13 @@ export async function deliverAlertRow(
   try {
     text = renderAlertEventText(claimed, { environment: config.NODE_ENV, now });
   } catch (err) {
-    await safeMarkFailed(pool, config, claimed, now, `unrenderable alert (${coarse(err)})`, logger);
+    await safeMarkFailed(
+      pool,
+      claimed.id,
+      nextRetryAt,
+      `unrenderable alert (${coarse(err)})`,
+      logger,
+    );
     logger.warn(
       { component: 'alerting', error_code: claimed.error_code },
       `alert unrenderable — marked failed (${coarse(err)})`,
@@ -112,7 +127,7 @@ export async function deliverAlertRow(
     return 'delivered';
   } catch (err) {
     const reason = sanitizeWebhookError(err);
-    await safeMarkFailed(pool, config, claimed, now, reason, logger);
+    await safeMarkFailed(pool, claimed.id, nextRetryAt, reason, logger);
     logger.warn(
       { component: 'alerting', error_code: claimed.error_code },
       `alert delivery failed: ${reason}`,
