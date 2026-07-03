@@ -8,6 +8,7 @@ import {
   type ProcessingState,
   createFailure,
   dedupKey,
+  failureSnapshot,
 } from '../failure-model/index.js';
 import { recordAlert } from '../db/repositories/alert-events-repo.js';
 import { markTranscriptWaitStarted } from '../db/repositories/call-state-repo.js';
@@ -64,6 +65,7 @@ async function persistDialpadAlert(
     severity: failure.severity,
     dedupKey: dedupKey(failure),
     failureSnapshot: {
+      ...failureSnapshot(failure),
       call_id: callId,
       stage,
       status: err.status ?? null,
@@ -91,6 +93,7 @@ async function recordTranscriptMissingAlert(
     severity: failure.severity,
     dedupKey: dedupKey(failure),
     failureSnapshot: {
+      ...failureSnapshot(failure),
       call_id: ctx.callId,
       stage: ctx.stage,
       ...(ctx.waitedMs !== undefined ? { waited_ms: ctx.waitedMs } : {}),
