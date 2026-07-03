@@ -15,7 +15,10 @@ export type HeartbeatStatus = z.infer<typeof heartbeatStatusSchema>;
 export const componentHeartbeatRowSchema = z.object({
   component: z.string(),
   last_run_at: z.date(),
-  last_status: z.string(),
+  // Constrained to the same vocabulary as the DB CHECK (migration 1782864000010): an invalid
+  // stored status (bad manual/future write) fails the read parse rather than being silently
+  // treated as healthy by the status aggregator.
+  last_status: heartbeatStatusSchema,
   detail: jsonValueSchema,
   updated_at: z.date(),
 });

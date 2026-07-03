@@ -19,6 +19,8 @@
 
 exports.shorthands = undefined;
 
+const STATUS_CHK = 'component_heartbeats_last_status_chk';
+
 /** DEFAULT now() for a timestamptz column. */
 const now = (pgm) => pgm.func('now()');
 
@@ -38,6 +40,14 @@ exports.up = (pgm) => {
     detail: { type: 'jsonb', notNull: true, default: '{}' },
     updated_at: { type: 'timestamptz', notNull: true, default: now(pgm) },
   });
+
+  // Byte-for-byte aligned with HEARTBEAT_STATUSES in src/db/schemas/component-heartbeats.ts,
+  // like the alert_events delivery_state CHECK. Without it, a bad manual/future write (e.g.
+  // last_status = 'bogus') would slip past the row schema and the status aggregator would
+  // render an unhealthy component as healthy — so no path can strand an invalid status.
+  pgm.addConstraint('component_heartbeats', STATUS_CHK, {
+    check: "last_status IN ('ok', 'degraded')",
+  });
   pgm.sql(
     'COMMENT ON COLUMN component_heartbeats.detail IS ' +
       "'Counts-only, PII-free liveness detail. Never customer data or transcript content " +
@@ -52,8 +62,9 @@ exports.up = (pgm) => {
 
 /** @param {MigrationBuilder} pgm */
 exports.down = (pgm) => {
-  // dropTable removes the table and its grants together; the explicit revoke keeps the
-  // down migration symmetric and readable.
+  // dropTable removes the table, its constraints, and its grants together; the explicit
+  // constraint drop + revoke keep the down migration symmetric and readable.
+  pgm.dropConstraint('component_heartbeats', STATUS_CHK);
   pgm.sql('REVOKE SELECT, INSERT, UPDATE ON component_heartbeats FROM app_role;');
   pgm.dropTable('component_heartbeats');
 };
