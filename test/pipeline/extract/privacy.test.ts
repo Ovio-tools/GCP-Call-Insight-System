@@ -14,6 +14,7 @@ import type { DialpadClient } from '../../../src/dialpad/client/index.js';
 import { DEK_BYTES, LocalKeyProvider } from '../../../src/crypto/index.js';
 import { upsertCallState } from '../../../src/db/repositories/call-state-repo.js';
 import { upsertCleanTranscript } from '../../../src/db/repositories/clean-transcripts-repo.js';
+import { putTranscript } from '../../../src/db/repositories/raw-transcripts-repo.js';
 import { appendLog } from '../../../src/db/repositories/processing-log-repo.js';
 import { upsertDailyCost } from '../../../src/db/repositories/daily-cost-usage-repo.js';
 import { createRootLogger } from '../../../src/logging/logger.js';
@@ -52,8 +53,12 @@ const clock: Clock = { now: () => FIXED_NOW.getTime() };
  * Planted markers.
  * - REDACTED_MARKER stands in for redacted transcript text that IS allowed to cross to Anthropic
  *   but must never be logged or persisted to a hold row.
- * - RAW_PII_MARKER stands in for raw PII that is NOT in the redacted text and must appear
- *   NOWHERE — not even in the outbound payload.
+ * - RAW_PII_MARKER stands in for raw PII that lives ONLY in the raw-side store
+ *   (`raw_transcripts`, envelope-encrypted, keyed to the call under test) and is NOT in the
+ *   redacted `clean_transcripts` text. It must appear NOWHERE the handler produces — not in the
+ *   outbound model payload, not in a log line, not in a hold row. This makes the egress guard
+ *   REAL: the marker genuinely exists in a DB row the handler could decrypt but must never read,
+ *   proving extract sources its input from `clean_transcripts` alone.
  * - RESPONSE_MARKER is planted inside an adversarial model response; the handler discards the
  *   response text on the malformed route, so it must never reach a log line or a persisted row.
  * - PII_DIGITS is a planted digit-run inside a fabricated customer_language phrase; the residual
@@ -115,8 +120,17 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
   let owner!: Pool;
   let app!: Pool;
 
+  const keyProvider = new LocalKeyProvider({
+    masterKey: Buffer.alloc(DEK_BYTES, 0x07),
+    activeKeyVersion: 1,
+  });
+
   /** Seed call_state@extract + clean_transcripts + the classify `customer` bucket marker so the
-   *  classification guard passes and extract actually runs. */
+   *  classification guard passes and extract actually runs. ALSO plants RAW_PII_MARKER into the
+   *  envelope-encrypted `raw_transcripts` row keyed to this call: raw PII that genuinely exists in
+   *  the DB the handler could decrypt but must never read. The extract handler sources its input
+   *  from `clean_transcripts` (`getCleanTranscript`) only — the RAW_PII_MARKER assertions below
+   *  prove it never touches this raw store. */
   const seed = async (callId: string, redacted: string): Promise<void> => {
     await upsertCallState(app, {
       callId,
@@ -125,6 +139,10 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
       status: 'processing',
     });
     await upsertCleanTranscript(app, { callId, redactedText: redacted, redactionRiskScore: 0.1 });
+    await putTranscript(app, keyProvider, {
+      callId,
+      transcript: `Raw caller words with real PII ${RAW_PII_MARKER} that only the raw store holds.`,
+    });
     await appendLog(app, {
       callId,
       stage: 'classify',
@@ -132,11 +150,6 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
       detail: { bucket: 'customer' },
     });
   };
-
-  const keyProvider = new LocalKeyProvider({
-    masterKey: Buffer.alloc(DEK_BYTES, 0x07),
-    activeKeyVersion: 1,
-  });
 
   /** Build the extract handler with the fixed clock; extract enabled unless overridden. */
   function handler(getModel: () => ExtractModelClient, overrides = {}) {
@@ -242,8 +255,9 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
     // The redacted marker DOES cross (redacted text is what we extract from).
     expect(userText).toContain(REDACTED_MARKER);
 
-    // Critically: the raw PII marker was never in the redacted text, so it must appear NOWHERE
-    // in the entire outbound payload. Only redacted text crosses the boundary.
+    // Critically: RAW_PII_MARKER lives ONLY in the encrypted raw_transcripts row (planted by
+    // seed) and never in the redacted text — so it must appear NOWHERE in the outbound payload.
+    // Only redacted text crosses the boundary; the raw store is never read.
     expect(system + userText).not.toContain(RAW_PII_MARKER);
     // And call_id is not smuggled into the payload.
     expect(system + userText).not.toContain(callId);
@@ -451,6 +465,8 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
       expect(serialized, `${table} must not contain the transcript marker`).not.toContain(
         REDACTED_MARKER,
       );
+      // Symmetric with the malformed-rows loop: the raw-store PII marker never leaks into a hold row.
+      expect(serialized, `${table} must not contain raw PII`).not.toContain(RAW_PII_MARKER);
     }
     // Positive: the alert snapshot carries the category id (counts-only shape), proving the hold
     // is diagnosable without leaking the digits.
