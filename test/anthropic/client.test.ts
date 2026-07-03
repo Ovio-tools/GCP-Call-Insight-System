@@ -514,6 +514,24 @@ describe('createAnthropicExtractClient — shared error mapping (normalize/toMod
       expect(err.message).not.toContain(BODY_MARKER);
     });
   }
+
+  // Guards the duplicated maxRetries: 0 construction in createAnthropicExtractClient: a
+  // future edit could reintroduce hidden SDK retries on the extract path while classify's
+  // own single-attempt test stays green. A queued success after a transient failure must
+  // NEVER be consumed — exactly one HTTP attempt.
+  it('makes exactly ONE HTTP attempt on a 500; the queued success is never consumed', async () => {
+    const { client, fetchImpl } = extractClientWith([
+      apiError(500, 'api_error'),
+      json(extractMessage()),
+    ]);
+
+    await expect(client.extract(extractReq)).rejects.toMatchObject({
+      name: 'ModelApiError',
+      kind: 'transient',
+      billingDisposition: 'maybe_billed',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('createAnthropicExtractClient — success and usage handling', () => {
@@ -578,6 +596,21 @@ describe('EXTRACT_OUTPUT_FORMAT — structural pins', () => {
     const forbidden = ['minLength', 'maxLength', 'minItems', 'maxItems', 'confidence'];
     for (const term of forbidden) {
       expect(EXTRACT_OUTPUT_FORMAT_JSON).not.toContain(term);
+    }
+  });
+
+  // Pins the nullable WIRE shape: without this a silent change of the four nullable fields
+  // to plain {type:'string'} would keep every other structural pin green — contradicting
+  // the client.ts comment that a contract test pins the current type-array form.
+  it('pins the four nullable fields to the { type: ["string", "null"] } wire shape', () => {
+    const nullableFields = [
+      'location_in_home',
+      'access_or_scheduling_notes',
+      'prior_attempts',
+      'acquisition_source',
+    ] as const;
+    for (const field of nullableFields) {
+      expect(EXTRACT_OUTPUT_FORMAT.schema.properties[field].type).toEqual(['string', 'null']);
     }
   });
 
