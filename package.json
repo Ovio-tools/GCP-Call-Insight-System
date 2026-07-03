@@ -20,6 +20,7 @@
     "db:migrate": "node dist/scripts/migrate.js up",
     "db:migrate:down": "node dist/scripts/migrate.js down",
     "requeue:classify": "node dist/scripts/requeue-parked-classify.js",
+    "requeue:extract": "node dist/scripts/requeue-parked-extract.js",
     "prepare": "husky",
     "model:fetch": "node dist/scripts/fetch-ner-model.js"
   },
