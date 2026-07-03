@@ -45,6 +45,30 @@ export async function putToken(
   });
 }
 
+/**
+ * Stamp ALL of a call's vault rows retention-eligible (Task 5.3 mark-retention-eligible
+ * stage), under the restricted role. Metadata only — no decrypt, no ciphertext touched.
+ * The vault is purged with the raw transcript once the de-identified record exists (§2);
+ * actual deletion stays in the scheduled retention job.
+ *
+ * Idempotent + MONOTONIC: only stamps rows whose `retention_eligible_at` is still NULL, so
+ * a re-run never resets the purge clock. Never touches a HARD-deleted (crypto-shredded)
+ * row. A call with no tokens (no PII detected) stamps zero rows — not an error.
+ */
+export async function markTokensRetentionEligible(
+  runner: RestrictedRunner,
+  callId: string,
+): Promise<void> {
+  await runner.run((client) =>
+    query(
+      client,
+      `UPDATE token_vault SET retention_eligible_at = now()
+        WHERE call_id = $1 AND retention_eligible_at IS NULL AND hard_deleted_at IS NULL`,
+      [callId],
+    ),
+  );
+}
+
 /** Decrypt and return the original value for a token, or undefined if absent/soft-deleted. */
 export async function getToken(
   runner: RestrictedRunner,
