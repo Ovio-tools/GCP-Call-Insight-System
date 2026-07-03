@@ -116,31 +116,41 @@ export async function listRetryable(
 }
 
 /**
- * Atomically claim a row for ONE delivery attempt (Task 7.3, concurrency-safe). A
- * compare-and-swap on `delivery_attempts`: the UPDATE matches only when the row is still owed
- * (`delivery_state IN ('pending', 'failed')`), under the max-attempts cap, AND its attempt
- * count is exactly what the caller read (`expectedAttempts`). The winner gets the row back
- * with `delivery_attempts` already incremented; a concurrent second claimant — or a repeat
- * escalation run whose row is already `delivered` — matches nothing and gets `undefined`, so
- * only the winner POSTs. There is deliberately NO due-time gate here: the retry sweep
- * pre-filters by `next_attempt_at` (see {@link listRetryable}) while the immediate-delivery
- * path must send a just-inserted row now. Attempt counting lives HERE, before the POST, so no
- * caller double-counts and no two callers can claim the same alert.
+ * Atomically claim a row for ONE delivery attempt (Task 7.3, concurrency-safe). A single
+ * UPDATE that does two things at once, before anything observable happens:
+ *
+ *  1. Compare-and-swap on `delivery_attempts` — matches only when the row is still owed
+ *     (`delivery_state IN ('pending', 'failed')`), under the max-attempts cap, AND its attempt
+ *     count is exactly what the caller read (`expectedAttempts`). This fences two callers that
+ *     read the SAME pre-claim row: only one CAS wins.
+ *  2. Leases the row OUT of retry-eligibility by pushing `next_attempt_at` to `leaseUntil`
+ *     (the backoff instant for this attempt). This fences a DIFFERENT racer — a fresh sweep
+ *     that reads AFTER the claim commits but before delivery resolves: {@link listRetryable}
+ *     filters on `next_attempt_at`, so the just-leased row is invisible to it until the lease
+ *     elapses (which also recovers a row whose deliverer crashed mid-POST).
+ *
+ * The winner gets the row back with `delivery_attempts` already incremented; a losing claimant
+ * — or a repeat escalation run whose row is already `delivered` — matches nothing and gets
+ * `undefined`, so only the winner POSTs. There is deliberately no `next_attempt_at <= now`
+ * gate in the WHERE: retry-eligibility is filtered upstream by {@link listRetryable} while the
+ * immediate-delivery path must send a just-inserted row now regardless of its default
+ * `next_attempt_at`. Attempt counting lives HERE, before the POST, so no caller double-counts.
  */
 export async function claimAlertForDelivery(
   pool: Pool,
-  opts: { id: string; expectedAttempts: number; maxAttempts: number },
+  opts: { id: string; expectedAttempts: number; maxAttempts: number; leaseUntil: Date },
 ): Promise<AlertEventRow | undefined> {
   const rows = await query<AlertEventRow>(
     pool,
     `UPDATE alert_events
-        SET delivery_attempts = delivery_attempts + 1
+        SET delivery_attempts = delivery_attempts + 1,
+            next_attempt_at = $4
       WHERE id = $1
         AND delivery_state IN ('pending', 'failed')
         AND delivery_attempts = $2
         AND delivery_attempts < $3
       RETURNING *`,
-    [opts.id, opts.expectedAttempts, opts.maxAttempts],
+    [opts.id, opts.expectedAttempts, opts.maxAttempts, opts.leaseUntil],
   );
   return rows[0] ? parseOrThrow(TABLE, alertEventRowSchema, rows[0]) : undefined;
 }

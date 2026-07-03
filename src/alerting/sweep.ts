@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
-import { escalateStaleAlerts } from '../failure-model/index.js';
+import { escalateStaleAlertsWithInsertStatus } from '../failure-model/index.js';
 import type { AlertEventRow } from '../db/schemas/alert-events.js';
 import { listRetryable } from '../db/repositories/alert-events-repo.js';
 import { type DeliverDeps, deliverAlertRow } from './deliver.js';
@@ -52,20 +52,28 @@ export interface EscalateAndDeliverDeps extends DeliverDeps {
 }
 
 /**
- * Escalate unacknowledged criticals and deliver each escalation (Task 7.3). Records one
- * additive `escalation:<original>` row per stale alert (idempotent via the dedup index) and
- * delivers it through the same webhook, best-effort. Delivery never throws; a
- * `escalateStaleAlerts` DB error propagates to the caller, which wraps this so it can never
- * fail a successful reconciliation. Returns the escalation rows.
+ * Escalate unacknowledged criticals and deliver each NEWLY RECORDED escalation (Task 7.3).
+ * Records one additive `escalation:<original>` row per stale alert (idempotent via the dedup
+ * index) and delivers it through the same webhook, best-effort. Delivery is attempted ONLY for
+ * a row this run actually inserted: an already-existing (deduped) escalation is left to
+ * {@link retryPendingDeliveries}, which honors `next_attempt_at` — so a failed escalation is
+ * not re-POSTed on every subsequent run in disregard of its backoff. Delivery never throws; an
+ * `escalateStaleAlerts*` DB error propagates to the caller, which wraps this so it can never
+ * fail a successful reconciliation. Returns all escalation rows (delivered this run or not).
  */
 export async function escalateAndDeliver(
   pool: Pool,
   config: Config,
   deps: EscalateAndDeliverDeps,
 ): Promise<AlertEventRow[]> {
-  const escalated = await escalateStaleAlerts(pool, { now: deps.now, windowMs: deps.windowMs });
-  for (const row of escalated) {
-    await deliverAlertRow(pool, config, row, deps);
+  const escalated = await escalateStaleAlertsWithInsertStatus(pool, {
+    now: deps.now,
+    windowMs: deps.windowMs,
+  });
+  for (const { row, inserted } of escalated) {
+    if (inserted) {
+      await deliverAlertRow(pool, config, row, deps);
+    }
   }
-  return escalated;
+  return escalated.map((e) => e.row);
 }

@@ -117,6 +117,46 @@ describe.skipIf(!hasTestDb)('escalateAndDeliver (Task 7.3)', () => {
     expect(Number(rows[0]!.delivery_attempts)).toBe(1); // claimed + delivered exactly once
   });
 
+  it('a failed escalation is NOT re-POSTed on the next run before its backoff elapses', async () => {
+    await seedStaleCritical('esc:backoff');
+    const { logger } = makeCapturingLogger();
+    const escKey = `${ESCALATION_PREFIX}esc:backoff`;
+
+    // Run 1: escalation row is newly inserted and its delivery FAILS → scheduled for a future
+    // retry via next_attempt_at.
+    const first = await escalateAndDeliver(app, cfg(), {
+      now: new Date(),
+      windowMs: WINDOW_MS,
+      logger,
+      post: failingPoster,
+    });
+    expect(first).toHaveLength(1);
+    const after1 = await owner.query<{ delivery_state: string; delivery_attempts: number }>(
+      `SELECT delivery_state, delivery_attempts FROM alert_events WHERE dedup_key = $1`,
+      [escKey],
+    );
+    expect(after1.rows[0]!.delivery_state).toBe('failed');
+    expect(Number(after1.rows[0]!.delivery_attempts)).toBe(1);
+
+    // Run 2 BEFORE the backoff elapses: the original is still stale so it still "should
+    // escalate", but the escalation row already exists (deduped). It must NOT be delivered
+    // again here — existing rows are handed to the retry sweep, which honors next_attempt_at.
+    const cap = capturing();
+    const second = await escalateAndDeliver(app, cfg(), {
+      now: new Date(),
+      windowMs: WINDOW_MS,
+      logger,
+      post: cap.post,
+    });
+    expect(second).toHaveLength(1); // still returns the (existing) escalation row
+    expect(cap.calls).toHaveLength(0); // but NO immediate re-POST bypassing backoff
+    const after2 = await owner.query<{ delivery_attempts: number }>(
+      `SELECT delivery_attempts FROM alert_events WHERE dedup_key = $1`,
+      [escKey],
+    );
+    expect(Number(after2.rows[0]!.delivery_attempts)).toBe(1); // not incremented — no claim
+  });
+
   it('a failed escalation delivery is attempted, sanitized-logged, and never throws', async () => {
     await seedStaleCritical('esc:db-2');
     const { logger, lines } = makeCapturingLogger();

@@ -216,6 +216,53 @@ describe.skipIf(!hasTestDb)('alert delivery reliability (Task 7.3)', () => {
     expect(persisted.delivery_attempts).toBe(1); // claimed exactly once, never double-counted
   });
 
+  it('a fresh reader after a claim is fenced out by the lease until the in-flight delivery completes', async () => {
+    // The exact overlapping-sweep race: caller A claims and is mid-POST; a *fresh* sweep (B)
+    // re-reads from the DB. The claim must lease the row out of retry-eligibility (push
+    // next_attempt_at into the future) so B selects nothing and only A POSTs.
+    const row = await recordAlert(app, {
+      errorCode: 'DATABASE_UNAVAILABLE',
+      rootCauseCategory: 'DATABASE_UNAVAILABLE',
+      severity: 'critical',
+      dedupKey: 'db:lease',
+    });
+    const now = new Date();
+    const { logger } = makeCapturingLogger();
+
+    // A blocks inside the POST after claiming.
+    const aCalls: { url: string; text: string }[] = [];
+    let releaseA!: () => void;
+    const gate = new Promise<void>((res) => {
+      releaseA = res;
+    });
+    const posterA: AlertWebhookPoster = (url, text) => {
+      aCalls.push({ url, text });
+      return gate;
+    };
+    const aPromise = deliverAlertRow(app, cfg(), row, { now, logger, post: posterA });
+
+    // Wait until A has claimed (attempts incremented) and is parked in the POST.
+    for (let i = 0; i < 200 && aCalls.length === 0; i += 1) {
+      await new Promise((r) => setTimeout(r, 5));
+    }
+    expect(aCalls).toHaveLength(1);
+    expect((await getRow(row.id)).delivery_attempts).toBe(1);
+
+    // B: a fresh retry sweep at the SAME instant. The lease fences it out — no claim, no POST.
+    const bCap = capturing();
+    const bRes = await retryPendingDeliveries(app, cfg(), { now, logger, post: bCap.post });
+    expect(bRes.attempted).toBe(0);
+    expect(bCap.calls).toHaveLength(0);
+
+    // Let A finish: exactly one POST overall, delivered, counted once.
+    releaseA();
+    expect(await aPromise).toBe('delivered');
+    expect(aCalls).toHaveLength(1);
+    const persisted = await getRow(row.id);
+    expect(persisted.delivery_state).toBe('delivered');
+    expect(persisted.delivery_attempts).toBe(1);
+  });
+
   it('recordAlertWithInsertStatus reports inserted true for new and false for a deduped existing row', async () => {
     const first = await recordAlertWithInsertStatus(app, {
       errorCode: 'MIGRATION_FAILED',

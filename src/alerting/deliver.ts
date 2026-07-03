@@ -80,12 +80,15 @@ export async function deliverAlertRow(
     return 'skipped';
   }
 
-  // Claim exactly one attempt before rendering/POSTing. If we lose the race, the row is
-  // already delivered, or the cap is reached, no row comes back — skip WITHOUT sending.
+  // Claim exactly one attempt before rendering/POSTing, leasing the row out of retry-
+  // eligibility for one backoff interval so a concurrent sweep can't also send it (and so a
+  // crash mid-POST self-heals once the lease elapses). If we lose the race, the row is already
+  // delivered, or the cap is reached, no row comes back — skip WITHOUT sending.
   const claimed = await claimAlertForDelivery(pool, {
     id: row.id,
     expectedAttempts: row.delivery_attempts,
     maxAttempts: config.ALERT_DELIVERY_MAX_ATTEMPTS,
+    leaseUntil: nextAttemptAt(config, now, row.delivery_attempts),
   });
   if (!claimed) {
     return 'skipped';
