@@ -1,0 +1,10 @@
+{
+  "name": "non-json-prose",
+  "redactedTranscript": "Caller: irrelevant.",
+  "modelResponse": {
+    "text": "The caller wants to book a water heater service for tomorrow.",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "non_json" }
+}

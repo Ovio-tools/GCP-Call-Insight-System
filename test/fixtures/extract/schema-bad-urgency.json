@@ -1,0 +1,10 @@
+{
+  "name": "schema-bad-urgency",
+  "redactedTranscript": "Caller: irrelevant.",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"general\",\"service_category\":\"other\",\"problem_statement\":\"ok\",\"symptoms\":[],\"customer_language\":[],\"competitor_mentions\":[],\"concerns\":[],\"location_in_home\":null,\"access_or_scheduling_notes\":null,\"prior_attempts\":null,\"acquisition_source\":null,\"urgency\":\"critical\",\"sentiment\":\"neutral\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "schema_invalid" }
+}
