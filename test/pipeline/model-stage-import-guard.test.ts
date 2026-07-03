@@ -17,8 +17,10 @@ import { describe, expect, it } from 'vitest';
  */
 const PIPELINE_DIR = fileURLToPath(new URL('../../src/pipeline/', import.meta.url));
 
-/** Modules that legitimately touch raw transcripts / the vault. */
-const ALLOWLIST = new Set(['fetch-transcript.ts', 'redact.ts']);
+/** Modules that legitimately touch raw transcripts / the vault. `mark-retention-eligible.ts`
+ * (Task 5.3) stamps their retention METADATA only — no decrypt, no content, no token→value
+ * read — but still addresses both tables, so it belongs on the allowlist. */
+const ALLOWLIST = new Set(['fetch-transcript.ts', 'redact.ts', 'mark-retention-eligible.ts']);
 
 /** Import specifiers (relative to src/pipeline/) that expose raw/vault access. */
 const FORBIDDEN_SPECIFIER =

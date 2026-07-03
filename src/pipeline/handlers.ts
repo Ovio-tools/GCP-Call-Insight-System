@@ -18,6 +18,8 @@ import { createExtractHandler } from './extract/handler.js';
 import { createVerbatimPiiScanHandler } from './verbatim-pii-scan.js';
 import { metadataPreFilterHandler } from './metadata-prefilter.js';
 import { createRedactionHandler } from './redact.js';
+import { storeHandler } from './store.js';
+import { createMarkRetentionEligibleHandler } from './mark-retention-eligible.js';
 import { defaultStageHandlers, type StageHandlers } from './stages.js';
 
 /**
@@ -96,5 +98,9 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
       ...(deps.clock ? { clock: deps.clock } : {}),
     }),
     'verbatim-pii-scan': createVerbatimPiiScanHandler({ config: deps.config }),
+    // Task 5.3: copy the verified candidate into structured_knowledge (durable), then the
+    // final stage stamps raw transcript + vault retention-eligible (deletes nothing).
+    store: storeHandler,
+    'mark-retention-eligible': createMarkRetentionEligibleHandler(),
   };
 }

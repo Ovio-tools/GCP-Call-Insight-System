@@ -47,6 +47,25 @@ export async function transcriptExists(pool: Pool, callId: string): Promise<bool
   return rows.length > 0;
 }
 
+/**
+ * Stamp the transcript row retention-eligible (Task 5.3 mark-retention-eligible stage).
+ * Metadata only — no decrypt, no content touched; the raw transcript is no longer needed
+ * once the de-identified structured_knowledge record exists. Deletion stays in the
+ * scheduled retention job (§5), never here.
+ *
+ * Idempotent + MONOTONIC: only stamps a row whose `retention_eligible_at` is still NULL,
+ * so a re-run never resets the purge clock. Never touches a HARD-deleted (retention-final)
+ * row. A missing / already-stamped / hard-deleted row is a silent no-op.
+ */
+export async function markTranscriptRetentionEligible(pool: Pool, callId: string): Promise<void> {
+  await query(
+    pool,
+    `UPDATE raw_transcripts SET retention_eligible_at = now()
+      WHERE call_id = $1 AND retention_eligible_at IS NULL AND hard_deleted_at IS NULL`,
+    [callId],
+  );
+}
+
 /** Decrypt and return the transcript for a call, or undefined if absent/soft-deleted. */
 export async function getTranscript(
   pool: Pool,
