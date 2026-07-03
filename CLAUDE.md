@@ -12,9 +12,10 @@ Several conventions reference modules not yet built (Task 2.3 hardening/auth
 middleware, Task 8.2 crypto/restore procedures, §6.1 held-call retention). When you
 implement those, wire them in here rather than rolling your own. The Task 2.2 failure
 model now exists under `src/failure-model/` — the canonical home the forerunner error
-modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) and the
-`SEAM(Task 2.2)` worker shims (`src/worker/errors.ts`, `src/worker/dead-letter.ts`)
-fold into when their code paths are next edited. The Task 2.3 shared hardening/auth
+modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) fold into when their
+code paths are next edited. The worker dead-letter path (`src/worker/dead-letter.ts`,
+`onJobFailed`) now routes through the failure model (Task 7.4); `src/worker/errors.ts`
+remains only for the sanitized diagnostic (`detail` / `last_error`), not the snapshot. The Task 2.3 shared hardening/auth
 middleware now exists under `src/http/` — every HTTP surface builds on its
 `createInternalApp` / `createWebhookApp` factories (see `docs/http-middleware.md`); no
 surface rolls its own body limit, rate limiting, auth/session, CSRF, webhook signature/
@@ -35,7 +36,12 @@ parked-call requeue scripts (`src/scripts/requeue-parked-classify.ts`,
 `src/scripts/requeue-parked-extract.ts`), the per-component heartbeats (Task 7.1,
 `src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron), and
 the authenticated status surface + alert delivery (Task 7.3, `src/status/` +
-`src/alerting/` + `src/services/status-surface.ts`, see `docs/status-surface.md`) exist;
+`src/alerting/` + `src/services/status-surface.ts`, see `docs/status-surface.md`), and the
+logging/audit/metrics finalization (Task 7.4 — the canonical `failureSnapshot()` serializer
+`src/failure-model/snapshot.ts` writes the full §4 snapshot identically to `alert_events`,
+`processing_log` failure/hold rows, and `dead_letter`; uniform per-stage structured logging
+`src/logging/stage-log.ts`; DB-derived counters `src/metrics/counters.ts`; the resolvable
+`docs/runbook.md` + the `docs/failure-paths.md` matrix) exist;
 the remaining surfaces and the retention cron's purge logic (Task 8.1 — the entrypoint
 exists but only runs the heartbeat contract) do not yet. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY
