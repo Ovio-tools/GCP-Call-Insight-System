@@ -113,7 +113,13 @@ describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
    * vacuous (the handler only returns a StageResult; the runner performs the writes).
    */
   function set(getModel: () => ClassifyModelClient, overrides = {}) {
-    const config = makeTestConfig({ CLASSIFY_ENABLED: true, ...overrides });
+    // buildProductionStageHandlers also constructs the redact handler (Task 4.1),
+    // which fail-fast-validates its value-hash key at factory time.
+    const config = makeTestConfig({
+      CLASSIFY_ENABLED: true,
+      REDACTION_VALUE_HASH_KEY: Buffer.alloc(32, 7).toString('base64'),
+      ...overrides,
+    });
     return buildProductionStageHandlers({
       client: dialpadStub,
       keyProvider,

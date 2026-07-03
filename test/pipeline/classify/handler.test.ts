@@ -119,7 +119,13 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
 
   /** Build a full production handler set (so a `continue` runs on to completion). */
   function set(getModel: () => ClassifyModelClient, overrides = {}) {
-    const config = makeTestConfig({ CLASSIFY_ENABLED: true, ...overrides });
+    // buildProductionStageHandlers also constructs the redact handler (Task 4.1),
+    // which fail-fast-validates its value-hash key at factory time.
+    const config = makeTestConfig({
+      CLASSIFY_ENABLED: true,
+      REDACTION_VALUE_HASH_KEY: Buffer.alloc(32, 7).toString('base64'),
+      ...overrides,
+    });
     return buildProductionStageHandlers({
       client: dialpadStub,
       keyProvider,
@@ -447,7 +453,10 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
     // the kill switch). This is the "disabled classify doesn't need a key" property.
     const spy = vi.spyOn(anthropicClient, 'createAnthropicClassifyClient');
     try {
-      const config = makeTestConfig({ CLASSIFY_ENABLED: false });
+      const config = makeTestConfig({
+        CLASSIFY_ENABLED: false,
+        REDACTION_VALUE_HASH_KEY: Buffer.alloc(32, 7).toString('base64'),
+      });
       expect(config.ANTHROPIC_API_KEY).toBeUndefined();
       const handlers = buildProductionStageHandlers({
         client: dialpadStub,

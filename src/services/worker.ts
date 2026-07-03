@@ -13,6 +13,7 @@ import { createAppPool } from '../db/index.js';
 import { keyProviderFromConfig } from '../crypto/index.js';
 import { createDialpadClient, RedisDualWindowLimiter } from '../dialpad/client/index.js';
 import { buildProductionStageHandlers } from '../pipeline/handlers.js';
+import { requireRedactionConfig } from '../redaction/config.js';
 import { createQueueConnectionFromConfig } from '../queue/connection.js';
 import { createPipelineQueue } from '../queue/pipeline-queue.js';
 import { createPipelineWorker } from '../worker/worker.js';
@@ -25,6 +26,10 @@ import { createPipelineWorker } from '../worker/worker.js';
 async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createBootLogger({ level: config.LOG_LEVEL, name: 'worker' });
+  // Fail fast BEFORE consuming jobs: the redaction stage (Task 4.1) needs its value-hash
+  // key and a readable deny list; a bad config must be a boot failure with a named
+  // CONFIG_MISSING_OR_INVALID, never a per-call retry/dead-letter loop.
+  requireRedactionConfig(config);
   // Production/staging must not run an unmonitored worker: fail fast, naming the variable.
   requireCheckUrl(config, 'worker');
   await assertDependenciesReady(config, logger);

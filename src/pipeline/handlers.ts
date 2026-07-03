@@ -10,6 +10,7 @@ import {
 } from './fetch-transcript.js';
 import { createClassifyHandler } from './classify/handler.js';
 import { metadataPreFilterHandler } from './metadata-prefilter.js';
+import { createRedactionHandler } from './redact.js';
 import { defaultStageHandlers, type StageHandlers } from './stages.js';
 
 /**
@@ -58,6 +59,9 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
     'metadata-pre-filter': metadataPreFilterHandler,
     'fetch-transcript': createFetchTranscriptHandler(deps),
     'transcript-availability': createTranscriptAvailabilityHandler({ config: deps.config }),
+    // Validates redaction config (hash key, deny-list readability) at factory time —
+    // a bad config fails handler construction, never a per-call retry loop.
+    redact: createRedactionHandler({ keyProvider: deps.keyProvider, config: deps.config }),
     classify: createClassifyHandler({
       getModel: getClassifyModel,
       config: deps.config,
