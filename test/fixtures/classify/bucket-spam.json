@@ -1,0 +1,10 @@
+{
+  "name": "bucket-spam",
+  "redactedTranscript": "Automated voice: Congratulations! Your business has been selected for a limited-time offer on merchant cash advances. Press one to speak with a funding specialist now. This is your final notice.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"spam\",\"reason\":\"automated robocall solicitation for a financial offer\"}",
+    "stopReason": "stop_sequence",
+    "usagePresent": true
+  },
+  "expected": { "bucket": "spam" }
+}

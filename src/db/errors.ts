@@ -14,12 +14,16 @@ export const DAL_VALIDATION_FAILED = 'DAL_VALIDATION_FAILED' as const;
 export const DAL_STALE_STAGE = 'DAL_STALE_STAGE' as const;
 export const DAL_QUERY_FAILED = 'DAL_QUERY_FAILED' as const;
 export const DAL_RESTRICTED_ACCESS_DENIED = 'DAL_RESTRICTED_ACCESS_DENIED' as const;
+/** A `daily_cost_usage` adjustment hit no row: the day was never written, or the delta
+ * would drive `estimated_cost` negative (an over-release — always a caller logic bug). */
+export const DAL_COST_ADJUST_REJECTED = 'DAL_COST_ADJUST_REJECTED' as const;
 
 export type DalErrorCode =
   | typeof DAL_VALIDATION_FAILED
   | typeof DAL_STALE_STAGE
   | typeof DAL_QUERY_FAILED
-  | typeof DAL_RESTRICTED_ACCESS_DENIED;
+  | typeof DAL_RESTRICTED_ACCESS_DENIED
+  | typeof DAL_COST_ADJUST_REJECTED;
 
 /** Postgres `insufficient_privilege`; a query the current role isn't granted. */
 export const SQLSTATE_INSUFFICIENT_PRIVILEGE = '42501';

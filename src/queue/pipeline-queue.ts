@@ -59,3 +59,37 @@ export async function enqueueCall(
 ): Promise<void> {
   await queue.add(PIPELINE_JOB_NAME, { callId }, pipelineJobOptions(config, callId));
 }
+
+/** Minimal queue surface the fetch-transcript stage needs — BullMQ's `Queue` satisfies it. */
+export interface DelayedRetryQueue {
+  add(
+    name: string,
+    data: PipelineJobData,
+    opts: JobsOptions & { jobId: string; delay: number },
+  ): Promise<unknown>;
+}
+
+/**
+ * Re-enqueue a call as a DELAYED job when its transcript isn't ready yet (fetch-transcript's
+ * bounded wait). The base `jobIdForCall` job may already be finished (and lingering in the
+ * `removeOnComplete` set), so a distinct, poll-slot-scoped job id is used — otherwise BullMQ
+ * would dedup the retry away and it would be silently lost. The id stays a clean
+ * `[A-Za-z0-9_-]` token (no `:`, which BullMQ rejects). `slot` makes it idempotent within a
+ * poll window: two runners observing the same not-ready state schedule the same id once.
+ */
+export async function enqueueTranscriptRetry(
+  queue: DelayedRetryQueue,
+  callId: string,
+  config: Config,
+  opts: { delayMs: number; slot: number },
+): Promise<void> {
+  await queue.add(
+    PIPELINE_JOB_NAME,
+    { callId },
+    {
+      ...pipelineJobOptions(config, callId),
+      jobId: `${jobIdForCall(callId)}-wait-${opts.slot}`,
+      delay: opts.delayMs,
+    },
+  );
+}

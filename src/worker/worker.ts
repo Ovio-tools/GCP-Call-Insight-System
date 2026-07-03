@@ -6,7 +6,8 @@ import type { Config } from '../config/schema.js';
 import { appendLog } from '../db/repositories/processing-log-repo.js';
 import { createCallLogger } from '../logging/logger.js';
 import { runPipeline } from '../pipeline/state-machine.js';
-import { defaultStageHandlers, type StageHandlers } from '../pipeline/stages.js';
+import type { StageHandlers } from '../pipeline/stages.js';
+import { productionStageHandlers } from '../pipeline/handlers.js';
 import type { PipelineJobData } from '../queue/pipeline-queue.js';
 import { handleExhaustedJob } from './dead-letter.js';
 import { QUEUE_RETRY_EXHAUSTED, sanitizeFailure } from './errors.js';
@@ -62,7 +63,7 @@ export function createPipelineWorker(
   connection: Redis,
   options: PipelineWorkerOptions = {},
 ): Worker<PipelineJobData> {
-  const handlers = options.handlers ?? defaultStageHandlers;
+  const handlers = options.handlers ?? productionStageHandlers;
   const parentLogger = options.logger;
 
   const worker = new Worker<PipelineJobData>(

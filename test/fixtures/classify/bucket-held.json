@@ -1,0 +1,10 @@
+{
+  "name": "bucket-held",
+  "redactedTranscript": "Caller: ...hello? ...is anyone...\nAgent: Hello? I can barely hear you.\nCaller: [inaudible] ...the... [inaudible]\nAgent: Sorry, you're breaking up. Can you call back?",
+  "modelResponse": {
+    "text": "{\"bucket\":\"held\",\"reason\":\"transcript too fragmentary to determine caller intent\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "bucket": "held" }
+}

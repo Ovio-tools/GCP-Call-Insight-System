@@ -1,0 +1,10 @@
+{
+  "name": "empty-null-text",
+  "redactedTranscript": "Caller: irrelevant.",
+  "modelResponse": {
+    "text": null,
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "empty" }
+}

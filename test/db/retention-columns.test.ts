@@ -9,6 +9,10 @@ const PURGEABLE = [
   'clean_transcripts',
   'redaction_findings',
   'match_keys',
+  // Migration 9 (extraction_candidates) spreads retentionColumns() directly instead of
+  // joining migrations/lib/columns.cjs PURGEABLE_TABLES — appending there would change
+  // what migration 5's purge grants consume and break fresh migrations.
+  'extraction_candidates',
 ];
 const RETENTION_COLUMNS = ['retention_eligible_at', 'soft_deleted_at', 'hard_deleted_at'];
 

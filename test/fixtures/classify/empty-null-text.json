@@ -1,0 +1,10 @@
+{
+  "name": "empty-null-text",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": null,
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "empty" }
+}

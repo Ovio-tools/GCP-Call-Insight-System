@@ -1,5 +1,13 @@
 import { z } from 'zod';
 
+/** True iff `v` is canonical base64 that decodes to at least `minBytes` bytes.
+ * Node's base64 decoder is lenient (silently drops invalid chars), so validity is
+ * checked structurally before measuring the decoded length. */
+function isBase64OfAtLeast(v: string, minBytes: number): boolean {
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(v) || v.length % 4 !== 0) return false;
+  return Buffer.from(v, 'base64').length >= minBytes;
+}
+
 /**
  * Single source of truth for runtime configuration.
  *
@@ -161,6 +169,199 @@ export const configSchema = z.object({
    * `retention_eligible_at = received_at` at ingest, and the cron applies this window.
    * Default 7 days. */
   RAW_WEBHOOK_RETENTION_MS: z.coerce.number().int().positive().default(604_800_000),
+
+  // --- Dialpad transcript client (Task 3.3) ---
+
+  /** Dialpad API base URL (v2). Confirmed against the public API reference. */
+  DIALPAD_BASE_URL: z.string().url().default('https://dialpad.com/api/v2'),
+
+  /** Dialpad API key (used as a Bearer token; an OAuth access token works the same way).
+   * Optional at boot like DATABASE_URL — the consumer (worker / reconciliation cron)
+   * fail-fast-validates presence via requireDialpadConfig, emitting
+   * CONFIG_MISSING_OR_INVALID that NAMES this variable. Never a real value in the repo. */
+  DIALPAD_API_KEY: z.string().min(1).optional(),
+
+  /** Per-request timeout (ms) for a Dialpad HTTP call. Fail fast, never hang. */
+  DIALPAD_API_TIMEOUT_MS: z.coerce.number().int().positive().default(10_000),
+
+  /** Retries AFTER the first attempt for 429 / 5xx / timeout (⇒ up to 1 + this total HTTP
+   * calls). Distinct from WORKER_MAX_ATTEMPTS, which INCLUDES the first attempt. */
+  DIALPAD_API_MAX_RETRIES: z.coerce.number().int().nonnegative().default(4),
+
+  /** Base delay (ms) for the client's exponential backoff + full jitter between retries. */
+  DIALPAD_API_BACKOFF_MS: z.coerce.number().int().positive().default(500),
+
+  /** Transcript-endpoint rate limit: requests per minute (Dialpad documents 1200/min). */
+  DIALPAD_RATE_PER_MINUTE: z.coerce.number().int().positive().default(1200),
+
+  /** Company-wide rate limit: requests per second. The shared limiter enforces the tighter
+   * of this and the per-minute cap across every worker + cron instance. */
+  DIALPAD_RATE_PER_SECOND: z.coerce.number().int().positive().default(20),
+
+  /** How long (ms) a not-yet-ready transcript may be waited on before the call is held with
+   * missing_transcript. Default 30 min. */
+  DIALPAD_TRANSCRIPT_WAIT_MAX_MS: z.coerce.number().int().positive().default(1_800_000),
+
+  /** Delay (ms) between not-ready transcript retries (the delayed re-enqueue cadence). */
+  DIALPAD_TRANSCRIPT_POLL_MS: z.coerce.number().int().positive().default(60_000),
+
+  // --- Reconciliation cron (Task 3.4) ---
+
+  /** Lookback window (minutes) for the reconciliation sweep. Deliberately LONGER than the
+   * 15-minute cron cadence so consecutive runs overlap and a delayed or missed run still
+   * catches every concluded call; idempotent enqueue makes the overlap harmless. */
+  RECONCILIATION_WINDOW_MINUTES: z.coerce.number().int().positive().default(45),
+
+  /** Longest plausible call (minutes). Dialpad's list API filters by START time only, so the
+   * sweep queries `started_after = window + this margin` back — otherwise a long call that
+   * started before the window but CONCLUDED inside it would never be listed. Over-listing is
+   * harmless: already-ingested calls are skipped idempotently. */
+  RECONCILIATION_MAX_CALL_MINUTES: z.coerce.number().int().positive().default(180),
+
+  /** The reconciliation cron's OWN dead-man's-switch URL, pinged only after a fully
+   * successful sweep. Optional in the schema (local dev / tests skip the ping), but the
+   * cron entrypoint REQUIRES it in staging/production via requireCheckUrl. */
+  RECONCILIATION_CHECK_URL: z.string().url().optional(),
+
+  // --- Per-component dead-man's switches (Task 7.1) ---
+
+  /** The WORKER's OWN external check URL, pinged every WORKER_HEARTBEAT_INTERVAL_MS to prove
+   * liveness (not throughput). Optional in the schema (dev/test skip it); the worker
+   * entrypoint REQUIRES it in staging/production via requireCheckUrl(config, 'worker'). Kept
+   * separate from the cron URLs on purpose — a shared check would stay green while one
+   * component is dead. */
+  WORKER_CHECK_URL: z.string().url().optional(),
+
+  /** The RETENTION cron's OWN external check URL, pinged only after a fully successful run.
+   * Optional in the schema; REQUIRED in staging/production via requireCheckUrl. */
+  RETENTION_CHECK_URL: z.string().url().optional(),
+
+  /** How often (ms) the worker pings its liveness check while booted and its queue/Redis
+   * dependencies are healthy. Must be shorter than the external monitor's grace period. */
+  WORKER_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Per-request timeout (ms) for the provider-neutral heartbeat HTTP GET. Fail fast, never
+   * hang a beat waiting on an unreachable monitor. */
+  HEARTBEAT_PING_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+
+  // --- Classify stage / model spend (Task 5.1) ---
+
+  /** Anthropic API key. Optional here — like DIALPAD_API_KEY, the consumer (the Anthropic
+   * client construction) validates presence, not boot. Never a real value in the repo. */
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+
+  /** Model ID for the classify stage. Never hardcoded outside config — a model swap is a
+   * config change, not a code change. */
+  CLASSIFY_MODEL_ID: z.string().min(1).default('claude-haiku-4-5-20251001'),
+
+  /** Kill switch: explicit string enum, never truthy-coerced (the EXACT WORKER_KILL_SWITCH
+   * pattern). Defaults false: while off, the classify stage makes no Anthropic calls. */
+  CLASSIFY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** Max output tokens requested per classify call. */
+  CLASSIFY_MAX_TOKENS: z.coerce.number().int().positive().default(512),
+
+  /** Cost-reservation floor (input tokens): the classify handler reserves against
+   * max(this ceiling, payload byte-estimate) so short-transcript calls never under-reserve
+   * against the daily cap. */
+  CLASSIFY_INPUT_TOKENS_CEILING: z.coerce.number().int().positive().default(30_000),
+
+  /** Fixed structured-output/request-scaffolding overhead (tokens) added to the byte-bound
+   * payload estimate when reserving against the daily cost cap. */
+  CLASSIFY_RESERVATION_OVERHEAD_TOKENS: z.coerce.number().int().nonnegative().default(1_000),
+
+  /** Anthropic TS SDK request timeout in milliseconds. The SDK accepts a `timeout` client
+   * option natively; the Dialpad client hand-rolls an AbortController timer around fetch. */
+  ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+
+  /** Daily hard cap (USD) on model spend, enforced across ALL model stages, not just
+   * classify. */
+  DAILY_MODEL_COST_CAP_USD: z.coerce.number().positive().default(25),
+
+  /** Haiku 4.5 list price per million input/output tokens (USD). Deliberately
+   * classify-scoped, not shared: Task 5.2 adds its own EXTRACT_* rates for Sonnet, and the
+   * shared cost helper takes explicit rates with no defaults so a different model can never
+   * silently inherit Haiku pricing. */
+  CLASSIFY_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(1),
+  CLASSIFY_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(5),
+
+  // --- Redaction stage (Task 4.1) ---
+
+  /** Risk score at or above which a call is held with redaction_failed. Forced-hold
+   * reasons (offset alignment failure, residual hit) hold regardless of this value. */
+  REDACTION_RISK_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
+
+  /** Labeled-corpus recall the CI gate enforces; below it the suite fails with
+   * REDACTION_RECALL_REGRESSION. Consumed by tests, not the per-call path. */
+  REDACTION_RECALL_TARGET: z.coerce.number().min(0).max(1).default(0.95),
+
+  /** Path to a newline-delimited file of client-specific deny-list terms that must never
+   * pass redaction. Absent ⇒ empty deny list. The file lives outside the repo. */
+  REDACTION_DENY_LIST_PATH: z.string().min(1).optional(),
+
+  /** transformers.js model id for the NER pass. Vendored locally at build time by
+   * `npm run model:fetch`; never downloaded in the per-call path. */
+  REDACTION_NER_MODEL_ID: z.string().min(1).default('Xenova/bert-base-NER'),
+
+  /** Local directory the vendored NER model lives in (transformers.js cacheDir). */
+  REDACTION_NER_MODEL_DIR: z.string().min(1).default('models'),
+
+  /** NER spans below this confidence still get redacted (fail closed) but raise the
+   * ner_low_confidence risk reason. */
+  REDACTION_NER_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
+
+  /** Chunk size (chars) for splitting long transcripts under the model's token window. */
+  REDACTION_NER_CHUNK_CHARS: z.coerce.number().int().positive().default(1500),
+
+  /** Overlap (chars) between adjacent chunks so boundary-spanning entities are seen
+   * whole in at least one chunk. */
+  REDACTION_NER_CHUNK_OVERLAP_CHARS: z.coerce.number().int().nonnegative().default(250),
+
+  /** Base64 key (>= 32 bytes decoded) for the per-call HMAC over normalized detected
+   * values stored in redaction_findings.value_hash. Optional at boot like
+   * CRYPTO_LOCAL_MASTER_KEY — requireRedactionConfig enforces presence wherever the
+   * redaction stage is actually built. Never a real value in the repo. */
+  REDACTION_VALUE_HASH_KEY: z
+    .string()
+    .optional()
+    .refine((v) => v === undefined || isBase64OfAtLeast(v, 32), {
+      message: 'must be base64 that decodes to at least 32 bytes',
+    }),
+
+  // --- Extract stage / model spend (Task 5.2) ---
+
+  /** Model ID for the extract stage. Never hardcoded outside config — a model swap is a
+   * config change, not a code change. */
+  EXTRACT_MODEL_ID: z.string().min(1).default('claude-sonnet-4-6'),
+
+  /** Kill switch: explicit string enum, never truthy-coerced (the EXACT CLASSIFY_ENABLED
+   * pattern). Defaults false: the 4.1/5.1 chain is not yet live end-to-end. Recovery via
+   * requeue-parked-extract after enabling. */
+  EXTRACT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** Max output tokens requested per extract call. */
+  EXTRACT_MAX_TOKENS: z.coerce.number().int().positive().default(4096),
+
+  /** Cost-reservation floor (input tokens): the extract handler reserves against
+   * max(this ceiling, payload byte-estimate) so short-transcript calls never under-reserve
+   * against the daily cap. */
+  EXTRACT_INPUT_TOKENS_CEILING: z.coerce.number().int().positive().default(30_000),
+
+  /** Fixed structured-output/request-scaffolding overhead (tokens) added to the byte-bound
+   * payload estimate when reserving against the daily cost cap. */
+  EXTRACT_RESERVATION_OVERHEAD_TOKENS: z.coerce.number().int().nonnegative().default(1_000),
+
+  /** Sonnet list price per million input/output tokens (USD). Deliberately extract-scoped,
+   * not shared: the shared cost helper takes explicit rates with no defaults so a different
+   * model can never silently inherit the wrong pricing. */
+  EXTRACT_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(3),
+  EXTRACT_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(15),
 });
 
 /** Validated, typed configuration object. */

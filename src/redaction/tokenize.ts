@@ -1,0 +1,67 @@
+import { type Detection, type EntityType, tokenLabel } from './types.js';
+
+/**
+ * Stable per-call tokenization (Task 4.1). Every merged span is replaced by a
+ * token like `[NAME_1]`; numbering is per entity type, per call, in order of
+ * first occurrence, and two spans whose surfaces are equal after normalization
+ * (case/space/punctuation stripped) share one token — "John Smith" and
+ * "john  smith." both become `[NAME_1]`, so the redacted dialogue stays coherent.
+ *
+ * No cross-call linkage by design: counters restart every call and the vault key
+ * is `(call_id, token)`, so `[NAME_1]` in two calls is unrelated. Cross-call
+ * identity is exclusively the match_keys table's job.
+ *
+ * Determinism: same text + same spans ⇒ same tokens, which is what makes a rerun
+ * idempotent against the vault's `(call_id, token)` upsert.
+ */
+
+export interface TokenizedResult {
+  redactedText: string;
+  /** One entry per distinct token; plaintext is the FIRST-SEEN surface form. */
+  vaultEntries: { token: string; plaintext: string }[];
+  /** One finding per distinct token; normalizedValue feeds the per-call value hash. */
+  findings: { entityType: EntityType; tokenRef: string; normalizedValue: string }[];
+}
+
+/** Case/space/punctuation-insensitive identity for same-token coalescing. */
+export function normalizeForToken(surface: string): string {
+  return surface.toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+export function tokenize(text: string, spans: readonly Detection[]): TokenizedResult {
+  const ordered = [...spans].sort((a, b) => a.start - b.start);
+
+  const counters = new Map<EntityType, number>();
+  const tokenByKey = new Map<string, string>();
+  const vaultEntries: TokenizedResult['vaultEntries'] = [];
+  const findings: TokenizedResult['findings'] = [];
+  const tokenFor: string[] = [];
+
+  for (const span of ordered) {
+    const surface = text.slice(span.start, span.end);
+    const key = `${span.entityType}:${normalizeForToken(surface)}`;
+    let token = tokenByKey.get(key);
+    if (token === undefined) {
+      const n = (counters.get(span.entityType) ?? 0) + 1;
+      counters.set(span.entityType, n);
+      token = tokenLabel(span.entityType, n);
+      tokenByKey.set(key, token);
+      vaultEntries.push({ token, plaintext: surface });
+      findings.push({
+        entityType: span.entityType,
+        tokenRef: token,
+        normalizedValue: normalizeForToken(surface),
+      });
+    }
+    tokenFor.push(token);
+  }
+
+  // Replace right-to-left so earlier offsets stay valid.
+  let redactedText = text;
+  for (let i = ordered.length - 1; i >= 0; i -= 1) {
+    const span = ordered[i]!;
+    redactedText = redactedText.slice(0, span.start) + tokenFor[i]! + redactedText.slice(span.end);
+  }
+
+  return { redactedText, vaultEntries, findings };
+}

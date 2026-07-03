@@ -1,0 +1,10 @@
+{
+  "name": "stop-max-tokens",
+  "redactedTranscript": "Caller: irrelevant.",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"general\",\"service_category\":\"other\",\"problem_statement\":\"ok\"",
+    "stopReason": "max_tokens",
+    "usagePresent": true
+  },
+  "expected": { "failure": "truncated" }
+}

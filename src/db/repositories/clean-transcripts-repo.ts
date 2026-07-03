@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { parseOrThrow } from '../errors.js';
+import { DAL_QUERY_FAILED, DalError, parseOrThrow } from '../errors.js';
 import { query, toJsonParam } from '../sql.js';
 import {
   type CleanTranscriptInsert,
@@ -10,7 +10,13 @@ import {
 
 const TABLE = 'clean_transcripts';
 
-/** Idempotent upsert keyed on call_id — a re-run replaces the redacted text + score. */
+/**
+ * Idempotent upsert keyed on call_id — a re-run replaces the redacted text + score and
+ * clears a soft delete (a residual/unsafe hold followed by a passing rerun restores the
+ * active row). A HARD-deleted row is never updated at all: retention's hard delete
+ * removes plaintext, and redaction must not repopulate it — the guarded conflict
+ * matches zero rows and this throws instead of silently succeeding.
+ */
 export async function upsertCleanTranscript(
   pool: Pool,
   input: CleanTranscriptInsert,
@@ -23,11 +29,52 @@ export async function upsertCleanTranscript(
      ON CONFLICT (call_id) DO UPDATE SET
        redacted_text = EXCLUDED.redacted_text,
        redaction_risk_score = EXCLUDED.redaction_risk_score,
-       redaction_reasons = EXCLUDED.redaction_reasons
+       redaction_reasons = EXCLUDED.redaction_reasons,
+       soft_deleted_at = NULL
+     WHERE clean_transcripts.hard_deleted_at IS NULL
      RETURNING *`,
     [v.callId, v.redactedText, v.redactionRiskScore.toFixed(4), toJsonParam(v.redactionReasons)],
   );
+  if (rows.length === 0) {
+    throw new DalError(
+      DAL_QUERY_FAILED,
+      `${DAL_QUERY_FAILED}: ${TABLE} row is hard-deleted; redaction may not repopulate it (retention conflict)`,
+      { table: TABLE, call_id: v.callId },
+    );
+  }
   return parseOrThrow(TABLE, cleanTranscriptRowSchema, rows[0]);
+}
+
+/**
+ * Soft-delete the active clean row (residual hit / unsafe risk hold): the current
+ * redacted text may still contain PII and must stop being readable. Same hard-delete
+ * guard as the upsert — redaction never mutates a retention-final row. Idempotent;
+ * a missing or already-deleted row is a no-op.
+ */
+export async function softDeleteCleanTranscript(pool: Pool, callId: string): Promise<void> {
+  await query(
+    pool,
+    `UPDATE clean_transcripts
+        SET soft_deleted_at = now()
+      WHERE call_id = $1 AND soft_deleted_at IS NULL AND hard_deleted_at IS NULL`,
+    [callId],
+  );
+}
+
+/**
+ * True iff retention has HARD-deleted this call's clean transcript. The redact
+ * stage preflights on this before writing ANYTHING (vault included): a known
+ * retention-final call must not get partial vault/findings writes before the
+ * clean-transcript guard would throw.
+ */
+export async function hasHardDeletedCleanTranscript(pool: Pool, callId: string): Promise<boolean> {
+  const rows = await query(
+    pool,
+    `SELECT 1 AS present FROM clean_transcripts
+      WHERE call_id = $1 AND hard_deleted_at IS NOT NULL`,
+    [callId],
+  );
+  return rows.length > 0;
 }
 
 export async function getCleanTranscript(

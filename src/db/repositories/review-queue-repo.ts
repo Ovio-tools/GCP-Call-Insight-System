@@ -48,6 +48,22 @@ export async function enqueueReview(
   });
 }
 
+/**
+ * Whether an ACTIVE (open/in_review) review_queue row exists for a call. The runner's `held`
+ * terminal guard uses this to confirm a held call is still genuinely awaiting review. A
+ * resolved/unresolvable row does NOT count: a call whose review has been resolved must be
+ * moved off `status='held'` by the resolution path (reprocess, or a terminal resolved status,
+ * Task 6.x) — a `held` call_state with no active review is an inconsistency, not a live hold.
+ */
+export async function hasActiveReviewForCall(pool: Pool, callId: string): Promise<boolean> {
+  const rows = await query<{ one: number }>(
+    pool,
+    `SELECT 1 AS one FROM review_queue WHERE call_id = $1 AND status IN ('open', 'in_review') LIMIT 1`,
+    [callId],
+  );
+  return rows.length > 0;
+}
+
 export async function getReview(pool: Pool, id: string): Promise<ReviewQueueRow | undefined> {
   const rows = await query<ReviewQueueRow>(pool, `SELECT * FROM review_queue WHERE id = $1`, [id]);
   return rows[0] ? parseOrThrow(TABLE, reviewQueueRowSchema, rows[0]) : undefined;

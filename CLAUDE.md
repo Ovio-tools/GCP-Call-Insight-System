@@ -21,9 +21,23 @@ surface rolls its own body limit, rate limiting, auth/session, CSRF, webhook sig
 replay/timestamp checks, or error shaping.
 
 Current repo state: the config loader, logger, data-access layer (Task 1.2), queue +
-per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), and the shared
-HTTP hardening/auth middleware (Task 2.3) exist; the model steps, surfaces, and crons do
-not yet.
+per-call worker skeleton (Task 2.1), the shared failure model (Task 2.2), the shared
+HTTP hardening/auth middleware (Task 2.3), the metadata pre-filter stage (Task 3.1),
+the Dialpad transcript client (Task 3.3, `src/dialpad/client/`), the reconciliation
+cron (Task 3.4, `src/reconciliation/` + `src/services/reconciliation-cron.ts`), and the
+redaction stage (Task 4.1, `src/redaction/` + `src/pipeline/redact.ts` — the privacy
+boundary; see `docs/adr/0002-redaction-tokens-and-fail-closed.md`), the classify stage
+(Task 5.1, `src/pipeline/classify/`) with its Anthropic client wrapper
+(`src/anthropic/`), the shared model-cost guardrail (`src/model/cost.ts`), the extract
+stage (Task 5.2, `src/pipeline/extract/` — Sonnet, schema-gate + deterministic urgency;
+see `docs/adr/0003-extract-schema-gate-deterministic-urgency-no-scores.md`), the
+parked-call requeue scripts (`src/scripts/requeue-parked-classify.ts`,
+`src/scripts/requeue-parked-extract.ts`), and the per-component heartbeats (Task 7.1,
+`src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron) exist;
+the remaining surfaces and the retention cron's purge logic (Task 8.1 — the entrypoint
+exists but only runs the heartbeat contract) do not yet. The NER model is vendored by
+`npm run model:fetch` into `models/` (gitignored); model stages read ONLY
+`clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
 ## 1. Architecture
 
@@ -48,8 +62,9 @@ not yet.
   middleware** (Task 2.3): used by every stage and surface for consistent error
   handling and endpoint protection.
 - **Postgres**: all stores. **Redis**: queue backend. **External monitor**:
-  per-component dead-man's switches, plus a backfill check used only during a
-  backfill run.
+  per-component dead-man's switches (Task 7.1 — the worker, reconciliation cron, and
+  retention cron each ping their OWN external check on their OWN cadence; see
+  `docs/heartbeats.md`), plus a backfill check used only during a backfill run.
 
 ### 1.2 The privacy boundary
 
@@ -67,26 +82,26 @@ the same retention bookkeeping: `retention_eligible_at`, `soft_deleted_at`,
 findings store hashes or token references, never raw PII in clear. Sensitive values
 are minimized in logs, dead-letter rows, and raw webhook events.
 
-| Table                  | Contents                                                          | Sensitivity | Retention                                  |
-| ---------------------- | ----------------------------------------------------------------- | ----------- | ------------------------------------------ |
-| `call_state`           | per-call status, current stage, metadata                          | low         | indefinite (not purged)                    |
-| `raw_webhook_events`   | allowlisted metadata only; phone/name hashed; no message content  | low–medium  | short, purgeable                           |
-| `raw_transcripts`      | original transcript text, envelope-encrypted                      | high        | short, purged after window                 |
-| `token_vault`          | token→value map, envelope-encrypted; restricted role only         | highest     | tight access, purged with raw              |
-| `clean_transcripts`    | redacted text, risk score, reasons                                | medium      | kept for re-runs, purgeable                |
-| `redaction_findings`   | detected entities + residual-scan results; no raw values in clear | medium      | purged with the clean transcript           |
-| `structured_knowledge` | extracted records, schema + prompt version                        | medium      | the durable asset                          |
-| `review_queue`         | held calls, held reason, status, assignee, SLA timestamps         | medium      | held-call retention policy (§6.1)          |
-| `operator_actions`     | who did what in the review surface (audit trail)                  | low         | indefinite                                 |
-| `model_invocations`    | per call: model ID, prompt version, token counts, outcome         | low         | indefinite                                 |
-| `daily_cost_usage`     | per-day token and cost totals                                     | low         | indefinite                                 |
-| `alert_events`         | emitted alerts with error code and dedup key                      | low         | indefinite                                 |
-| `backfill_runs`        | backfill batches and checkpoints                                  | low         | indefinite                                 |
-| `match_keys`           | salted HMAC hashes of phone/name for ServiceTitan matching        | medium      | short, own window, purgeable               |
-| `consent_gates`        | recorded consents and legal gates with timestamps                 | low         | indefinite                                 |
-| `key_versions`         | DEK metadata + reference only (no recoverable key bytes)          | low–medium  | indefinite metadata; key material external |
-| `processing_log`       | per-stage audit trail with call ID                                | low         | indefinite                                 |
-| `dead_letter`          | jobs that exhausted retries, with sanitized root-cause metadata   | low         | indefinite until cleared                   |
+| Table                  | Contents                                                                 | Sensitivity | Retention                                  |
+| ---------------------- | ------------------------------------------------------------------------ | ----------- | ------------------------------------------ |
+| `call_state`           | per-call status, current stage, metadata, drop_reason (set when skipped) | low         | indefinite (not purged)                    |
+| `raw_webhook_events`   | allowlisted metadata only; phone/name hashed; no message content         | low–medium  | short, purgeable                           |
+| `raw_transcripts`      | original transcript text, envelope-encrypted                             | high        | short, purged after window                 |
+| `token_vault`          | token→value map, envelope-encrypted; restricted role only                | highest     | tight access, purged with raw              |
+| `clean_transcripts`    | redacted text, risk score, reasons                                       | medium      | kept for re-runs, purgeable                |
+| `redaction_findings`   | detected entities + residual-scan results; no raw values in clear        | medium      | purged with the clean transcript           |
+| `structured_knowledge` | extracted records, schema + prompt version                               | medium      | the durable asset                          |
+| `review_queue`         | held calls, held reason, status, assignee, SLA timestamps                | medium      | held-call retention policy (§6.1)          |
+| `operator_actions`     | who did what in the review surface (audit trail)                         | low         | indefinite                                 |
+| `model_invocations`    | per call: model ID, prompt version, token counts, outcome                | low         | indefinite                                 |
+| `daily_cost_usage`     | per-day token and cost totals                                            | low         | indefinite                                 |
+| `alert_events`         | emitted alerts with error code and dedup key                             | low         | indefinite                                 |
+| `backfill_runs`        | backfill batches and checkpoints                                         | low         | indefinite                                 |
+| `match_keys`           | salted HMAC hashes of phone/name for ServiceTitan matching               | medium      | short, own window, purgeable               |
+| `consent_gates`        | recorded consents and legal gates with timestamps                        | low         | indefinite                                 |
+| `key_versions`         | DEK metadata + reference only (no recoverable key bytes)                 | low–medium  | indefinite metadata; key material external |
+| `processing_log`       | per-stage audit trail with call ID                                       | low         | indefinite                                 |
+| `dead_letter`          | jobs that exhausted retries, with sanitized root-cause metadata          | low         | indefinite until cleared                   |
 
 ## 3. Pipeline stages (per-call state machine)
 
@@ -98,12 +113,22 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
 
 - **metadata pre-filter** — runs first, on call metadata only (direction, duration,
   call state, related-call graph). No text, no model, no PII, no transcript fetch.
-  Drops obvious junk before a transcript is pulled.
+  Drops obvious junk before a transcript is pulled: a drop sets `status='skipped'` and a
+  specific `call_state.drop_reason` (`zero_duration`, `non_conversation_call_state`,
+  `outbound_no_customer_conversation`, `internal_transfer_non_operator_leg`), writes a
+  `processing_log` row, and stops the pipeline before fetch-transcript. The call and its
+  metadata are never deleted. Fails safe: anything missing, unknown, or ambiguous passes.
 - **fetch transcript** — only for calls that survive the pre-filter. A call with no
   transcript yet is handled by the availability check, not treated as a failure.
-- **redact** — produces redacted text, a token vault, and a risk score with reasons.
-  If the residual scan finds anything or the risk score is too high, the call is
-  held with reason `redaction_failed` and never sent.
+- **redact** (Task 4.1, built) — layered detection (in-process ONNX NER dual-pass +
+  regex variants + config deny-list), stable per-call tokens (`[NAME_1]`) vaulted in
+  `token_vault`, findings with per-call value hashes, a reason-based risk score, and
+  an independent residual scan over the output. Every NER candidate is redacted
+  regardless of confidence. A residual hit holds `residual_pii_detected`; a forced
+  reason or `score >= REDACTION_RISK_THRESHOLD` holds `redaction_failed` — never
+  sent. A held call keeps its clean row only when every risk reason is
+  safe-after-redaction; the corpus recall / no-egress / adversarial gates run in CI
+  against the real model (`REDACTION_RECALL_REGRESSION` on regression).
 - **classify** (Haiku) — sorts into customer, non-customer, spam, or held. Held and
   spam are set aside, never silently dropped.
 - **extract** (Sonnet) — returns a structured record against a fixed schema. A
@@ -149,7 +174,9 @@ fields:
 `SERVICETITAN_AUTH_FAILED`, `SERVICETITAN_MATCH_WEAK`, `SERVICETITAN_WRITE_FAILED`,
 `REQUEST_BODY_TOO_LARGE`, `REQUEST_MALFORMED`, `UNSUPPORTED_MEDIA_TYPE`,
 `RATE_LIMIT_EXCEEDED`, `AUTH_REQUIRED`, `CSRF_TOKEN_INVALID`, `WEBHOOK_TIMESTAMP_INVALID`,
-`INTERNAL_ERROR` (the last eight added by the Task 2.3 shared hardening/auth middleware).
+`INTERNAL_ERROR` (the eight before this added by the Task 2.3 shared hardening/auth
+middleware), `VERBATIM_PII_DETECTED` (Task 5.2: the second PII scan found possible
+residual PII in a model-extracted verbatim phrase — a post-egress hit).
 
 > The config loader in this scaffold already emits `CONFIG_MISSING_OR_INVALID` and
 > names the offending variable; it is the first member of this taxonomy.
@@ -218,6 +245,21 @@ dependencies.
 
 **Fail safe** — when unsure, hold. Never write wrong or guessed data into a real
 system.
+
+**Heartbeats / dead-man's switches** — the worker, reconciliation cron, and retention
+cron each ping their OWN external check (`WORKER_CHECK_URL`,
+`RECONCILIATION_CHECK_URL`, `RETENTION_CHECK_URL`) on their OWN cadence via the shared
+`src/heartbeat/` helpers. Heartbeats stay **external** (the authoritative monitor lives
+outside Railway — an internal check is down whenever the process/dyno is) and
+**per-component** (a shared check would stay green off the always-on worker while a cron
+is silently dead, defeating the switch). Crons ping **only after a fully successful run**;
+a failure/early-exit/throw does not ping, and the missed check is the alert. The worker
+pings for **liveness, not throughput** — idle-but-healthy still beats, gated on Redis
+health, never a cron URL. Each component fails fast with `CONFIG_MISSING_OR_INVALID`
+naming its own variable in staging/production. Ping errors are logged sanitized: never the
+check URL, secrets, or any PII. Full detail + the staging smoke-test in
+`docs/heartbeats.md`. (Task 7.3 status surface may display component health but must not
+replace the external monitor as the alerting source.)
 
 **Authentication** — every internal surface (status, review, knowledge base)
 requires login via the shared middleware. No anonymous access. No PII in any public
