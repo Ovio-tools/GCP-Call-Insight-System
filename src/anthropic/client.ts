@@ -1,11 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
 import type { Config } from '../config/schema.js';
+import { CALL_INTENT, SERVICE_CATEGORIES, SENTIMENTS, URGENCY } from '../db/enums.js';
 
 /**
- * Anthropic classify-model client wrapper — the ONLY module that imports
+ * Anthropic classify- and extract-model client wrappers — the ONLY module that imports
  * `@anthropic-ai/sdk`. The classify handler consumes the {@link ClassifyModelClient}
- * interface; tests inject fakes.
+ * interface and the extract handler consumes the {@link ExtractModelClient} interface;
+ * tests inject fakes.
  *
  * Model ID + structured-output support verified against Anthropic docs 2026-07-02
  * (`claude-haiku-4-5-20251001` is the valid full ID for Haiku 4.5, alias
@@ -14,6 +16,10 @@ import type { Config } from '../config/schema.js';
  * Privacy: this module has NO logger dependency — it is structurally unable to
  * leak transcript content into logs. Thrown errors carry FIXED per-kind message
  * strings, never SDK error text (which could echo request/response content).
+ *
+ * `normalize()` and `toModelApiError()` below are SHARED by both the classify and
+ * extract clients — there is exactly one implementation of each. Only the request
+ * (model, max_tokens, output format) differs between the two.
  */
 
 export type ModelErrorKind = 'auth' | 'rate_limited' | 'transient' | 'unexpected';
@@ -199,6 +205,127 @@ export function createAnthropicClassifyClient(
           system,
           messages: [{ role: 'user', content: userText }],
           output_config: { format: CLASSIFY_OUTPUT_FORMAT },
+        });
+      } catch (error) {
+        throw toModelApiError(error);
+      }
+      return normalize(response);
+    },
+  };
+}
+
+/**
+ * Shared result shape for classify and extract: the response envelope (text /
+ * stopReason / inputTokens / outputTokens / usagePresent) is identical for both
+ * stages — only the request differs. Non-breaking alias: {@link ClassifyModelResult}
+ * stays exported and unchanged.
+ */
+export type ModelTextResult = ClassifyModelResult;
+
+/**
+ * Structured-output format sent on every extract request — the 13-field extraction
+ * record.
+ *
+ * Hand-written json_schema constant (same convention as {@link CLASSIFY_OUTPUT_FORMAT}):
+ * the repo pins zod ^3.23 and the SDK's `zodOutputFormat` helper is not adopted, to avoid
+ * coupling the wire schema to zod-version-specific JSON-schema generation. A later
+ * milestone's zod layer owns length/shape constraints; this schema intentionally carries
+ * NO min/max length or item-count keywords — structured outputs reject those keywords.
+ *
+ * Enum tuples are imported from `../db/enums.js` (the single source of truth for the
+ * controlled vocabularies) rather than inlined as literals.
+ *
+ * `location_in_home`, `access_or_scheduling_notes`, `prior_attempts`, and
+ * `acquisition_source` are nullable strings, expressed as `type: ['string', 'null']`. If
+ * this array-type form is ever rejected by structured outputs, the fallback shape is
+ * `anyOf: [{type: 'string'}, {type: 'null'}]` — a contract test pins the current form.
+ *
+ * `sentiment` is INTERNAL ONLY (never customer-facing, never exported — see
+ * `db/enums.ts`). There is deliberately NO `confidence`/probability field anywhere in
+ * this schema (three-layer no-confidence guarantee — this `additionalProperties: false`
+ * structured-output schema is one layer; the other two live in later milestones).
+ */
+export const EXTRACT_OUTPUT_FORMAT = {
+  type: 'json_schema',
+  schema: {
+    type: 'object',
+    properties: {
+      call_intent: { type: 'string', enum: CALL_INTENT },
+      service_category: { type: 'string', enum: SERVICE_CATEGORIES },
+      problem_statement: { type: 'string' },
+      symptoms: { type: 'array', items: { type: 'string' } },
+      concerns: { type: 'array', items: { type: 'string' } },
+      customer_language: { type: 'array', items: { type: 'string' } },
+      competitor_mentions: { type: 'array', items: { type: 'string' } },
+      location_in_home: { type: ['string', 'null'] },
+      access_or_scheduling_notes: { type: ['string', 'null'] },
+      prior_attempts: { type: ['string', 'null'] },
+      acquisition_source: { type: ['string', 'null'] },
+      urgency: { type: 'string', enum: URGENCY },
+      sentiment: { type: 'string', enum: SENTIMENTS },
+    },
+    required: [
+      'call_intent',
+      'service_category',
+      'problem_statement',
+      'symptoms',
+      'concerns',
+      'customer_language',
+      'competitor_mentions',
+      'location_in_home',
+      'access_or_scheduling_notes',
+      'prior_attempts',
+      'acquisition_source',
+      'urgency',
+      'sentiment',
+    ],
+    additionalProperties: false,
+  },
+} as const satisfies Anthropic.Messages.JSONOutputFormat;
+
+/** JSON string form — used for reservation/payload-size estimation. */
+export const EXTRACT_OUTPUT_FORMAT_JSON = JSON.stringify(EXTRACT_OUTPUT_FORMAT);
+
+export interface ExtractModelClient {
+  extract(req: { system: string; userText: string }): Promise<ModelTextResult>;
+}
+
+export function createAnthropicExtractClient(
+  config: Config,
+  options: { fetch?: typeof fetch } = {},
+): ExtractModelClient {
+  // Fail fast with the shared config error shape, naming the missing variable
+  // (mirrors createAnthropicClassifyClient above).
+  if (!config.ANTHROPIC_API_KEY) {
+    throw new ConfigError(
+      ['ANTHROPIC_API_KEY'],
+      `${CONFIG_ERROR_CODE}: ANTHROPIC_API_KEY is required to call the Anthropic API`,
+    );
+  }
+
+  const client = new Anthropic({
+    apiKey: config.ANTHROPIC_API_KEY,
+    // maxRetries: 0 in production is DELIBERATE — SDK-internal retries would hide
+    // a maybe-billed failed attempt + successful retry behind ONE cost reservation
+    // and undercount spend. Retries belong to BullMQ, where each attempt
+    // re-reserves against the daily cost cap.
+    maxRetries: 0,
+    timeout: config.ANTHROPIC_TIMEOUT_MS, // TS SDK timeout is in milliseconds
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
+
+  return {
+    async extract({ system, userText }): Promise<ModelTextResult> {
+      let response: Anthropic.Message;
+      try {
+        // NO `thinking`, NO `effort`, NO temperature — same request shape discipline
+        // as the classify client.
+        response = await client.messages.create({
+          model: config.EXTRACT_MODEL_ID,
+          max_tokens: config.EXTRACT_MAX_TOKENS,
+          system,
+          messages: [{ role: 'user', content: userText }],
+          output_config: { format: EXTRACT_OUTPUT_FORMAT },
         });
       } catch (error) {
         throw toModelApiError(error);
