@@ -27,8 +27,11 @@ the Dialpad transcript client (Task 3.3, `src/dialpad/client/`), the reconciliat
 cron (Task 3.4, `src/reconciliation/` + `src/services/reconciliation-cron.ts`), and the
 classify stage (Task 5.1, `src/pipeline/classify/`) with its Anthropic client wrapper
 (`src/anthropic/`), the shared model-cost guardrail (`src/model/cost.ts`), and the
-parked-call requeue script (`src/scripts/requeue-parked-classify.ts`) exist; the
-remaining model steps, surfaces, and the retention cron do not yet.
+parked-call requeue script (`src/scripts/requeue-parked-classify.ts`), and the
+per-component heartbeats (Task 7.1, `src/heartbeat/` — wired into the worker,
+reconciliation cron, and retention cron) exist; the remaining model steps, the surfaces,
+and the retention cron's purge logic (Task 8.1 — the entrypoint exists but only runs the
+heartbeat contract) do not yet.
 
 ## 1. Architecture
 
@@ -53,8 +56,9 @@ remaining model steps, surfaces, and the retention cron do not yet.
   middleware** (Task 2.3): used by every stage and surface for consistent error
   handling and endpoint protection.
 - **Postgres**: all stores. **Redis**: queue backend. **External monitor**:
-  per-component dead-man's switches, plus a backfill check used only during a
-  backfill run.
+  per-component dead-man's switches (Task 7.1 — the worker, reconciliation cron, and
+  retention cron each ping their OWN external check on their OWN cadence; see
+  `docs/heartbeats.md`), plus a backfill check used only during a backfill run.
 
 ### 1.2 The privacy boundary
 
@@ -227,6 +231,21 @@ dependencies.
 
 **Fail safe** — when unsure, hold. Never write wrong or guessed data into a real
 system.
+
+**Heartbeats / dead-man's switches** — the worker, reconciliation cron, and retention
+cron each ping their OWN external check (`WORKER_CHECK_URL`,
+`RECONCILIATION_CHECK_URL`, `RETENTION_CHECK_URL`) on their OWN cadence via the shared
+`src/heartbeat/` helpers. Heartbeats stay **external** (the authoritative monitor lives
+outside Railway — an internal check is down whenever the process/dyno is) and
+**per-component** (a shared check would stay green off the always-on worker while a cron
+is silently dead, defeating the switch). Crons ping **only after a fully successful run**;
+a failure/early-exit/throw does not ping, and the missed check is the alert. The worker
+pings for **liveness, not throughput** — idle-but-healthy still beats, gated on Redis
+health, never a cron URL. Each component fails fast with `CONFIG_MISSING_OR_INVALID`
+naming its own variable in staging/production. Ping errors are logged sanitized: never the
+check URL, secrets, or any PII. Full detail + the staging smoke-test in
+`docs/heartbeats.md`. (Task 7.3 status surface may display component health but must not
+replace the external monitor as the alerting source.)
 
 **Authentication** — every internal surface (status, review, knowledge base)
 requires login via the shared middleware. No anonymous access. No PII in any public
