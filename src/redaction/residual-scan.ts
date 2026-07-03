@@ -15,6 +15,25 @@ import { TOKEN_PATTERN } from './types.js';
  * it is safe to persist in redaction_findings.residual_scan_result and to log.
  */
 
+/**
+ * The closed vocabulary of categories this scanner can emit — one id per sub-scan
+ * below. The internal `add` helper is typed against it so a new or drifted category
+ * is a compile error, not a silent new string in persisted results. The PUBLIC
+ * `ResidualScanResult` shape deliberately stays stringly-typed (`category: string`,
+ * `Record<string, number>`) so persisted rows and downstream Task 4.1 consumers are
+ * untouched.
+ */
+export const RESIDUAL_SCAN_CATEGORIES = [
+  'vault_value_reintroduced',
+  'digit_run',
+  'spelled_out_digits',
+  'email_like',
+  'address_like',
+  'name_like_after_greeting',
+  'deny_list_term',
+] as const;
+export type ResidualScanCategory = (typeof RESIDUAL_SCAN_CATEGORIES)[number];
+
 export interface ResidualScanResult {
   hits: { category: string }[];
   counts: Record<string, number>;
@@ -111,7 +130,7 @@ export function residualScan(input: ResidualScanInput): ResidualScanResult {
     .filter(Boolean);
 
   const counts: Record<string, number> = {};
-  const add = (category: string, n: number): void => {
+  const add = (category: ResidualScanCategory, n: number): void => {
     if (n > 0) counts[category] = (counts[category] ?? 0) + n;
   };
 

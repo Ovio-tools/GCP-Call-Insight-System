@@ -9,9 +9,10 @@ import { z } from 'zod';
  * duplicated here and a runtime parity test (`test/db/enum-parity.test.ts`) asserts
  * they match `enum_range(...)` in a live database.
  *
- * `current_stage`, `status`, `service_category`, `sentiment`, `gate_type` are `text`
- * columns in the schema (their value sets are owned by later tasks), so they are NOT
- * enums here.
+ * `current_stage`, `status`, `gate_type` are `text` columns in the schema (their value
+ * sets are owned by later tasks), so they are NOT enums here. `service_category` and
+ * `sentiment` are also `text` columns, but their value sets are owned by THIS file
+ * (Task 5.2: `SERVICE_CATEGORIES` / `SENTIMENTS` below, mirrored by CHECK constraints).
  */
 
 export const SEVERITY = ['critical', 'high', 'medium', 'low'] as const;
@@ -88,6 +89,60 @@ export const CALL_INTENT = [
 
 export const URGENCY = ['emergency', 'urgent', 'routine'] as const;
 
+/**
+ * Extract-stage controlled vocabularies (Task 5.2). Text + CHECK vocabularies — NOT
+ * native pg enums: the columns are `text` guarded by CHECK constraints that migration
+ * `1782864000009_extract_stage.cjs` adds to `extraction_candidates` (and to
+ * `structured_knowledge` for `service_category` / `sentiment`). These tuples MUST stay
+ * in sync with those CHECK lists by hand (same duplication convention as `DROP_REASONS`
+ * above). Do NOT add to `PG_ENUMS`.
+ *
+ * `other` is the controlled fallback so the model never emits free text: anything the
+ * extractor cannot place in a named category lands there instead of inventing a value.
+ */
+export const SERVICE_CATEGORIES = [
+  'water_heater',
+  'drain_blockage',
+  'leak_detection_or_repair',
+  'sewer_or_septic',
+  'toilet',
+  'faucet_sink_or_fixture',
+  'shower_or_tub',
+  'gas_line',
+  'sump_pump_or_drainage',
+  'water_quality_or_treatment',
+  'repipe_or_pipe_repair',
+  'appliance_install_or_hookup',
+  'inspection_or_maintenance',
+  'other',
+] as const;
+
+/**
+ * Sentiment is INTERNAL ONLY (ADR: sentiment internal only) — never customer-facing,
+ * never exported. Mirrored by the migration-`1782864000009` CHECK constraints on
+ * `extraction_candidates` and `structured_knowledge`; NOT in `PG_ENUMS`.
+ */
+export const SENTIMENTS = ['positive', 'neutral', 'negative', 'frustrated'] as const;
+
+/**
+ * `extraction_candidates.pii_scan_status` — where a candidate record stands with the
+ * second PII scan over its verbatim `customer_language` phrases. Mirrored by the
+ * migration-`1782864000009` CHECK constraint; NOT in `PG_ENUMS`.
+ */
+export const PII_SCAN_STATUSES = ['pending', 'passed', 'failed'] as const;
+
+/**
+ * `extraction_candidates.pii_scan_failure_kind` — why the second PII scan failed a
+ * verbatim phrase (residual PII, a redaction token echoed into the phrase, or a phrase
+ * that is not verbatim from the redacted transcript). Mirrored by the
+ * migration-`1782864000009` CHECK constraint; NOT in `PG_ENUMS`.
+ */
+export const PII_SCAN_FAILURE_KINDS = [
+  'residual_pii',
+  'tokened_phrase',
+  'verbatim_mismatch',
+] as const;
+
 /** name -> value tuple, for the parity test to iterate. */
 export const PG_ENUMS = {
   severity: SEVERITY,
@@ -109,6 +164,10 @@ export const keyVersionStatusSchema = z.enum(KEY_VERSION_STATUS);
 export const signatureStatusSchema = z.enum(SIGNATURE_STATUS);
 export const callIntentSchema = z.enum(CALL_INTENT);
 export const urgencySchema = z.enum(URGENCY);
+export const serviceCategorySchema = z.enum(SERVICE_CATEGORIES);
+export const sentimentSchema = z.enum(SENTIMENTS);
+export const piiScanStatusSchema = z.enum(PII_SCAN_STATUSES);
+export const piiScanFailureKindSchema = z.enum(PII_SCAN_FAILURE_KINDS);
 
 export type Severity = z.infer<typeof severitySchema>;
 export type HeldReason = z.infer<typeof heldReasonSchema>;
@@ -119,3 +178,7 @@ export type KeyVersionStatus = z.infer<typeof keyVersionStatusSchema>;
 export type SignatureStatus = z.infer<typeof signatureStatusSchema>;
 export type CallIntent = z.infer<typeof callIntentSchema>;
 export type Urgency = z.infer<typeof urgencySchema>;
+export type ServiceCategory = z.infer<typeof serviceCategorySchema>;
+export type Sentiment = z.infer<typeof sentimentSchema>;
+export type PiiScanStatus = z.infer<typeof piiScanStatusSchema>;
+export type PiiScanFailureKind = z.infer<typeof piiScanFailureKindSchema>;

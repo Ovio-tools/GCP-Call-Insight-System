@@ -1,0 +1,10 @@
+{
+  "name": "stop-unknown-value",
+  "redactedTranscript": "Caller: irrelevant.",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"general\",\"service_category\":\"other\",\"problem_statement\":\"ok\",\"symptoms\":[],\"customer_language\":[],\"competitor_mentions\":[],\"concerns\":[],\"location_in_home\":null,\"access_or_scheduling_notes\":null,\"prior_attempts\":null,\"acquisition_source\":null,\"urgency\":\"routine\",\"sentiment\":\"neutral\"}",
+    "stopReason": "some_future_reason",
+    "usagePresent": true
+  },
+  "expected": { "failure": "unexpected_stop_reason" }
+}

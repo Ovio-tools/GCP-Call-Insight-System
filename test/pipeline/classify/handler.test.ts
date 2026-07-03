@@ -9,6 +9,7 @@ import {
 } from '../../../src/anthropic/client.js';
 import * as anthropicClient from '../../../src/anthropic/client.js';
 import { createClassifyHandler } from '../../../src/pipeline/classify/handler.js';
+import { getLatestClassificationBucket } from '../../../src/pipeline/classify/classification-marker.js';
 import * as alertRepo from '../../../src/db/repositories/alert-events-repo.js';
 import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
 import { runPipeline } from '../../../src/pipeline/state-machine.js';
@@ -163,7 +164,7 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
 
   // ---- routing -----------------------------------------------------------------
 
-  it('customer → advances to completion, one success invocation, spend settled to actual', async () => {
+  it('customer → advances past classify (parks at disabled extract), one success invocation, spend settled to actual', async () => {
     const callId = 'test-cls-customer';
     await seed(callId);
     const { model } = fakeModel(() => Promise.resolve(result()));
@@ -174,8 +175,13 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
       set(() => model),
     );
 
+    // Extract is now wired but disabled by default (EXTRACT_ENABLED=false), so a customer call
+    // advances PAST classify and parks (defers) at the now-real extract stage — still
+    // `processing`, not `completed`. Classify's own contract (one settled success invocation)
+    // is unchanged.
     const state = await getCallState(app, callId);
-    expect(state?.status).toBe('completed');
+    expect(state?.status).toBe('processing');
+    expect(state?.current_stage).toBe('extract');
     const log = (await listLogs(app, callId)).find(
       (r) => r.stage === 'classify' && r.outcome === 'completed',
     );
@@ -194,6 +200,22 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
 
     // Settled to ACTUAL (1234*1 + 56*5)/1e6, NOT stacked on the reservation.
     expect(await dayCost()).toBeCloseTo((1234 * 1 + 56 * 5) / 1_000_000, 10);
+  });
+
+  it('classification marker: getLatestClassificationBucket reads the completed classify row (shape pin)', async () => {
+    // Pins the classify `detail` contract the extract handler's classification guard depends
+    // on. If classify's completed-row shape ever drifts, THIS test (classify's own) breaks at
+    // CI, not extract in production.
+    const callId = 'test-cls-marker';
+    await seed(callId);
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    await runPipeline(
+      app,
+      callId,
+      silent,
+      set(() => model),
+    );
+    expect(await getLatestClassificationBucket(app, callId)).toBe('customer');
   });
 
   it('non-customer → skipped with drop_reason, no review row, re-run is a no-op', async () => {
@@ -717,9 +739,11 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
     expect(req.system).not.toContain(injected);
     expect(req.userText).toContain(injected);
 
-    // Routing unchanged: customer → advances.
+    // Routing unchanged: customer → advances past classify and parks (defers) at the now-real
+    // extract stage (EXTRACT_ENABLED defaults false) — still `processing`, not held/skipped.
     const state = await getCallState(app, callId);
-    expect(state?.status).toBe('completed');
+    expect(state?.status).toBe('processing');
+    expect(state?.current_stage).toBe('extract');
   });
 
   it.each([

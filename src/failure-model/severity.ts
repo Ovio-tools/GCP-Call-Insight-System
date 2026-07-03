@@ -42,6 +42,9 @@ export const DEFAULT_SEVERITY: Record<ErrorCode, Severity> = {
   CSRF_TOKEN_INVALID: 'low',
   WEBHOOK_TIMESTAMP_INVALID: 'low',
   INTERNAL_ERROR: 'high',
+  // Extract stage (Task 5.2). High, not medium: unlike the pre-egress redaction holds, a
+  // post-extraction hit means residual PII may already have crossed the privacy boundary.
+  VERBATIM_PII_DETECTED: 'high',
 };
 
 /** The default severity for a code. Throws on an unknown code (no fallback). */

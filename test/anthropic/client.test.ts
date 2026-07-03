@@ -3,9 +3,13 @@ import {
   CLASSIFY_BUCKETS,
   CLASSIFY_OUTPUT_FORMAT,
   CLASSIFY_OUTPUT_FORMAT_JSON,
+  EXTRACT_OUTPUT_FORMAT,
+  EXTRACT_OUTPUT_FORMAT_JSON,
   ModelApiError,
   createAnthropicClassifyClient,
+  createAnthropicExtractClient,
 } from '../../src/anthropic/client.js';
+import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY, SENTIMENTS } from '../../src/db/enums.js';
 import { makeTestConfig } from '../_config.js';
 
 /**
@@ -340,5 +344,287 @@ describe('createAnthropicClassifyClient — outgoing request contract', () => {
     expect(CLASSIFY_BUCKETS).toEqual(['customer', 'non-customer', 'spam', 'held']);
     expect(CLASSIFY_OUTPUT_FORMAT_JSON).toBe(JSON.stringify(CLASSIFY_OUTPUT_FORMAT));
     expect(JSON.parse(CLASSIFY_OUTPUT_FORMAT_JSON)).toEqual(CLASSIFY_OUTPUT_FORMAT);
+  });
+});
+
+// --- Extract client (Task 5.2 M3) ---
+// Mirrors the classify test pattern above; the extract client shares normalize() and
+// toModelApiError() with the classify client, so error-mapping and malformed-usage
+// coverage is not fully re-duplicated here (see the classify describe blocks above for
+// the exhaustive per-status-code and per-malformed-usage matrices) — this section proves
+// the extract client wires into the SAME shared logic, plus extract-specific request
+// shape and schema pins.
+
+/** Build an extract client whose fetch returns the given queued responses in order. */
+function extractClientWith(responses: Array<Response | 'network'>, config = cfg()) {
+  let i = 0;
+  const fetchImpl = vi.fn((_url: string | URL | Request, _init?: RequestInit) => {
+    const r = responses[Math.min(i, responses.length - 1)];
+    i += 1;
+    if (r === 'network') return Promise.reject(new Error('ECONNRESET'));
+    return Promise.resolve(r as Response);
+  });
+  const client = createAnthropicExtractClient(config, {
+    fetch: fetchImpl as unknown as typeof fetch,
+  });
+  return { client, fetchImpl };
+}
+
+const extractRecord = {
+  call_intent: 'new_booking',
+  service_category: 'water_heater',
+  problem_statement: 'No hot water',
+  symptoms: ['no hot water'],
+  concerns: [],
+  customer_language: ['no hot water at all'],
+  competitor_mentions: [],
+  location_in_home: 'basement',
+  access_or_scheduling_notes: null,
+  prior_attempts: null,
+  acquisition_source: null,
+  urgency: 'urgent',
+  sentiment: 'neutral',
+};
+
+/** A well-formed Messages API success body for extract; override fields to break shapes. */
+function extractMessage(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: 'msg_test',
+    type: 'message',
+    role: 'assistant',
+    model: 'claude-sonnet-4-6',
+    content: [{ type: 'text', text: JSON.stringify(extractRecord) }],
+    stop_reason: 'end_turn',
+    stop_sequence: null,
+    usage: { input_tokens: 500, output_tokens: 120 },
+    ...overrides,
+  };
+}
+
+const extractReq = { system: 'You are an extractor.', userText: 'redacted transcript text' };
+
+describe('createAnthropicExtractClient — construction', () => {
+  it('throws CONFIG_MISSING_OR_INVALID naming ANTHROPIC_API_KEY when the key is absent', () => {
+    const config = makeTestConfig();
+
+    let thrown: unknown;
+    try {
+      createAnthropicExtractClient(config);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toMatchObject({
+      code: 'CONFIG_MISSING_OR_INVALID',
+      invalid: ['ANTHROPIC_API_KEY'],
+    });
+    expect((thrown as Error).message).toContain('ANTHROPIC_API_KEY');
+  });
+});
+
+describe('createAnthropicExtractClient — outgoing request contract', () => {
+  it('sends model, max_tokens, and the EXTRACT_OUTPUT_FORMAT structured-output format', async () => {
+    const config = cfg({
+      EXTRACT_MODEL_ID: 'claude-sonnet-4-6',
+      EXTRACT_MAX_TOKENS: 4096,
+    });
+    const { client, fetchImpl } = extractClientWith([json(extractMessage())], config);
+
+    await client.extract(extractReq);
+
+    const init = fetchImpl.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+
+    expect(body.model).toBe(config.EXTRACT_MODEL_ID);
+    expect(body.max_tokens).toBe(config.EXTRACT_MAX_TOKENS);
+    expect(body.output_config).toEqual({ format: EXTRACT_OUTPUT_FORMAT });
+  });
+
+  it('sends EXACTLY system + userText — no other content added', async () => {
+    const { client, fetchImpl } = extractClientWith([json(extractMessage())]);
+
+    await client.extract(extractReq);
+
+    const init = fetchImpl.mock.calls[0]?.[1] as RequestInit;
+    const body = JSON.parse(init.body as string) as Record<string, unknown>;
+
+    expect(body.system).toBe(extractReq.system);
+    expect(body.messages).toEqual([{ role: 'user', content: extractReq.userText }]);
+
+    // No thinking/effort/temperature — same request-shape discipline as classify.
+    expect(body).not.toHaveProperty('thinking');
+    expect(body).not.toHaveProperty('temperature');
+    expect(body).not.toHaveProperty('output_config.effort');
+  });
+});
+
+describe('createAnthropicExtractClient — shared error mapping (normalize/toModelApiError)', () => {
+  const cases: Array<{
+    label: string;
+    response: Response | 'network';
+    kind: string;
+    billing: string;
+  }> = [
+    {
+      label: '401 authentication',
+      response: apiError(401, 'authentication_error'),
+      kind: 'auth',
+      billing: 'not_billed',
+    },
+    {
+      label: '403 permission',
+      response: apiError(403, 'permission_error'),
+      kind: 'auth',
+      billing: 'not_billed',
+    },
+    {
+      label: '429 rate limit',
+      response: apiError(429, 'rate_limit_error'),
+      kind: 'rate_limited',
+      billing: 'not_billed',
+    },
+    {
+      label: '500 server error',
+      response: apiError(500, 'api_error'),
+      kind: 'transient',
+      billing: 'maybe_billed',
+    },
+    {
+      label: '529 overloaded',
+      response: apiError(529, 'overloaded_error'),
+      kind: 'transient',
+      billing: 'maybe_billed',
+    },
+    { label: 'network rejection', response: 'network', kind: 'transient', billing: 'maybe_billed' },
+  ];
+
+  for (const c of cases) {
+    it(`maps ${c.label} → ${c.kind} / ${c.billing}, never leaking the response body`, async () => {
+      const { client } = extractClientWith([c.response]);
+
+      let thrown: unknown;
+      await client.extract(extractReq).catch((e: unknown) => {
+        thrown = e;
+      });
+
+      expect(thrown).toBeInstanceOf(ModelApiError);
+      const err = thrown as ModelApiError;
+      expect(err.kind).toBe(c.kind);
+      expect(err.billingDisposition).toBe(c.billing);
+      expect(err.message).not.toContain(BODY_MARKER);
+    });
+  }
+
+  // Guards the duplicated maxRetries: 0 construction in createAnthropicExtractClient: a
+  // future edit could reintroduce hidden SDK retries on the extract path while classify's
+  // own single-attempt test stays green. A queued success after a transient failure must
+  // NEVER be consumed — exactly one HTTP attempt.
+  it('makes exactly ONE HTTP attempt on a 500; the queued success is never consumed', async () => {
+    const { client, fetchImpl } = extractClientWith([
+      apiError(500, 'api_error'),
+      json(extractMessage()),
+    ]);
+
+    await expect(client.extract(extractReq)).rejects.toMatchObject({
+      name: 'ModelApiError',
+      kind: 'transient',
+      billingDisposition: 'maybe_billed',
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('createAnthropicExtractClient — success and usage handling', () => {
+  it('returns text, stopReason, and token counts on a well-formed response', async () => {
+    const { client } = extractClientWith([json(extractMessage())]);
+
+    await expect(client.extract(extractReq)).resolves.toEqual({
+      text: JSON.stringify(extractRecord),
+      stopReason: 'end_turn',
+      inputTokens: 500,
+      outputTokens: 120,
+      usagePresent: true,
+    });
+  });
+
+  it('returns usagePresent: false and zero tokens when usage is missing from the response', async () => {
+    const { client } = extractClientWith([json(extractMessage({ usage: undefined }))]);
+
+    await expect(client.extract(extractReq)).resolves.toMatchObject({
+      inputTokens: 0,
+      outputTokens: 0,
+      usagePresent: false,
+    });
+  });
+});
+
+describe('EXTRACT_OUTPUT_FORMAT — structural pins', () => {
+  const EXPECTED_FIELDS = [
+    'call_intent',
+    'service_category',
+    'problem_statement',
+    'symptoms',
+    'concerns',
+    'customer_language',
+    'competitor_mentions',
+    'location_in_home',
+    'access_or_scheduling_notes',
+    'prior_attempts',
+    'acquisition_source',
+    'urgency',
+    'sentiment',
+  ];
+
+  it('has exactly the 13 expected property keys', () => {
+    expect(Object.keys(EXTRACT_OUTPUT_FORMAT.schema.properties)).toEqual(
+      expect.arrayContaining(EXPECTED_FIELDS),
+    );
+    expect(Object.keys(EXTRACT_OUTPUT_FORMAT.schema.properties)).toHaveLength(
+      EXPECTED_FIELDS.length,
+    );
+  });
+
+  it('marks all 13 fields as required', () => {
+    expect([...EXTRACT_OUTPUT_FORMAT.schema.required].sort()).toEqual([...EXPECTED_FIELDS].sort());
+  });
+
+  it('sets additionalProperties: false', () => {
+    expect(EXTRACT_OUTPUT_FORMAT.schema.additionalProperties).toBe(false);
+  });
+
+  it('serialized form contains no length/item-count keywords or a confidence field', () => {
+    const forbidden = ['minLength', 'maxLength', 'minItems', 'maxItems', 'confidence'];
+    for (const term of forbidden) {
+      expect(EXTRACT_OUTPUT_FORMAT_JSON).not.toContain(term);
+    }
+  });
+
+  // Pins the nullable WIRE shape: without this a silent change of the four nullable fields
+  // to plain {type:'string'} would keep every other structural pin green — contradicting
+  // the client.ts comment that a contract test pins the current type-array form.
+  it('pins the four nullable fields to the { type: ["string", "null"] } wire shape', () => {
+    const nullableFields = [
+      'location_in_home',
+      'access_or_scheduling_notes',
+      'prior_attempts',
+      'acquisition_source',
+    ] as const;
+    for (const field of nullableFields) {
+      expect(EXTRACT_OUTPUT_FORMAT.schema.properties[field].type).toEqual(['string', 'null']);
+    }
+  });
+
+  it('mirrors the imported enum tuples exactly', () => {
+    expect(EXTRACT_OUTPUT_FORMAT.schema.properties.call_intent.enum).toEqual(CALL_INTENT);
+    expect(EXTRACT_OUTPUT_FORMAT.schema.properties.service_category.enum).toEqual(
+      SERVICE_CATEGORIES,
+    );
+    expect(EXTRACT_OUTPUT_FORMAT.schema.properties.urgency.enum).toEqual(URGENCY);
+    expect(EXTRACT_OUTPUT_FORMAT.schema.properties.sentiment.enum).toEqual(SENTIMENTS);
+  });
+
+  it('exports a JSON string form that round-trips to the same object', () => {
+    expect(EXTRACT_OUTPUT_FORMAT_JSON).toBe(JSON.stringify(EXTRACT_OUTPUT_FORMAT));
+    expect(JSON.parse(EXTRACT_OUTPUT_FORMAT_JSON)).toEqual(EXTRACT_OUTPUT_FORMAT);
   });
 });

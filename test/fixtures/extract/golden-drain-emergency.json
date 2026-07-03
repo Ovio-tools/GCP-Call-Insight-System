@@ -1,0 +1,17 @@
+{
+  "name": "golden-drain-emergency",
+  "redactedTranscript": "Caller: There is a sewage backup in my basement, raw sewage everywhere, please send someone now.\nAgent: Understood, this is an emergency, I'm dispatching a crew.",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"emergency\",\"service_category\":\"sewer_or_septic\",\"problem_statement\":\"Raw sewage backing up into the basement\",\"symptoms\":[\"sewage backup\",\"standing waste water\"],\"customer_language\":[\"raw sewage everywhere\"],\"competitor_mentions\":[],\"concerns\":[\"health hazard in the home\"],\"location_in_home\":\"basement\",\"access_or_scheduling_notes\":null,\"prior_attempts\":null,\"acquisition_source\":null,\"urgency\":\"emergency\",\"sentiment\":\"frustrated\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "call_intent": "emergency",
+      "service_category": "sewer_or_septic",
+      "urgency": "emergency",
+      "sentiment": "frustrated"
+    }
+  }
+}

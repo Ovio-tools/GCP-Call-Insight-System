@@ -47,6 +47,29 @@ export async function recordStageAlert(
 }
 
 /**
+ * Record a deduped `VERBATIM_PII_DETECTED` alert (severity comes from the catalog: high)
+ * for a second-PII-scan hold, WRAPPED in {@link resilientSideEffect} so an alert-insert
+ * failure can never prevent or convert the hold — the caller records the alert, then
+ * returns the hold regardless of alert success.
+ *
+ * `counts` is the residual-scan category→count map: a CLOSED-vocabulary key set with
+ * numeric values. It IS the counts-only failureSnapshot; the caller guarantees it carries
+ * only `residualScan` counts, so no phrase text or PII-shaped key can ride into the alert.
+ */
+export async function recordVerbatimPiiDetectedAlertResilient(
+  pool: Pool,
+  callId: string,
+  stage: string,
+  config: Config,
+  counts: Record<string, number>,
+  logger: Logger,
+): Promise<void> {
+  await resilientSideEffect(logger, callId, stage, 'alert VERBATIM_PII_DETECTED', () =>
+    recordStageAlert(pool, callId, stage, config, 'VERBATIM_PII_DETECTED', 'degraded', counts),
+  );
+}
+
+/**
  * Kill-switch park (atomically idempotent). Inside a transaction, takes an advisory xact
  * lock on `${stage}-disabled:${callId}` so two concurrent runs of the disabled handler
  * serialize, then appends ONE `deferred` processing_log row only if the LATEST row for the

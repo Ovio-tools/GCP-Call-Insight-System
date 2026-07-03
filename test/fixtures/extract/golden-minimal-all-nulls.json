@@ -1,0 +1,17 @@
+{
+  "name": "golden-minimal-all-nulls",
+  "redactedTranscript": "Caller: I just had a general question about your services.\nAgent: Sure, happy to help.",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"general\",\"service_category\":\"other\",\"problem_statement\":\"General question about available services\",\"symptoms\":[],\"customer_language\":[],\"competitor_mentions\":[],\"concerns\":[],\"location_in_home\":null,\"access_or_scheduling_notes\":null,\"prior_attempts\":null,\"acquisition_source\":null,\"urgency\":\"routine\",\"sentiment\":\"neutral\"}",
+    "stopReason": "stop_sequence",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "call_intent": "general",
+      "service_category": "other",
+      "urgency": "routine",
+      "sentiment": "neutral"
+    }
+  }
+}

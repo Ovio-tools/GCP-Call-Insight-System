@@ -306,6 +306,38 @@ export const configSchema = z.object({
     .refine((v) => v === undefined || isBase64OfAtLeast(v, 32), {
       message: 'must be base64 that decodes to at least 32 bytes',
     }),
+
+  // --- Extract stage / model spend (Task 5.2) ---
+
+  /** Model ID for the extract stage. Never hardcoded outside config — a model swap is a
+   * config change, not a code change. */
+  EXTRACT_MODEL_ID: z.string().min(1).default('claude-sonnet-4-6'),
+
+  /** Kill switch: explicit string enum, never truthy-coerced (the EXACT CLASSIFY_ENABLED
+   * pattern). Defaults false: the 4.1/5.1 chain is not yet live end-to-end. Recovery via
+   * requeue-parked-extract after enabling. */
+  EXTRACT_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** Max output tokens requested per extract call. */
+  EXTRACT_MAX_TOKENS: z.coerce.number().int().positive().default(4096),
+
+  /** Cost-reservation floor (input tokens): the extract handler reserves against
+   * max(this ceiling, payload byte-estimate) so short-transcript calls never under-reserve
+   * against the daily cap. */
+  EXTRACT_INPUT_TOKENS_CEILING: z.coerce.number().int().positive().default(30_000),
+
+  /** Fixed structured-output/request-scaffolding overhead (tokens) added to the byte-bound
+   * payload estimate when reserving against the daily cost cap. */
+  EXTRACT_RESERVATION_OVERHEAD_TOKENS: z.coerce.number().int().nonnegative().default(1_000),
+
+  /** Sonnet list price per million input/output tokens (USD). Deliberately extract-scoped,
+   * not shared: the shared cost helper takes explicit rates with no defaults so a different
+   * model can never silently inherit the wrong pricing. */
+  EXTRACT_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(3),
+  EXTRACT_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(15),
 });
 
 /** Validated, typed configuration object. */

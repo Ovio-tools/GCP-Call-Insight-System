@@ -3,6 +3,7 @@
 export * as callState from './call-state-repo.js';
 export * as cleanTranscripts from './clean-transcripts-repo.js';
 export * as structuredKnowledge from './structured-knowledge-repo.js';
+export * as extractionCandidates from './extraction-candidates-repo.js';
 export * as redactionFindings from './redaction-findings-repo.js';
 export * as reviewQueue from './review-queue-repo.js';
 export * as operatorActions from './operator-actions-repo.js';

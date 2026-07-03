@@ -1,0 +1,17 @@
+{
+  "name": "golden-water-heater-booking",
+  "redactedTranscript": "Agent: Thanks for calling, this is [NAME_1]. How can I help?\nCaller: My water heater stopped making hot water this morning. I'd like to book a visit.\nAgent: I can get a technician out tomorrow.\nCaller: That works, the heater is in the garage.",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"new_booking\",\"service_category\":\"water_heater\",\"problem_statement\":\"Water heater stopped producing hot water this morning\",\"symptoms\":[\"no hot water\"],\"customer_language\":[\"stopped making hot water this morning\"],\"competitor_mentions\":[],\"concerns\":[],\"location_in_home\":\"garage\",\"access_or_scheduling_notes\":\"technician visit tomorrow\",\"prior_attempts\":null,\"acquisition_source\":null,\"urgency\":\"routine\",\"sentiment\":\"neutral\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "call_intent": "new_booking",
+      "service_category": "water_heater",
+      "urgency": "routine",
+      "sentiment": "neutral"
+    }
+  }
+}

@@ -52,6 +52,10 @@ export const ROOT_CAUSE_CATEGORIES = [
   'CSRF_TOKEN_INVALID',
   'WEBHOOK_TIMESTAMP_INVALID',
   'INTERNAL_ERROR',
+  // Extract stage (Task 5.2). The second PII scan found possible residual PII in a
+  // model-extracted verbatim marketing phrase — a POST-extraction hit, distinct from the
+  // pre-egress redaction holds: the redacted transcript already crossed to Anthropic.
+  'VERBATIM_PII_DETECTED',
 ] as const;
 
 export const rootCauseCategorySchema = z.enum(ROOT_CAUSE_CATEGORIES);

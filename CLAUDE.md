@@ -28,14 +28,16 @@ cron (Task 3.4, `src/reconciliation/` + `src/services/reconciliation-cron.ts`), 
 redaction stage (Task 4.1, `src/redaction/` + `src/pipeline/redact.ts` — the privacy
 boundary; see `docs/adr/0002-redaction-tokens-and-fail-closed.md`), the classify stage
 (Task 5.1, `src/pipeline/classify/`) with its Anthropic client wrapper
-(`src/anthropic/`), the shared model-cost guardrail (`src/model/cost.ts`), and the
-parked-call requeue script (`src/scripts/requeue-parked-classify.ts`), and the
-per-component heartbeats (Task 7.1, `src/heartbeat/` — wired into the worker,
-reconciliation cron, and retention cron) exist; the remaining model steps, the surfaces,
-and the retention cron's purge logic (Task 8.1 — the entrypoint exists but only runs the
-heartbeat contract) do not yet. The NER model is vendored by `npm run model:fetch` into
-`models/` (gitignored); model stages read ONLY `clean_transcripts` (enforced by
-`test/pipeline/model-stage-import-guard.test.ts`).
+(`src/anthropic/`), the shared model-cost guardrail (`src/model/cost.ts`), the extract
+stage (Task 5.2, `src/pipeline/extract/` — Sonnet, schema-gate + deterministic urgency;
+see `docs/adr/0003-extract-schema-gate-deterministic-urgency-no-scores.md`), the
+parked-call requeue scripts (`src/scripts/requeue-parked-classify.ts`,
+`src/scripts/requeue-parked-extract.ts`), and the per-component heartbeats (Task 7.1,
+`src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron) exist;
+the remaining surfaces and the retention cron's purge logic (Task 8.1 — the entrypoint
+exists but only runs the heartbeat contract) do not yet. The NER model is vendored by
+`npm run model:fetch` into `models/` (gitignored); model stages read ONLY
+`clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
 ## 1. Architecture
 
@@ -172,7 +174,9 @@ fields:
 `SERVICETITAN_AUTH_FAILED`, `SERVICETITAN_MATCH_WEAK`, `SERVICETITAN_WRITE_FAILED`,
 `REQUEST_BODY_TOO_LARGE`, `REQUEST_MALFORMED`, `UNSUPPORTED_MEDIA_TYPE`,
 `RATE_LIMIT_EXCEEDED`, `AUTH_REQUIRED`, `CSRF_TOKEN_INVALID`, `WEBHOOK_TIMESTAMP_INVALID`,
-`INTERNAL_ERROR` (the last eight added by the Task 2.3 shared hardening/auth middleware).
+`INTERNAL_ERROR` (the eight before this added by the Task 2.3 shared hardening/auth
+middleware), `VERBATIM_PII_DETECTED` (Task 5.2: the second PII scan found possible
+residual PII in a model-extracted verbatim phrase — a post-egress hit).
 
 > The config loader in this scaffold already emits `CONFIG_MISSING_OR_INVALID` and
 > names the offending variable; it is the first member of this taxonomy.

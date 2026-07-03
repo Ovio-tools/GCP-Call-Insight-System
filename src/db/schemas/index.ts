@@ -6,6 +6,7 @@ export * from './raw-webhook-events.js';
 export * from './clean-transcripts.js';
 export * from './redaction-findings.js';
 export * from './structured-knowledge.js';
+export * from './extraction-candidates.js';
 export * from './review-queue.js';
 export * from './operator-actions.js';
 export * from './model-invocations.js';
