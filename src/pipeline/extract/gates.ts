@@ -1,6 +1,6 @@
 import { residualScan } from '../../redaction/residual-scan.js';
 import { TOKEN_PATTERN } from '../../redaction/types.js';
-import type { Urgency } from '../../db/enums.js';
+import { URGENCY, type Urgency } from '../../db/enums.js';
 import type { ExtractionRecord } from './parse.js';
 
 /**
@@ -38,9 +38,18 @@ export function scanCustomerLanguage(
   return any ? { hit: true, counts: merged } : { hit: false };
 }
 
-/** Light normalization for the verbatim check: lowercase, collapse whitespace, trim. */
+/**
+ * Light normalization for the verbatim check and the emergency haystack: lowercase,
+ * fold curly apostrophes (U+2018/U+2019) to a straight one, collapse whitespace, trim.
+ *
+ * The apostrophe fold is load-bearing for the emergency SAFETY gate: ASR/typed
+ * transcripts frequently render `won't`/`can't` with a curly U+2019, and no upstream
+ * stage normalizes quotes, so `won’t shut off` would otherwise miss the ambiguous
+ * keyword literals (which use a straight apostrophe). Folding both sides of the match
+ * equally is harmless for the verbatim gate.
+ */
 function normalizeLight(s: string): string {
-  return s.toLowerCase().replace(/\s+/g, ' ').trim();
+  return s.toLowerCase().replace(/[‘’]/g, "'").replace(/\s+/g, ' ').trim();
 }
 
 /**
@@ -123,22 +132,31 @@ function haystackContains(haystack: string, keyword: string): boolean {
   return new RegExp(`(?:^|\\W)${escaped}(?:$|\\W)`).test(haystack);
 }
 
-const URGENCY_LADDER: Urgency[] = ['routine', 'urgent', 'emergency'];
+/**
+ * Least→most-urgent ladder, DERIVED from `URGENCY` (which is declared most→least in
+ * db/enums.ts) so it cannot drift out of the enum: reversing `['emergency','urgent',
+ * 'routine']` yields `['routine','urgent','emergency']`, i.e. "up the ladder".
+ */
+const URGENCY_LADDER: Urgency[] = [...URGENCY].reverse();
 
 function upgradeOneLevel(urgency: Urgency): Urgency {
   const idx = URGENCY_LADDER.indexOf(urgency);
   return URGENCY_LADDER[Math.min(idx + 1, URGENCY_LADDER.length - 1)] ?? urgency;
 }
 
+/** The constant trigger ids the rule may emit — M5's handler branches on these. */
+export type EmergencyTrigger =
+  'model_urgency' | 'call_intent' | 'emergency_keyword' | 'ambiguous_upgrade';
+
 export function emergencyRule(
   record: ExtractionRecord,
   redactedText: string,
-): { urgency: Urgency; hold: boolean; triggers: string[] } {
+): { urgency: Urgency; hold: boolean; triggers: EmergencyTrigger[] } {
   const haystack = normalizeLight(
     [redactedText, record.problem_statement, ...record.symptoms, ...record.concerns].join(' '),
   );
 
-  const triggers: string[] = [];
+  const triggers: EmergencyTrigger[] = [];
 
   // --- EMERGENCY tier: any hit overrides the model urgency to emergency + hold. ---
   if (record.urgency === 'emergency') triggers.push('model_urgency');

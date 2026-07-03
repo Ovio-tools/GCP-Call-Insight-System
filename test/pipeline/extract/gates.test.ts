@@ -6,6 +6,7 @@ import {
   emergencyRule,
 } from '../../../src/pipeline/extract/gates.js';
 import type { ExtractionRecord } from '../../../src/pipeline/extract/parse.js';
+import { URGENCY } from '../../../src/db/enums.js';
 
 /** A neutral base record; individual tests override only the fields they exercise. */
 function baseRecord(overrides: Partial<ExtractionRecord> = {}): ExtractionRecord {
@@ -195,6 +196,13 @@ describe('emergencyRule', () => {
         expect(result.urgency).toBe('emergency');
         expect(result.triggers).toContain('emergency_keyword');
       });
+
+      it(`"${kw}" trips via a concerns[] entry only`, () => {
+        const record = baseRecord({ concerns: [`worried about the ${kw}`] });
+        const result = emergencyRule(record, 'plain transcript, no keyword');
+        expect(result.urgency).toBe('emergency');
+        expect(result.triggers).toContain('emergency_keyword');
+      });
     }
   });
 
@@ -221,6 +229,17 @@ describe('emergencyRule', () => {
       expect(result.urgency).toBe('emergency');
       expect(result.hold).toBe(true);
       expect(result.triggers).toContain('ambiguous_upgrade');
+    });
+
+    it('a curly apostrophe (U+2019) in "won’t shut off" still triggers the upgrade', () => {
+      // Real ASR/typed transcripts render won't/can't with U+2019; the normalizer
+      // folds it to a straight apostrophe so the keyword literal still matches.
+      const result = emergencyRule(
+        baseRecord({ urgency: 'routine' }),
+        'Caller: the main valve won’t shut off.',
+      );
+      expect(result.urgency).toBe('urgent');
+      expect(result.triggers).toEqual(['ambiguous_upgrade']);
     });
   });
 
@@ -269,5 +288,30 @@ describe('emergencyRule', () => {
       expect(t).not.toContain('gas');
       expect(t).not.toContain('kitchen');
     }
+  });
+});
+
+describe('URGENCY_LADDER drift guard (behavioral)', () => {
+  // The ladder is DERIVED from URGENCY (reversed). These upgrade behaviors would
+  // break if the enum ever drifted from a routine→urgent→emergency ordering, so they
+  // pin the derivation against db/enums.ts without exporting the ladder.
+  it('every non-top urgency upgrades exactly one level via the ambiguous tier', () => {
+    // routine → urgent
+    expect(emergencyRule(baseRecord({ urgency: 'routine' }), 'Caller: active leak.').urgency).toBe(
+      'urgent',
+    );
+    // urgent → emergency
+    expect(emergencyRule(baseRecord({ urgency: 'urgent' }), 'Caller: active leak.').urgency).toBe(
+      'emergency',
+    );
+    // emergency stays emergency (top of the ladder; also emergency tier fires)
+    expect(
+      emergencyRule(baseRecord({ urgency: 'emergency' }), 'Caller: active leak.').urgency,
+    ).toBe('emergency');
+  });
+
+  it('URGENCY covers exactly the three ladder rungs', () => {
+    expect(new Set(URGENCY)).toEqual(new Set(['routine', 'urgent', 'emergency']));
+    expect(URGENCY.length).toBe(3);
   });
 });
