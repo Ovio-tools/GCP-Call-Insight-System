@@ -163,9 +163,9 @@ describe('extract invariants — controlled vocabulary (pure)', () => {
       ...SERVICE_CATEGORIES,
     ]);
     for (const category of SERVICE_CATEGORIES) {
-      expect(extractionCandidateInsertSchema.shape.serviceCategory.safeParse(category).success).toBe(
-        true,
-      );
+      expect(
+        extractionCandidateInsertSchema.shape.serviceCategory.safeParse(category).success,
+      ).toBe(true);
       expect(extractionCandidateRowSchema.shape.service_category.safeParse(category).success).toBe(
         true,
       );
@@ -193,7 +193,9 @@ describe('extract invariants — no confidence scores (pure)', () => {
   it('no confidence/probability field exists anywhere in the extract schemas', () => {
     const CONFIDENCE_RE = /confid|probab|score|certain|likelihood/i;
     // Parse (model-output) schema.
-    expect(Object.keys(extractionRecordSchema.shape).some((k) => CONFIDENCE_RE.test(k))).toBe(false);
+    expect(Object.keys(extractionRecordSchema.shape).some((k) => CONFIDENCE_RE.test(k))).toBe(
+      false,
+    );
     // Persisted insert + row schemas.
     expect(
       Object.keys(extractionCandidateInsertSchema.shape).some((k) => CONFIDENCE_RE.test(k)),
