@@ -52,6 +52,7 @@ interface HarnessOptions {
   checkUrl?: string | undefined;
   ingestGap?: ReconciliationDeps['ingestGap'];
   pingCheck?: ReconciliationDeps['pingCheck'];
+  heartbeat?: ReconciliationDeps['heartbeat'];
   windowMinutes?: number;
   maxCallMinutes?: number;
 }
@@ -74,6 +75,7 @@ function makeHarness(opts: HarnessOptions = {}) {
       ? { RECONCILIATION_MAX_CALL_MINUTES: opts.maxCallMinutes }
       : {}),
   });
+  const heartbeat = opts.heartbeat ? vi.fn(opts.heartbeat) : undefined;
   const deps: ReconciliationDeps = {
     config,
     logger,
@@ -81,9 +83,20 @@ function makeHarness(opts: HarnessOptions = {}) {
     alreadyInPipeline,
     ingestGap,
     pingCheck,
+    ...(heartbeat ? { heartbeat } : {}),
     clock: { now: () => NOW },
   };
-  return { deps, lines, listSpy, fetchSpy, alreadyInPipeline, ingestGap, pingCheck, config };
+  return {
+    deps,
+    lines,
+    listSpy,
+    fetchSpy,
+    alreadyInPipeline,
+    ingestGap,
+    pingCheck,
+    heartbeat,
+    config,
+  };
 }
 
 describe('runReconciliation', () => {
@@ -95,6 +108,31 @@ describe('runReconciliation', () => {
     expect(h.ingestGap).toHaveBeenCalledTimes(1);
     expect(h.ingestGap).toHaveBeenCalledWith({ callId: 'rc-missed-1' });
     expect(summary).toEqual({ callsChecked: 1, gapsEnqueued: 1 });
+  });
+
+  it('writes the in-DB heartbeat mirror on a successful sweep, with the run summary', async () => {
+    const h = makeHarness({
+      pages: [{ calls: [{ callId: 'rc-hb-1' }] }],
+      heartbeat: () => Promise.resolve(),
+    });
+
+    await runReconciliation(h.deps);
+
+    expect(h.heartbeat).toHaveBeenCalledTimes(1);
+    expect(h.heartbeat).toHaveBeenCalledWith({ callsChecked: 1, gapsEnqueued: 1 });
+    expect(h.pingCheck).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing heartbeat mirror is sanitized-logged and never skips the external ping or fails the run', async () => {
+    const h = makeHarness({
+      pages: [{ calls: [] }],
+      heartbeat: () => Promise.reject(new Error('db write failed')),
+    });
+
+    await expect(runReconciliation(h.deps)).resolves.toEqual({ callsChecked: 0, gapsEnqueued: 0 });
+    // The authoritative external ping still fired despite the DB-mirror failure.
+    expect(h.pingCheck).toHaveBeenCalledTimes(1);
+    expect(h.lines.some((l) => l.includes('heartbeat DB mirror failed'))).toBe(true);
   });
 
   it('skips a call that already has a call_state row (any status)', async () => {

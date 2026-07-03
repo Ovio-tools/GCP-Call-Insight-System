@@ -77,6 +77,29 @@ export async function listOpen(pool: Pool): Promise<ReviewQueueRow[]> {
   return rows.map((r) => parseOrThrow(TABLE, reviewQueueRowSchema, r));
 }
 
+/** One held-for-review count, per `held_reason` (Task 7.3 status surface). */
+export interface HeldReasonCount {
+  held_reason: string;
+  count: number;
+}
+
+/**
+ * Count active (open/in_review) held calls grouped by `held_reason` — the status surface's
+ * held-for-review breakdown. Read-only aggregation; touches no content columns. An empty
+ * result (no held calls) is a legitimate zero, distinct from a query failure the caller
+ * surfaces as `unknown`.
+ */
+export async function countOpenByReason(pool: Pool): Promise<HeldReasonCount[]> {
+  return query<HeldReasonCount>(
+    pool,
+    `SELECT held_reason::text AS held_reason, count(*)::int AS count
+       FROM review_queue
+      WHERE status IN ('open', 'in_review')
+      GROUP BY held_reason
+      ORDER BY held_reason`,
+  );
+}
+
 /**
  * Move a held call to a new review status; stamps resolved_at when leaving the queue.
  * `assignee` is set-if-provided (COALESCE keeps the current value when omitted); there is

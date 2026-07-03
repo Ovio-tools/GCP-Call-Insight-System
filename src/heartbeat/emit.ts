@@ -61,6 +61,13 @@ export function startLivenessHeartbeat(deps: {
   ping: HeartbeatPinger;
   /** Dependency probe (e.g. the queue's Redis ping). Absent => always considered healthy. */
   isHealthy?: () => Promise<boolean> | boolean;
+  /**
+   * Best-effort in-DB liveness mirror (Task 7.3): when healthy, also record a heartbeat row for
+   * the status surface. Run INDEPENDENTLY of the external ping — the ping is the authoritative
+   * signal and must not be gated on this DB write, so the mirror runs after the ping and any
+   * mirror failure is swallowed here (defense-in-depth; the closure itself should also be safe).
+   */
+  mirror?: () => Promise<void>;
   scheduler?: IntervalScheduler;
 }): LivenessHeartbeat {
   const scheduler = deps.scheduler ?? DEFAULT_SCHEDULER;
@@ -78,6 +85,8 @@ export function startLivenessHeartbeat(deps: {
       deps.logger.warn({ component: deps.component }, 'heartbeat skipped: dependencies unhealthy');
       return;
     }
+    // The external ping is the authoritative liveness signal — attempt it FIRST, and never let
+    // the in-DB mirror gate it.
     try {
       await deps.ping(deps.url);
     } catch (err) {
@@ -85,6 +94,16 @@ export function startLivenessHeartbeat(deps: {
         { component: deps.component },
         `heartbeat ping failed: ${sanitizePingError(err)}`,
       );
+    }
+    if (deps.mirror !== undefined) {
+      try {
+        await deps.mirror();
+      } catch (err) {
+        deps.logger.warn(
+          { component: deps.component },
+          `heartbeat DB mirror failed: ${sanitizePingError(err)}`,
+        );
+      }
     }
   };
 

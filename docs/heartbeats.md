@@ -104,10 +104,18 @@ Log check (both scenarios): confirm no ping log line contains a check URL, a sec
 content, `customer_language`, a phone number, or a name — only the component name and a coarse
 reason.
 
-## Follow-up for Task 7.3 (status surface)
+## Task 7.3 (status surface) — the in-DB heartbeat mirror
 
-The status surface may **display** component health and last-run/last-ping for each component
-(read from the DB or, read-only, from the monitor's status API). It must **not** become the
-alerting source: the external per-component monitor stays authoritative for raising alerts. The
-status surface is a convenience view, not a dead-man's switch — if the surface itself is down it
-must not silence the external alarm.
+Task 7.3 added `component_heartbeats`, a **best-effort in-DB mirror** of these pings so the status
+surface can render component health without reaching the external monitor. It does **not** change
+this contract: the external per-component monitor stays authoritative for raising alerts, and a DB
+mirror-write failure is sanitized-logged and **never** blocks a ping or fails a run — the ping and
+the DB write are independent, ordered so the ping is never gated on the write (worker: after the
+ping on each healthy beat; reconciliation cron: before the ping on a successful sweep). The status
+surface is a convenience view, not a dead-man's switch — if it is down it must not silence the
+external alarm.
+
+**Liveness vs. activity** carries over to the mirror: only the periodic-liveness components
+(`worker`, `reconciliation-cron`, `retention-cron`) get stale-threshold → `broken` logic. The
+webhook receiver is never marked `broken` from inbound-traffic idleness — its rendered state comes
+from a boot/periodic liveness heartbeat if one exists, else `unknown`. See `docs/status-surface.md`.

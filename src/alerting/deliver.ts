@@ -1,0 +1,100 @@
+import type { Pool } from 'pg';
+import type { Logger } from 'pino';
+import type { Config } from '../config/schema.js';
+import { renderAlertEventText } from '../failure-model/index.js';
+import type { AlertEventRow } from '../db/schemas/alert-events.js';
+import { markDelivered, markFailed } from '../db/repositories/alert-events-repo.js';
+import { type AlertWebhookPoster, httpPostAlert, sanitizeWebhookError } from './webhook.js';
+
+/** The outcome of a single delivery attempt. */
+export type DeliveryOutcome = 'delivered' | 'failed' | 'skipped';
+
+export interface DeliverDeps {
+  now: Date;
+  logger: Logger;
+  /** Injectable transport (defaults to the real HTTP POST). */
+  post?: AlertWebhookPoster;
+}
+
+/** Coarse, log-safe token for an unknown throwable (never a raw message). */
+function coarse(err: unknown): string {
+  return err instanceof Error ? err.name || err.constructor.name : typeof err;
+}
+
+/** Exponential backoff instant for the next attempt: base * 2^(attempts already made). */
+function nextAttemptAt(config: Config, now: Date, attemptsSoFar: number): Date {
+  const factor = 2 ** Math.min(attemptsSoFar, 20); // cap the exponent, never overflow
+  return new Date(now.getTime() + config.ALERT_DELIVERY_BACKOFF_MS * factor);
+}
+
+/** Mark a row failed, swallowing (sanitized-logging) any DB error so delivery never throws. */
+async function safeMarkFailed(
+  pool: Pool,
+  config: Config,
+  row: AlertEventRow,
+  now: Date,
+  reason: string,
+  logger: Logger,
+): Promise<void> {
+  try {
+    await markFailed(pool, row.id, {
+      nextAttemptAt: nextAttemptAt(config, now, row.delivery_attempts),
+      error: reason,
+    });
+  } catch (err) {
+    logger.warn({ component: 'alerting' }, `alert delivery bookkeeping failed (${coarse(err)})`);
+  }
+}
+
+/**
+ * Deliver ONE persisted alert row, best-effort and idempotently (Task 7.3). Renders from the
+ * row alone (`renderAlertEventText`), POSTs to `ALERT_WEBHOOK_URL`, and durably records the
+ * result. NEVER throws into the caller and never leaks the URL/secret/PII:
+ *
+ *  - `ALERT_WEBHOOK_URL` unset → `skipped`: the row stays `pending`/`failed` and the sweep
+ *    re-attempts later (logged once, not per row).
+ *  - render throws (unrenderable legacy row) → `failed` with a sanitized reason; the sweep's
+ *    max-attempts cap eventually stops retrying, leaving the row visible for follow-up.
+ *  - POST fails → `failed`, attempts++ and `next_attempt_at` pushed out by exponential backoff,
+ *    `last_delivery_error` sanitized (never the URL).
+ *  - POST succeeds → `delivered` (idempotent: `markDelivered` no-ops a row already delivered).
+ */
+export async function deliverAlertRow(
+  pool: Pool,
+  config: Config,
+  row: AlertEventRow,
+  deps: DeliverDeps,
+): Promise<DeliveryOutcome> {
+  const { now, logger } = deps;
+  const post = deps.post ?? httpPostAlert();
+
+  if (!config.ALERT_WEBHOOK_URL) {
+    return 'skipped';
+  }
+
+  let text: string;
+  try {
+    text = renderAlertEventText(row, { environment: config.NODE_ENV, now });
+  } catch (err) {
+    await safeMarkFailed(pool, config, row, now, `unrenderable alert (${coarse(err)})`, logger);
+    logger.warn(
+      { component: 'alerting', error_code: row.error_code },
+      `alert unrenderable — marked failed (${coarse(err)})`,
+    );
+    return 'failed';
+  }
+
+  try {
+    await post(config.ALERT_WEBHOOK_URL, text, config.ALERT_WEBHOOK_TIMEOUT_MS);
+    await markDelivered(pool, row.id);
+    return 'delivered';
+  } catch (err) {
+    const reason = sanitizeWebhookError(err);
+    await safeMarkFailed(pool, config, row, now, reason, logger);
+    logger.warn(
+      { component: 'alerting', error_code: row.error_code },
+      `alert delivery failed: ${reason}`,
+    );
+    return 'failed';
+  }
+}

@@ -48,3 +48,15 @@ export async function listUncleared(pool: Pool): Promise<DeadLetterRow[]> {
   const rows = await query<DeadLetterRow>(pool, `SELECT * FROM dead_letter ORDER BY failed_at`);
   return rows.map((r) => parseOrThrow(TABLE, deadLetterRowSchema, r));
 }
+
+/** Count uncleared dead-letter rows — the status surface's `dead_letter_count`. Dead-letter
+ * rows are append-only with no "cleared" flag yet, so every row counts (matching
+ * {@link listUncleared}). A legitimate zero (no dead jobs) is distinct from a query failure
+ * the caller surfaces as `unknown`. */
+export async function countUncleared(pool: Pool): Promise<number> {
+  const rows = await query<{ count: number }>(
+    pool,
+    `SELECT count(*)::int AS count FROM dead_letter`,
+  );
+  return rows[0]?.count ?? 0;
+}

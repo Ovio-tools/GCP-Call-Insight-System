@@ -11,6 +11,10 @@ import { hasTestDb, makePool, migrate } from './_pg.js';
 describe.skipIf(!hasTestDb)('migration 9 down-guard (extraction_candidates rows)', () => {
   let pool!: Pool;
   const callId = 'test-mig9-guard';
+  // Migrations stacked ABOVE migration 9 (extract_stage) that must be rolled back first so
+  // down(1) targets migration 9 itself. Bump when a later migration is added: migration 10
+  // (component_heartbeats) and 11 (alert_events delivery cols) sit above 9 (both Task 7.3).
+  const MIGRATIONS_ABOVE_9 = 2;
 
   beforeAll(async () => {
     await migrate('up');
@@ -37,7 +41,9 @@ describe.skipIf(!hasTestDb)('migration 9 down-guard (extraction_candidates rows)
         [callId],
       );
 
-      // Migration 9 is the newest migration, so down(1) targets exactly it.
+      // Roll back the migrations stacked above 9 first (both are clean, data-free), so the
+      // next down(1) targets migration 9 (extract_stage) exactly.
+      await migrate('down', MIGRATIONS_ABOVE_9);
       await expect(migrate('down', 1)).rejects.toThrow(/extraction_candidates rows/i);
 
       // Remediate (clear the staging row) and the rollback goes through.
