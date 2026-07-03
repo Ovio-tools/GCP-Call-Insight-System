@@ -56,3 +56,388 @@ As the review indicates:
 - **Extractor prompt:** if the extractor selected or reconstructed risky text from a
   clean transcript, tighten the extraction prompt's verbatim-phrase rules and bump the
   prompt version.
+
+## Config missing or invalid
+
+<!-- anchor: config-missing-or-invalid — CONFIG_MISSING_OR_INVALID -->
+
+**Code:** `CONFIG_MISSING_OR_INVALID` · **Severity:** high · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A service cannot start because required configuration is missing or invalid; that
+component is down until it is fixed. The config loader names the offending variable.
+
+- **Do now:** Set a valid value for the named environment variable in the failing service and redeploy.
+- **Longer-term fix:** Same as the immediate step.
+
+## Database unavailable
+
+<!-- anchor: database-unavailable — DATABASE_UNAVAILABLE -->
+
+**Code:** `DATABASE_UNAVAILABLE` · **Severity:** critical · **Calls:** retried · **Owner:** platform · **Data safe:** yes
+
+Postgres is unreachable; processing is paused and jobs wait in the queue — no calls are lost.
+
+- **Do now:** Check Postgres health, credentials, and network reachability, then restore the connection.
+- **Longer-term fix:** Add connection-pool health checks and a failover path if outages recur.
+
+## Redis unavailable
+
+<!-- anchor: redis-unavailable — REDIS_UNAVAILABLE -->
+
+**Code:** `REDIS_UNAVAILABLE` · **Severity:** critical · **Calls:** retried · **Owner:** platform · **Data safe:** yes
+
+Redis (the job queue) is unreachable; events cannot be enqueued or consumed and processing
+is paused. The reconciliation cron backfills any missed calls.
+
+- **Do now:** Restore Redis connectivity; verify credentials and memory limits.
+- **Longer-term fix:** Add Redis health checks and alert on memory pressure.
+
+## Migration failed
+
+<!-- anchor: migration-failed — MIGRATION_FAILED -->
+
+**Code:** `MIGRATION_FAILED` · **Severity:** high · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A database migration failed; the schema may be partially applied and the affected service
+will not start.
+
+- **Do now:** Review the migration error, roll back with its down migration, then re-run after fixing.
+- **Longer-term fix:** Same as the immediate step.
+
+## Dialpad auth failed
+
+<!-- anchor: dialpad-auth-failed — DIALPAD_AUTH_FAILED -->
+
+**Code:** `DIALPAD_AUTH_FAILED` · **Severity:** high · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+Dialpad API authentication failed; transcripts and call lists cannot be fetched — affected
+calls are held, not lost.
+
+- **Do now:** Rotate or refresh the Dialpad API credentials and confirm the required scopes.
+- **Longer-term fix:** Automate token refresh and alert before credentials expire.
+
+## Dialpad rate limited
+
+<!-- anchor: dialpad-rate-limited — DIALPAD_RATE_LIMITED -->
+
+**Code:** `DIALPAD_RATE_LIMITED` · **Severity:** medium · **Calls:** retried · **Owner:** platform · **Data safe:** yes
+
+Dialpad is rate-limiting requests; transcript fetches are delayed and retried — no calls
+are lost.
+
+- **Do now:** Back off and retry within the documented limits; reduce fetch concurrency if it persists.
+- **Longer-term fix:** Add adaptive rate limiting and request budgeting for the Dialpad client.
+
+## Dialpad API changed
+
+<!-- anchor: dialpad-api-changed — DIALPAD_API_CHANGED -->
+
+**Code:** `DIALPAD_API_CHANGED` · **Severity:** high · **Calls:** held · **Owner:** platform · **Data safe:** yes
+
+The Dialpad API response shape changed; fetching or parsing is failing and affected calls
+are held for review.
+
+- **Do now:** Compare responses against the Dialpad contract, update the client, and reprocess held calls.
+- **Longer-term fix:** Add contract tests against Dialpad so shape changes are caught early.
+
+## Dialpad transcript missing
+
+<!-- anchor: dialpad-transcript-missing — DIALPAD_TRANSCRIPT_MISSING -->
+
+**Code:** `DIALPAD_TRANSCRIPT_MISSING` · **Severity:** low · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+A transcript did not become available within the retry window; the call is held for review
+rather than guessed or dropped. (A transcript that is merely not-ready-yet is handled by
+the availability check and never emits this code.)
+
+- **Do now:** Review the held missing-transcript call and confirm whether Dialpad has the transcript or it should be marked unresolvable.
+- **Longer-term fix:** Same as the immediate step.
+
+## Webhook signature invalid
+
+<!-- anchor: webhook-signature-invalid — WEBHOOK_SIGNATURE_INVALID -->
+
+**Code:** `WEBHOOK_SIGNATURE_INVALID` · **Severity:** medium · **Calls:** none · **Owner:** OVIO on-call · **Data safe:** yes
+
+A webhook request failed signature verification and was rejected; nothing was ingested from
+it. Legitimate calls are still recovered by the reconciliation cron.
+
+- **Do now:** Confirm the shared signing secret matches Dialpad's, and investigate possible spoofing.
+- **Longer-term fix:** Rotate the signing secret and monitor rejection rates.
+
+## Webhook replay detected
+
+<!-- anchor: webhook-replay-detected — WEBHOOK_REPLAY_DETECTED -->
+
+**Code:** `WEBHOOK_REPLAY_DETECTED` · **Severity:** low · **Calls:** none · **Owner:** OVIO on-call · **Data safe:** yes
+
+A replayed webhook was detected and ignored; the original event was already processed, so
+there is no duplication.
+
+- **Do now:** No action for a single event; investigate if replay volume is high (a possible attack).
+- **Longer-term fix:** Same as the immediate step.
+
+## Redaction recall regression
+
+<!-- anchor: redaction-recall-regression — REDACTION_RECALL_REGRESSION -->
+
+**Code:** `REDACTION_RECALL_REGRESSION` · **Severity:** critical · **Calls:** held · **Owner:** platform · **Data safe:** yes
+
+Redaction corpus recall dropped below threshold; to protect privacy, affected calls are
+held and nothing is sent to the model.
+
+- **Do now:** Do not disable redaction. Review the recall regression and the redaction rules before releasing any held call.
+- **Longer-term fix:** Expand the adversarial redaction corpus and gate releases on recall.
+
+## Redaction low confidence
+
+<!-- anchor: redaction-low-confidence — REDACTION_LOW_CONFIDENCE -->
+
+**Code:** `REDACTION_LOW_CONFIDENCE` · **Severity:** medium · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+Redaction confidence for a call was too low; it is held (fail-closed) and never sent to the
+model.
+
+- **Do now:** Route the held call to human review; do not override the hold.
+- **Longer-term fix:** Same as the immediate step.
+
+## Model auth failed
+
+<!-- anchor: model-auth-failed — MODEL_AUTH_FAILED -->
+
+**Code:** `MODEL_AUTH_FAILED` · **Severity:** high · **Calls:** held · **Owner:** platform · **Data safe:** yes
+
+Authentication to the model API failed; classification and extraction are paused and calls
+are held, not lost.
+
+- **Do now:** Refresh or rotate the model API key and verify the configured model IDs.
+- **Longer-term fix:** Automate key rotation and add pre-expiry alerts.
+
+## Model rate limited
+
+<!-- anchor: model-rate-limited — MODEL_RATE_LIMITED -->
+
+**Code:** `MODEL_RATE_LIMITED` · **Severity:** medium · **Calls:** retried · **Owner:** platform · **Data safe:** yes
+
+The model API is rate-limiting; classification and extraction are delayed and retried — no
+calls are lost.
+
+- **Do now:** Back off and retry; lower concurrency if it persists.
+- **Longer-term fix:** Add adaptive concurrency and a token budget for model calls.
+
+## Model malformed response
+
+<!-- anchor: model-malformed-response — MODEL_MALFORMED_RESPONSE -->
+
+**Code:** `MODEL_MALFORMED_RESPONSE` · **Severity:** medium · **Calls:** held · **Owner:** platform · **Data safe:** yes
+
+The model returned output that failed the schema-validation gate; the record is held rather
+than storing malformed data.
+
+- **Do now:** Inspect the prompt and prompt version and the held record, then reprocess after fixing.
+- **Longer-term fix:** Tighten the output schema and add golden-fixture coverage.
+
+## Model cost cap exceeded
+
+<!-- anchor: model-cost-cap-exceeded — MODEL_COST_CAP_EXCEEDED -->
+
+**Code:** `MODEL_COST_CAP_EXCEEDED` · **Severity:** high · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+The daily model cost cap was reached; new model calls are paused to prevent overspend and
+queued calls wait.
+
+- **Do now:** Review daily cost usage, then raise the cap deliberately or wait for the next window.
+- **Longer-term fix:** Add cost forecasting and staged alerts before the cap is hit.
+
+## Queue retry exhausted
+
+<!-- anchor: queue-retry-exhausted — QUEUE_RETRY_EXHAUSTED -->
+
+**Code:** `QUEUE_RETRY_EXHAUSTED` · **Severity:** high · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+A job exhausted its capped retries and stopped; the affected call is not processed until it
+is requeued.
+
+- **Do now:** Inspect the job's failure, fix the root cause, and requeue the call.
+- **Longer-term fix:** Tune retry and backoff, and add a dead-letter review workflow.
+
+## Dead letter created
+
+<!-- anchor: dead-letter-created — DEAD_LETTER_CREATED -->
+
+**Code:** `DEAD_LETTER_CREATED` · **Severity:** high · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+A job was moved to the dead-letter queue after exhausting retries; that call is parked and
+needs manual attention. The dead-letter row carries sanitized root-cause metadata and the
+full failure snapshot.
+
+- **Do now:** Triage the dead-letter row's sanitized root cause, then requeue or resolve it.
+- **Longer-term fix:** Add dead-letter dashboards and periodic triage.
+
+## Retention purge failed
+
+<!-- anchor: retention-purge-failed — RETENTION_PURGE_FAILED -->
+
+**Code:** `RETENTION_PURGE_FAILED` · **Severity:** high · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+The retention purge job failed; data past its window may persist longer than intended — a
+compliance risk, not data loss.
+
+- **Do now:** Investigate the purge failure and re-run the retention job (with a dry-run first).
+- **Longer-term fix:** Add purge-success monitoring and alert on overdue rows.
+
+## Backfill checkpoint failed
+
+<!-- anchor: backfill-checkpoint-failed — BACKFILL_CHECKPOINT_FAILED -->
+
+**Code:** `BACKFILL_CHECKPOINT_FAILED` · **Severity:** medium · **Calls:** retried · **Owner:** platform · **Data safe:** yes
+
+A backfill batch failed to checkpoint; the backfill may stall or repeat from the last good
+checkpoint — no data is lost.
+
+- **Do now:** Inspect the backfill run and resume from the last checkpoint.
+- **Longer-term fix:** Make checkpoints transactional and resumable.
+
+## Review queue stalled
+
+<!-- anchor: review-queue-stalled — REVIEW_QUEUE_STALLED -->
+
+**Code:** `REVIEW_QUEUE_STALLED` · **Severity:** medium · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+Held calls in the review queue are breaching their SLA; customer follow-up may be delayed.
+
+- **Do now:** Assign reviewers to the oldest held calls and clear the backlog.
+- **Longer-term fix:** Add SLA alerting and reviewer capacity planning.
+
+## ServiceTitan auth failed
+
+<!-- anchor: servicetitan-auth-failed — SERVICETITAN_AUTH_FAILED -->
+
+**Code:** `SERVICETITAN_AUTH_FAILED` · **Severity:** high · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+ServiceTitan authentication failed; job matching and write-back are paused. Call processing
+itself is unaffected.
+
+- **Do now:** Refresh ServiceTitan credentials and verify the required scopes.
+- **Longer-term fix:** Automate token refresh and alert before credentials expire.
+
+## ServiceTitan match weak
+
+<!-- anchor: servicetitan-match-weak — SERVICETITAN_MATCH_WEAK -->
+
+**Code:** `SERVICETITAN_MATCH_WEAK` · **Severity:** low · **Calls:** held · **Owner:** OVIO on-call · **Data safe:** yes
+
+A ServiceTitan match was too weak to trust; the call is held for review and nothing is
+written back rather than guessed.
+
+- **Do now:** Review the held weak-match call manually and confirm or reject it before any write-back.
+- **Longer-term fix:** Tune match thresholds and add more match keys.
+
+## ServiceTitan write failed
+
+<!-- anchor: servicetitan-write-failed — SERVICETITAN_WRITE_FAILED -->
+
+**Code:** `SERVICETITAN_WRITE_FAILED` · **Severity:** medium · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A ServiceTitan write-back failed; the structured record is safe in our store but not yet
+reflected in ServiceTitan.
+
+- **Do now:** Retry the write-back after checking ServiceTitan availability; the write carries an idempotency key.
+- **Longer-term fix:** Add write-back retry with backoff and periodic reconciliation.
+
+## Request body too large
+
+<!-- anchor: request-body-too-large — REQUEST_BODY_TOO_LARGE -->
+
+**Code:** `REQUEST_BODY_TOO_LARGE` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A request body exceeded the configured size limit and was rejected before parsing; nothing
+was ingested from it.
+
+- **Do now:** No action for a single request; if legitimate large payloads are expected, raise `HTTP_MAX_BODY_BYTES` for that surface.
+- **Longer-term fix:** Same as the immediate step.
+
+## Request malformed
+
+<!-- anchor: request-malformed — REQUEST_MALFORMED -->
+
+**Code:** `REQUEST_MALFORMED` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A request body could not be parsed (malformed JSON) and was rejected; nothing was ingested
+from it.
+
+- **Do now:** No action for a single request; if a caller keeps sending malformed bodies, share the expected request format.
+- **Longer-term fix:** Same as the immediate step.
+
+## Unsupported media type
+
+<!-- anchor: unsupported-media-type — UNSUPPORTED_MEDIA_TYPE -->
+
+**Code:** `UNSUPPORTED_MEDIA_TYPE` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A request used an unsupported content type and was rejected; only the documented content
+types are accepted.
+
+- **Do now:** No action for a single request; confirm callers send the documented Content-Type header.
+- **Longer-term fix:** Same as the immediate step.
+
+## Rate limit exceeded
+
+<!-- anchor: rate-limit-exceeded — RATE_LIMIT_EXCEEDED -->
+
+**Code:** `RATE_LIMIT_EXCEEDED` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A source exceeded the request-rate limit and is being throttled; its requests are rejected
+until the window resets. No data is lost.
+
+- **Do now:** No action for expected bursts; if a legitimate source is being throttled, adjust its rate-limit threshold.
+- **Longer-term fix:** Add per-source rate-limit tuning and alert on sustained throttling.
+
+## Auth required
+
+<!-- anchor: auth-required — AUTH_REQUIRED -->
+
+**Code:** `AUTH_REQUIRED` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+An unauthenticated request to an internal surface was refused; no protected data was
+exposed.
+
+- **Do now:** Sign in through the configured identity provider; if valid sessions are being rejected, check the OIDC and session configuration.
+- **Longer-term fix:** Same as the immediate step.
+
+## CSRF token invalid
+
+<!-- anchor: csrf-token-invalid — CSRF_TOKEN_INVALID -->
+
+**Code:** `CSRF_TOKEN_INVALID` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A state-changing internal request was refused because its CSRF token was missing or invalid;
+no change was made.
+
+- **Do now:** Reload the surface to obtain a fresh CSRF token and retry; if valid tokens are being rejected, check the session configuration.
+- **Longer-term fix:** Same as the immediate step.
+
+## Webhook timestamp invalid
+
+<!-- anchor: webhook-timestamp-invalid — WEBHOOK_TIMESTAMP_INVALID -->
+
+**Code:** `WEBHOOK_TIMESTAMP_INVALID` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A webhook was rejected because its timestamp was outside the allowed freshness window (stale
+or future); nothing was ingested. Legitimate calls are still recovered by the reconciliation
+cron.
+
+- **Do now:** Confirm the sender and server clocks are in sync; investigate if stale-timestamp volume is high (a possible replay attack).
+- **Longer-term fix:** Monitor rejection rates and widen the skew window only if a clock-sync issue is confirmed.
+
+## Internal error
+
+<!-- anchor: internal-error — INTERNAL_ERROR -->
+
+**Code:** `INTERNAL_ERROR` · **Severity:** high · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+An HTTP surface hit an unexpected error and returned a generic failure; the request did not
+complete. The error detail is in the logs, never in the response.
+
+- **Do now:** Check the service logs for the correlated request id and address the underlying error.
+- **Longer-term fix:** Same as the immediate step.
