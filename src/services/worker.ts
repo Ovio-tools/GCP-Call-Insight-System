@@ -10,6 +10,7 @@ import {
   startLivenessHeartbeat,
 } from '../heartbeat/index.js';
 import { createAppPool } from '../db/index.js';
+import { recordHeartbeat } from '../db/repositories/component-heartbeats-repo.js';
 import { keyProviderFromConfig } from '../crypto/index.js';
 import { createDialpadClient, RedisDualWindowLimiter } from '../dialpad/client/index.js';
 import { buildProductionStageHandlers } from '../pipeline/handlers.js';
@@ -103,6 +104,12 @@ async function main(): Promise<void> {
           connection: workerConnection,
           shouldConsume,
         }),
+        // Best-effort in-DB liveness mirror for the status surface (Task 7.3). The external
+        // ping above stays authoritative; a DB-write failure is swallowed by startLivenessHeartbeat
+        // and never blocks the ping. Counts-only/no detail — pure liveness, not throughput.
+        mirror: async () => {
+          await recordHeartbeat(pool, { component: 'worker' });
+        },
       })
     : undefined;
 

@@ -19,6 +19,11 @@ function row(overrides: Partial<AlertEventRow> = {}): AlertEventRow {
     acknowledged_at: null,
     created_at: new Date(NOW - WINDOW),
     failure_snapshot: {},
+    delivery_state: 'pending',
+    delivery_attempts: 0,
+    next_attempt_at: new Date(NOW - WINDOW),
+    delivered_at: null,
+    last_delivery_error: null,
     ...overrides,
   };
 }

@@ -2,7 +2,13 @@ import type { Pool } from 'pg';
 import type { Queue } from 'bullmq';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
-import { checkUrlFor, httpPing, pingSuccess, requireCheckUrl } from '../heartbeat/index.js';
+import {
+  checkUrlFor,
+  httpPing,
+  pingSuccess,
+  requireCheckUrl,
+  sanitizePingError,
+} from '../heartbeat/index.js';
 import type { DialpadClient, RecentCall } from '../dialpad/client/index.js';
 import { DialpadError } from '../dialpad/client/index.js';
 import { getCallState, seedCallStateIfAbsent } from '../db/repositories/call-state-repo.js';
@@ -40,6 +46,13 @@ export interface ReconciliationDeps {
   ingestGap: (call: RecentCall) => Promise<void>;
   /** Fire the dead-man's-switch ping. Defaults to an HTTP GET; injectable for tests. */
   pingCheck?: (url: string) => Promise<void>;
+  /**
+   * Best-effort in-DB liveness mirror (Task 7.3): recorded on a fully-successful sweep for the
+   * status surface, INDEPENDENTLY of the external ping. A failure here is sanitized-logged and
+   * NEVER skips the ping nor fails the run. Injected by the cron entrypoint (which holds the
+   * pool); absent in tests/dev.
+   */
+  heartbeat?: (summary: ReconciliationSummary) => Promise<void>;
   clock?: ReconciliationClock;
 }
 
@@ -143,6 +156,20 @@ export async function runReconciliation(deps: ReconciliationDeps): Promise<Recon
     },
     'reconciliation sweep complete',
   );
+
+  // Best-effort in-DB liveness mirror for the status surface, written BEFORE the ping but
+  // fully wrapped so a DB-write failure never skips the ping (they are independent): the
+  // external check stays the authoritative alert source. Counts only, no PII.
+  if (deps.heartbeat !== undefined) {
+    try {
+      await deps.heartbeat(summary);
+    } catch (err) {
+      logger.warn(
+        { component: 'reconciliation-cron' },
+        `heartbeat DB mirror failed: ${sanitizePingError(err)}`,
+      );
+    }
+  }
 
   // Success ping — this cron's OWN check, never the worker's or retention's. A ping failure
   // is logged (sanitized, no URL) but does not fail the run: the sweep genuinely succeeded,

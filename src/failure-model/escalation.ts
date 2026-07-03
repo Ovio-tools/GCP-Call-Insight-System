@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { listActive, recordAlert } from '../db/repositories/alert-events-repo.js';
+import { listActive, recordAlertWithInsertStatus } from '../db/repositories/alert-events-repo.js';
 import { type AlertEventRow } from '../db/schemas/alert-events.js';
 
 /**
@@ -37,21 +37,32 @@ export interface EscalateOptions {
   windowMs: number;
 }
 
+/** One escalation outcome: the escalation row plus whether THIS run created it. An existing
+ * (deduped) escalation row returns `inserted: false` — the delivery layer must NOT re-send it,
+ * leaving any owed retry to the backoff-honoring sweep. */
+export interface EscalationResult {
+  row: AlertEventRow;
+  inserted: boolean;
+}
+
 /**
  * Escalate every active critical alert that has gone unacknowledged past `windowMs`, recording
- * one additive `escalation:<original>` row per stale alert. Idempotent: a second run collapses
- * onto the existing escalation row via the dedup index. Returns the escalation rows.
+ * one additive `escalation:<original>` row per stale alert and reporting, per row, whether THIS
+ * run inserted it. Idempotent: a second run collapses onto the existing escalation row via the
+ * dedup index and reports `inserted: false` for it. The insert status is what lets the caller
+ * deliver a fresh escalation immediately while leaving an already-recorded one to the retry
+ * sweep (so a failed escalation is not re-sent every run, bypassing its backoff).
  */
-export async function escalateStaleAlerts(
+export async function escalateStaleAlertsWithInsertStatus(
   pool: Pool,
   opts: EscalateOptions,
-): Promise<AlertEventRow[]> {
+): Promise<EscalationResult[]> {
   const active = await listActive(pool);
   const stale = active.filter((alert) => shouldEscalate(alert, opts.now, opts.windowMs));
 
-  const escalated: AlertEventRow[] = [];
+  const escalated: EscalationResult[] = [];
   for (const row of stale) {
-    const created = await recordAlert(pool, {
+    const { row: created, inserted } = await recordAlertWithInsertStatus(pool, {
       errorCode: row.error_code,
       rootCauseCategory: row.root_cause_category,
       severity: 'critical',
@@ -61,7 +72,19 @@ export async function escalateStaleAlerts(
         original_created_at: row.created_at.toISOString(),
       },
     });
-    escalated.push(created);
+    escalated.push({ row: created, inserted });
   }
   return escalated;
+}
+
+/**
+ * Escalate stale criticals, returning just the escalation rows. Backward-compatible thin
+ * wrapper over {@link escalateStaleAlertsWithInsertStatus} — delivery-aware callers use the
+ * `WithInsertStatus` variant to tell a freshly recorded escalation from a deduped one.
+ */
+export async function escalateStaleAlerts(
+  pool: Pool,
+  opts: EscalateOptions,
+): Promise<AlertEventRow[]> {
+  return (await escalateStaleAlertsWithInsertStatus(pool, opts)).map((r) => r.row);
 }

@@ -32,8 +32,10 @@ boundary; see `docs/adr/0002-redaction-tokens-and-fail-closed.md`), the classify
 stage (Task 5.2, `src/pipeline/extract/` — Sonnet, schema-gate + deterministic urgency;
 see `docs/adr/0003-extract-schema-gate-deterministic-urgency-no-scores.md`), the
 parked-call requeue scripts (`src/scripts/requeue-parked-classify.ts`,
-`src/scripts/requeue-parked-extract.ts`), and the per-component heartbeats (Task 7.1,
-`src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron) exist;
+`src/scripts/requeue-parked-extract.ts`), the per-component heartbeats (Task 7.1,
+`src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron), and
+the authenticated status surface + alert delivery (Task 7.3, `src/status/` +
+`src/alerting/` + `src/services/status-surface.ts`, see `docs/status-surface.md`) exist;
 the remaining surfaces and the retention cron's purge logic (Task 8.1 — the entrypoint
 exists but only runs the heartbeat contract) do not yet. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY

@@ -311,3 +311,46 @@ export async function holdCall(pool: Pool, input: HoldCallInput): Promise<CallSt
     return parseOrThrow(TABLE, callStateRowSchema, rows[0]);
   });
 }
+
+/** One in-flight stage bucket for the status surface: how many calls sit at a stage. */
+export interface StageCount {
+  current_stage: string;
+  count: number;
+}
+
+/**
+ * Count IN-FLIGHT calls (`status='processing'`) grouped by `current_stage` — the status
+ * surface's per-stage counts. Read-only aggregation over `call_state` only: no transcript,
+ * no PII, no content column is touched. The caller maps each DB stage name onto its DTO node;
+ * an empty result is a legitimate zero, distinct from a query failure it renders as `unknown`.
+ */
+export async function countByProcessingStage(pool: Pool): Promise<StageCount[]> {
+  return query<StageCount>(
+    pool,
+    `SELECT current_stage, count(*)::int AS count
+       FROM call_state
+      WHERE status = 'processing'
+      GROUP BY current_stage`,
+  );
+}
+
+/**
+ * Count calls that reached the terminal `completed` status with `updated_at` in the
+ * half-open interval [from, to) — the status surface's "processed today" over today's UTC
+ * day boundaries. `completed` (not `done`) is the terminal status (src/pipeline/stages.ts).
+ * Read-only; touches no content columns. Zero completed calls is a legitimate `0`.
+ */
+export async function countCompletedBetween(
+  pool: Pool,
+  bounds: { from: Date; to: Date },
+): Promise<number> {
+  const rows = await query<{ count: number }>(
+    pool,
+    `SELECT count(*)::int AS count
+       FROM call_state
+      WHERE status = 'completed'
+        AND updated_at >= $1 AND updated_at < $2`,
+    [bounds.from, bounds.to],
+  );
+  return rows[0]?.count ?? 0;
+}

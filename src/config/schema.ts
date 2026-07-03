@@ -338,6 +338,40 @@ export const configSchema = z.object({
    * model can never silently inherit the wrong pricing. */
   EXTRACT_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(3),
   EXTRACT_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(15),
+
+  // --- Status surface + alert delivery (Task 7.3) ---
+
+  /** Auto-refresh cadence (seconds) for the server-rendered `/status` page via a plain
+   * `<meta http-equiv=refresh>` — load/refresh only, no streaming or per-call animation.
+   * `0` disables auto-refresh (a manual refresh link is always present). */
+  STATUS_PAGE_REFRESH_SECONDS: z.coerce.number().int().nonnegative().default(30),
+
+  /** Staleness thresholds (ms) for the in-DB component heartbeat mirror: a component whose
+   * `component_heartbeats.last_run_at` is older than its threshold renders `broken`. Applied
+   * ONLY to the periodic-liveness components (worker + crons); the webhook receiver is
+   * liveness-vs-activity split and never goes `broken` from inbound-traffic idleness. Sized
+   * per cadence: worker beats each WORKER_HEARTBEAT_INTERVAL_MS (minutes), reconciliation runs
+   * every ~15 min, retention runs daily (~26h). Defaults leave slack for one missed tick. */
+  WORKER_HEARTBEAT_STALE_MS: z.coerce.number().int().positive().default(180_000),
+  RECONCILIATION_HEARTBEAT_STALE_MS: z.coerce.number().int().positive().default(2_700_000),
+  RETENTION_HEARTBEAT_STALE_MS: z.coerce.number().int().positive().default(93_600_000),
+
+  /** Outbound Slack-compatible alert webhook (`{text}` POST). Optional locally and in the
+   * schema; delivery no-ops (rows stay `pending`, the sweep retries) when unset. The alerting
+   * entrypoint fail-fast-requires it in staging/production so critical alerts are never
+   * silently undeliverable. Never a real value in the repo. */
+  ALERT_WEBHOOK_URL: z.string().url().optional(),
+
+  /** Per-request timeout (ms) for the outbound alert-webhook POST. Fail fast, never hang. */
+  ALERT_WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+
+  /** Max delivery attempts per alert row before the retry sweep stops trying (the row stays
+   * `failed`, visible for manual follow-up). Includes the immediate attempt. */
+  ALERT_DELIVERY_MAX_ATTEMPTS: z.coerce.number().int().positive().default(6),
+
+  /** Base delay (ms) for the alert-delivery exponential backoff between retries. The sweep
+   * schedules `next_attempt_at = now + base * 2^(attempts-1)`. */
+  ALERT_DELIVERY_BACKOFF_MS: z.coerce.number().int().positive().default(60_000),
 });
 
 /** Validated, typed configuration object. */
