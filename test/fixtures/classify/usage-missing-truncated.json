@@ -1,0 +1,10 @@
+{
+  "name": "usage-missing-truncated",
+  "redactedTranscript": "Caller: I have a very long detailed question...",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"cut off before clos",
+    "stopReason": "max_tokens",
+    "usagePresent": false
+  },
+  "expected": { "failure": "truncated", "usageMissing": true }
+}

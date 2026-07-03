@@ -1,0 +1,10 @@
+{
+  "name": "bucket-customer",
+  "redactedTranscript": "Agent: Thanks for calling, this is [NAME_1]. How can I help?\nCaller: Hi, my AC stopped cooling last night and I'd like to book a service visit for tomorrow.\nAgent: Sure, I can get a technician out. What's the best number to reach you at?\nCaller: You can use [PHONE_1].",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"caller requests a service booking for a broken AC unit\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "bucket": "customer" }
+}

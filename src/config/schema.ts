@@ -196,8 +196,73 @@ export const configSchema = z.object({
 
   /** The reconciliation cron's OWN dead-man's-switch URL, pinged only after a fully
    * successful sweep. Optional in the schema (local dev / tests skip the ping), but the
-   * cron entrypoint REQUIRES it in production via requireReconciliationCheckUrl. */
+   * cron entrypoint REQUIRES it in staging/production via requireCheckUrl. */
   RECONCILIATION_CHECK_URL: z.string().url().optional(),
+
+  // --- Per-component dead-man's switches (Task 7.1) ---
+
+  /** The WORKER's OWN external check URL, pinged every WORKER_HEARTBEAT_INTERVAL_MS to prove
+   * liveness (not throughput). Optional in the schema (dev/test skip it); the worker
+   * entrypoint REQUIRES it in staging/production via requireCheckUrl(config, 'worker'). Kept
+   * separate from the cron URLs on purpose — a shared check would stay green while one
+   * component is dead. */
+  WORKER_CHECK_URL: z.string().url().optional(),
+
+  /** The RETENTION cron's OWN external check URL, pinged only after a fully successful run.
+   * Optional in the schema; REQUIRED in staging/production via requireCheckUrl. */
+  RETENTION_CHECK_URL: z.string().url().optional(),
+
+  /** How often (ms) the worker pings its liveness check while booted and its queue/Redis
+   * dependencies are healthy. Must be shorter than the external monitor's grace period. */
+  WORKER_HEARTBEAT_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Per-request timeout (ms) for the provider-neutral heartbeat HTTP GET. Fail fast, never
+   * hang a beat waiting on an unreachable monitor. */
+  HEARTBEAT_PING_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+
+  // --- Classify stage / model spend (Task 5.1) ---
+
+  /** Anthropic API key. Optional here — like DIALPAD_API_KEY, the consumer (the Anthropic
+   * client construction) validates presence, not boot. Never a real value in the repo. */
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+
+  /** Model ID for the classify stage. Never hardcoded outside config — a model swap is a
+   * config change, not a code change. */
+  CLASSIFY_MODEL_ID: z.string().min(1).default('claude-haiku-4-5-20251001'),
+
+  /** Kill switch: explicit string enum, never truthy-coerced (the EXACT WORKER_KILL_SWITCH
+   * pattern). Defaults false: while off, the classify stage makes no Anthropic calls. */
+  CLASSIFY_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** Max output tokens requested per classify call. */
+  CLASSIFY_MAX_TOKENS: z.coerce.number().int().positive().default(512),
+
+  /** Cost-reservation floor (input tokens): the classify handler reserves against
+   * max(this ceiling, payload byte-estimate) so short-transcript calls never under-reserve
+   * against the daily cap. */
+  CLASSIFY_INPUT_TOKENS_CEILING: z.coerce.number().int().positive().default(30_000),
+
+  /** Fixed structured-output/request-scaffolding overhead (tokens) added to the byte-bound
+   * payload estimate when reserving against the daily cost cap. */
+  CLASSIFY_RESERVATION_OVERHEAD_TOKENS: z.coerce.number().int().nonnegative().default(1_000),
+
+  /** Anthropic TS SDK request timeout in milliseconds. The SDK accepts a `timeout` client
+   * option natively; the Dialpad client hand-rolls an AbortController timer around fetch. */
+  ANTHROPIC_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
+
+  /** Daily hard cap (USD) on model spend, enforced across ALL model stages, not just
+   * classify. */
+  DAILY_MODEL_COST_CAP_USD: z.coerce.number().positive().default(25),
+
+  /** Haiku 4.5 list price per million input/output tokens (USD). Deliberately
+   * classify-scoped, not shared: Task 5.2 adds its own EXTRACT_* rates for Sonnet, and the
+   * shared cost helper takes explicit rates with no defaults so a different model can never
+   * silently inherit Haiku pricing. */
+  CLASSIFY_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(1),
+  CLASSIFY_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(5),
 
   // --- Redaction stage (Task 4.1) ---
 

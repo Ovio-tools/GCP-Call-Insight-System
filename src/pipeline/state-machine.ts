@@ -234,13 +234,19 @@ export async function runPipeline(
       : (PIPELINE_STAGES[index + 1] as PipelineStage);
     const targetIndex = isFinal ? LAST_INDEX : index + 1;
 
+    const continueDetail = result && result.action === 'continue' ? result.detail : undefined;
+
     try {
       await advanceStage(pool, {
         callId,
         fromStage: stage,
         toStage,
         ...(isFinal ? { status: STATUS_COMPLETED } : {}),
-        logEntry: { stage, outcome: 'completed' },
+        logEntry: {
+          stage,
+          outcome: 'completed',
+          ...(continueDetail !== undefined ? { detail: continueDetail } : {}),
+        },
       });
     } catch (err) {
       if (!isStaleStageError(err)) throw err;

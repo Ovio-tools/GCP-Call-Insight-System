@@ -84,6 +84,20 @@ describe.skipIf(!hasTestDb)('call_state.drop_reason constraints', () => {
     );
     expect(res.rows[0]).toEqual({ status: 'skipped', drop_reason: 'zero_duration' });
   });
+
+  it('accepts status=skipped with drop_reason=classified_non_customer (Task 5.1 classify routing)', async () => {
+    const callId = 'test-drop-nonCustomer';
+    await seedProcessing(callId);
+    await owner.query(
+      `UPDATE call_state SET status='skipped', drop_reason='classified_non_customer' WHERE call_id=$1`,
+      [callId],
+    );
+    const res = await owner.query<{ status: string; drop_reason: string | null }>(
+      `SELECT status, drop_reason FROM call_state WHERE call_id=$1`,
+      [callId],
+    );
+    expect(res.rows[0]).toEqual({ status: 'skipped', drop_reason: 'classified_non_customer' });
+  });
 });
 
 describe.skipIf(!hasTestDb)('upsertCallState preserves terminal rows', () => {

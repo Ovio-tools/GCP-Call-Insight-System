@@ -1,0 +1,10 @@
+{
+  "name": "stop-tool-use",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"schema-valid but stop reason is tool_use\"}",
+    "stopReason": "tool_use",
+    "usagePresent": true
+  },
+  "expected": { "failure": "unexpected_stop_reason" }
+}

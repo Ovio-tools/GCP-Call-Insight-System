@@ -49,10 +49,12 @@ export const STATUS_COMPLETED = 'completed';
 export const STATUS_SKIPPED = 'skipped';
 
 /**
- * Stages permitted to end in a `skipped` drop. Only the metadata pre-filter drops today;
- * the runner's terminal `skipped` guard validates `current_stage` against this set.
+ * Stages permitted to end in a `skipped` drop. The metadata pre-filter drops obvious junk;
+ * `classify` (Task 5.1) drops a `non-customer` call with `drop_reason='classified_non_customer'`.
+ * The runner's terminal `skipped` guard validates `current_stage` against this set, so a
+ * re-enqueued non-customer call is a safe no-op.
  */
-export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set(['metadata-pre-filter']);
+export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set(['metadata-pre-filter', 'classify']);
 
 /**
  * `held` — a stage set the call aside for a person (a `review_queue` row was written).
@@ -71,6 +73,8 @@ export function isPipelineStage(stage: string): stage is PipelineStage {
 /**
  * What a stage handler asks the runner to do next:
  * - `continue` — advance to the next stage (the default; `void`/`undefined` also means this).
+ *   An optional `detail` is recorded on the stage's `completed` processing_log row (e.g.
+ *   classify's `{bucket: 'customer'}`).
  * - `drop` — stop the pipeline before the next stage; the runner calls `skipCall` with
  *   `reason` (a controlled `DropReason`), leaving the call `skipped` and recoverable.
  * - `defer` — stop WITHOUT advancing and WITHOUT failing; the call stays at this stage in
@@ -82,7 +86,7 @@ export function isPipelineStage(stage: string): stage is PipelineStage {
  *   `errorCode` (a failure-model code) is recorded on the processing_log row.
  */
 export type StageResult =
-  | { action: 'continue' }
+  | { action: 'continue'; detail?: Record<string, JsonValue> }
   | { action: 'drop'; reason: DropReason; detail?: Record<string, JsonValue> }
   | { action: 'defer' }
   | {

@@ -19,10 +19,12 @@
     "start": "node dist/index.js",
     "db:migrate": "node dist/scripts/migrate.js up",
     "db:migrate:down": "node dist/scripts/migrate.js down",
+    "requeue:classify": "node dist/scripts/requeue-parked-classify.js",
     "prepare": "husky",
     "model:fetch": "node dist/scripts/fetch-ner-model.js"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.109.1",
     "@fastify/cookie": "^11.0.2",
     "@fastify/cors": "^11.2.0",
     "@fastify/helmet": "^13.0.2",

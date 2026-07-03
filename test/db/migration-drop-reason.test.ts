@@ -16,8 +16,9 @@ describe.skipIf(!hasTestDb)('migration 6 precondition (pre-existing skipped rows
 
   // Migrations added AFTER migration 6 (drop_reason) that must be rolled back to expose it.
   // Bump this when a later migration is stacked on top: currently migration 7
-  // (call_state.transcript_wait) sits above 6, so we roll back 2 to reach the pre-6 schema.
-  const MIGRATIONS_ABOVE_6 = 2;
+  // (call_state.transcript_wait) and migration 8 (classify_reasons) sit above 6, so we
+  // roll back 3 (6, 7, 8) to reach the pre-6 schema.
+  const MIGRATIONS_ABOVE_6 = 3;
 
   it('fails loudly if a skipped call_state row pre-exists', async () => {
     const callId = 'test-drop-preexisting-skipped';

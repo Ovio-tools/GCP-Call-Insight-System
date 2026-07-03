@@ -96,4 +96,19 @@ describe.skipIf(!hasTestDb)('holdCall + markTranscriptWaitStarted', () => {
     const second = await markTranscriptWaitStarted(app, callId);
     expect(second?.getTime()).toBe(first?.getTime()); // window never resets
   });
+
+  it('accepts held_reason=classified_spam (Task 5.1 classify routing)', async () => {
+    const callId = 'test-hold-spam';
+    await seed(callId);
+
+    await holdCall(app, {
+      callId,
+      atStage: 'fetch-transcript',
+      heldReason: 'classified_spam',
+    });
+
+    const reviews = await reviewRows(callId);
+    expect(reviews).toHaveLength(1);
+    expect(reviews[0]?.held_reason).toBe('classified_spam');
+  });
 });

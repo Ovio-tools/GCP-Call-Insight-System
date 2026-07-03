@@ -1,0 +1,10 @@
+{
+  "name": "stop-max-tokens",
+  "redactedTranscript": "Caller: I have a very long detailed question about my service history...",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"this reason was cut off before the JSON could clos",
+    "stopReason": "max_tokens",
+    "usagePresent": true
+  },
+  "expected": { "failure": "truncated" }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "non-json-markdown-fence",
+  "redactedTranscript": "Caller: Book me a service visit.",
+  "modelResponse": {
+    "text": "```json\n{\"bucket\":\"customer\",\"reason\":\"service booking\"}\n```",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "failure": "non_json" }
+}
