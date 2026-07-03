@@ -174,7 +174,9 @@ fields:
 `SERVICETITAN_AUTH_FAILED`, `SERVICETITAN_MATCH_WEAK`, `SERVICETITAN_WRITE_FAILED`,
 `REQUEST_BODY_TOO_LARGE`, `REQUEST_MALFORMED`, `UNSUPPORTED_MEDIA_TYPE`,
 `RATE_LIMIT_EXCEEDED`, `AUTH_REQUIRED`, `CSRF_TOKEN_INVALID`, `WEBHOOK_TIMESTAMP_INVALID`,
-`INTERNAL_ERROR` (the last eight added by the Task 2.3 shared hardening/auth middleware).
+`INTERNAL_ERROR` (the eight before this added by the Task 2.3 shared hardening/auth
+middleware), `VERBATIM_PII_DETECTED` (Task 5.2: the second PII scan found possible
+residual PII in a model-extracted verbatim phrase — a post-egress hit).
 
 > The config loader in this scaffold already emits `CONFIG_MISSING_OR_INVALID` and
 > names the offending variable; it is the first member of this taxonomy.
