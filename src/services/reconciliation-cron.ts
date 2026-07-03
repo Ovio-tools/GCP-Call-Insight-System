@@ -19,13 +19,16 @@ import {
   requireAlertWebhookUrl,
   retryPendingDeliveries,
 } from '../alerting/index.js';
+import { httpPing } from '../heartbeat/index.js';
 import { createQueueConnectionFromConfig } from '../queue/connection.js';
 import { createPipelineQueue } from '../queue/pipeline-queue.js';
 import {
   createPgReconciliationIngest,
   requireReconciliationCheckUrl,
   runReconciliation,
+  runReconciliationCron,
 } from '../reconciliation/run.js';
+import { scanStalledReviews } from '../review-queue/scan.js';
 
 /** Same mapping the fetch-transcript stage uses; `unavailable` stays a plain transient
  * failure — the missed check ping (dead-man's switch) is its alert channel. */
@@ -64,10 +67,11 @@ async function runAlertMaintenance(pool: Pool, config: Config, logger: Logger): 
 }
 
 /**
- * Reconciliation-cron entrypoint (Task 3.4). A short-lived Railway cron (every 15 min UTC):
- * boots, sweeps the lookback window for calls the webhook missed, seeds + enqueues the gaps,
- * pings its own external check, releases every resource, and exits 0. Any failure exits
- * non-zero WITHOUT pinging, so the dead-man's switch fires. Never resident, never a worker.
+ * Reconciliation-cron entrypoint (Task 3.4 + 6.1). A short-lived Railway cron (every 15 min UTC):
+ * boots, then runs two independent duties — the metadata sweep AND the review-SLA-breach scan —
+ * pings its own external check only when BOTH succeeded, releases every resource, and exits 0.
+ * Any duty failure exits non-zero WITHOUT pinging, so the dead-man's switch fires. Never
+ * resident, never a worker.
  */
 async function main(): Promise<void> {
   const config = loadConfig();
@@ -101,54 +105,65 @@ async function main(): Promise<void> {
   await runAlertMaintenance(pool, config, logger);
 
   try {
-    await runReconciliation({
+    await runReconciliationCron({
       config,
       logger,
-      client,
-      // Best-effort in-DB liveness mirror for the status surface (Task 7.3). Counts only, no
-      // PII. runReconciliation wraps this so a DB-write failure never skips the external ping
-      // nor fails the sweep.
-      heartbeat: async (summary) => {
-        await recordHeartbeat(pool, {
-          component: 'reconciliation-cron',
-          detail: { gaps_enqueued: summary.gapsEnqueued, calls_checked: summary.callsChecked },
-        });
+      ping: httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
+      runSweep: () =>
+        runReconciliation({
+          config,
+          logger,
+          client,
+          // Best-effort in-DB liveness mirror for the status surface (Task 7.3). Counts only,
+          // no PII. runReconciliation wraps this so a DB-write failure never fails the sweep.
+          heartbeat: async (summary) => {
+            await recordHeartbeat(pool, {
+              component: 'reconciliation-cron',
+              detail: { gaps_enqueued: summary.gapsEnqueued, calls_checked: summary.callsChecked },
+            });
+          },
+          ...createPgReconciliationIngest({ pool, queue, config }),
+        }),
+      runScan: () => scanStalledReviews(pool, config, logger, new Date()),
+      onSweepError: async (err) => {
+        // Shared failure model: map a typed Dialpad failure to its stable code, emit the deduped
+        // alert AND attempt immediate delivery (emitAlert is best-effort — the DB/webhook may
+        // itself be the problem — so it never throws), and log the structured failure. The ping
+        // is withheld by the combined-health gate, so the process still exits non-zero.
+        if (err instanceof DialpadError && err.kind !== 'unavailable') {
+          const mapped = KIND_TO_FAILURE[err.kind];
+          const failure = createFailure(mapped.code, {
+            processingState: mapped.processingState,
+            context: { component: 'reconciliation-cron', environment: config.NODE_ENV },
+          });
+          await emitAlert(
+            pool,
+            config,
+            {
+              code: mapped.code,
+              processingState: mapped.processingState,
+              context: { component: 'reconciliation-cron', environment: config.NODE_ENV },
+            },
+            { now: new Date(), logger, post: httpPostAlert() },
+          );
+          logger.fatal(
+            {
+              error_code: failure.error_code,
+              root_cause_category: failure.root_cause_category,
+              severity: failure.severity,
+              processing_state: failure.processing_state,
+              remediation_now: failure.remediation_now,
+            },
+            'reconciliation sweep failed',
+          );
+        } else {
+          logger.error(
+            { component: 'reconciliation-cron' },
+            `reconciliation sweep failed: ${err instanceof Error ? err.name : typeof err}`,
+          );
+        }
       },
-      ...createPgReconciliationIngest({ pool, queue, config }),
     });
-  } catch (err) {
-    // Shared failure model: map a typed Dialpad failure to its stable code, then emit the
-    // deduped alert AND attempt immediate delivery (emitAlert is best-effort — the DB/webhook
-    // may itself be the problem — so it never throws), log the structured failure, and rethrow
-    // so the process exits non-zero. Never swallowed to stay green.
-    if (err instanceof DialpadError && err.kind !== 'unavailable') {
-      const mapped = KIND_TO_FAILURE[err.kind];
-      const failure = createFailure(mapped.code, {
-        processingState: mapped.processingState,
-        context: { component: 'reconciliation-cron', environment: config.NODE_ENV },
-      });
-      await emitAlert(
-        pool,
-        config,
-        {
-          code: mapped.code,
-          processingState: mapped.processingState,
-          context: { component: 'reconciliation-cron', environment: config.NODE_ENV },
-        },
-        { now: new Date(), logger, post: httpPostAlert() },
-      );
-      logger.fatal(
-        {
-          error_code: failure.error_code,
-          root_cause_category: failure.root_cause_category,
-          severity: failure.severity,
-          processing_state: failure.processing_state,
-          remediation_now: failure.remediation_now,
-        },
-        'reconciliation sweep failed',
-      );
-    }
-    throw err;
   } finally {
     await queue.close();
     await queueConnection.quit();

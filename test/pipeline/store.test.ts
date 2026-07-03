@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { storeHandler } from '../../src/pipeline/store.js';
 import { createMarkRetentionEligibleHandler } from '../../src/pipeline/mark-retention-eligible.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import {
   defaultStageHandlers,
   type PipelineStage,

@@ -17,13 +17,20 @@ export const DAL_RESTRICTED_ACCESS_DENIED = 'DAL_RESTRICTED_ACCESS_DENIED' as co
 /** A `daily_cost_usage` adjustment hit no row: the day was never written, or the delta
  * would drive `estimated_cost` negative (an over-release — always a caller logic bug). */
 export const DAL_COST_ADJUST_REJECTED = 'DAL_COST_ADJUST_REJECTED' as const;
+/** A review-queue invariant was violated in a way that is genuine corruption, NOT a benign
+ * stale-stage race (Task 6.1): e.g. a call is held under one reason while an active review
+ * row already exists under a different reason, or a `markUnresolvable` guard rowcount ≠ 1.
+ * Deliberately distinct from {@link DAL_STALE_STAGE} so it bubbles past the runner's
+ * stale-race recovery → the job fails → is retried → dead-lettered for investigation. */
+export const DAL_REVIEW_INVARIANT = 'DAL_REVIEW_INVARIANT' as const;
 
 export type DalErrorCode =
   | typeof DAL_VALIDATION_FAILED
   | typeof DAL_STALE_STAGE
   | typeof DAL_QUERY_FAILED
   | typeof DAL_RESTRICTED_ACCESS_DENIED
-  | typeof DAL_COST_ADJUST_REJECTED;
+  | typeof DAL_COST_ADJUST_REJECTED
+  | typeof DAL_REVIEW_INVARIANT;
 
 /** Postgres `insufficient_privilege`; a query the current role isn't granted. */
 export const SQLSTATE_INSUFFICIENT_PRIVILEGE = '42501';

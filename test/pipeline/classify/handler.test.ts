@@ -13,7 +13,7 @@ import { getLatestClassificationBucket } from '../../../src/pipeline/classify/cl
 import * as alertRepo from '../../../src/db/repositories/alert-events-repo.js';
 import { acknowledgeAlert } from '../../../src/db/repositories/alert-events-repo.js';
 import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
-import { runPipeline } from '../../../src/pipeline/state-machine.js';
+import { runPipeline } from '../../_run-pipeline.js';
 import type { Clock } from '../../../src/pipeline/fetch-transcript.js';
 import type { DialpadClient } from '../../../src/dialpad/client/index.js';
 import { DEK_BYTES, LocalKeyProvider } from '../../../src/crypto/index.js';

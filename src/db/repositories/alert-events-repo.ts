@@ -30,14 +30,14 @@ export interface RecordAlertResult {
  * reset delivery state, so a once-delivered incident is never re-sent.
  */
 export async function recordAlertWithInsertStatus(
-  q: Queryable,
+  db: Queryable,
   input: AlertEventInsert,
 ): Promise<RecordAlertResult> {
   // Accepts any `Queryable` (a pool for a one-shot insert, or a transaction client to enlist the
   // insert in an open transaction — used by the Task 7.2 warning emitter's lock→check→insert).
   const v = parseOrThrow(TABLE, alertEventInsertSchema, input);
   const inserted = await query<AlertEventRow>(
-    q,
+    db,
     `INSERT INTO alert_events (error_code, root_cause_category, severity, dedup_key, failure_snapshot)
      VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))
      ON CONFLICT (dedup_key) WHERE acknowledged_at IS NULL DO NOTHING
@@ -49,7 +49,7 @@ export async function recordAlertWithInsertStatus(
   }
   // Deduped: return the live alert that already holds this dedup_key.
   const existing = await query<AlertEventRow>(
-    q,
+    db,
     `SELECT * FROM alert_events WHERE dedup_key = $1 AND acknowledged_at IS NULL`,
     [v.dedupKey],
   );
@@ -62,8 +62,8 @@ export async function recordAlertWithInsertStatus(
  * callers (and their tests) keep compiling unchanged — only delivery/escalation-aware code
  * needs `{ inserted }`.
  */
-export async function recordAlert(pool: Pool, input: AlertEventInsert): Promise<AlertEventRow> {
-  const { row } = await recordAlertWithInsertStatus(pool, input);
+export async function recordAlert(db: Queryable, input: AlertEventInsert): Promise<AlertEventRow> {
+  const { row } = await recordAlertWithInsertStatus(db, input);
   return row;
 }
 

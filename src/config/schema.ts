@@ -1,4 +1,18 @@
 import { z } from 'zod';
+import { HELD_REASON, heldReasonSchema } from '../db/enums.js';
+
+/**
+ * The reconciliation-cron cadence (minutes) the SLA-breach scan piggybacks on (Task 6.1).
+ * A documented policy constant consumed by config validation (below), the ADR, docs, and
+ * tests. It bounds the maximum SLA-breach detection latency to one cadence, so config
+ * validation floors every per-reason SLA at this value — no SLA may be shorter than the
+ * interval at which breaches are detected.
+ *
+ * ⚠️ DRIFT GUARD: this MUST equal the Railway reconciliation-cron schedule. If that schedule
+ * ever changes, update this constant IN THE SAME PR (or promote it to a config value if the
+ * cadence must vary by environment).
+ */
+export const REVIEW_SLA_SCAN_CADENCE_MINUTES = 15;
 
 /** True iff `v` is canonical base64 that decodes to at least `minBytes` bytes.
  * Node's base64 decoder is lenient (silently drops invalid chars), so validity is
@@ -378,6 +392,73 @@ export const configSchema = z.object({
   /** Base delay (ms) for the alert-delivery exponential backoff between retries. The sweep
    * schedules `next_attempt_at = now + base * 2^(attempts-1)`. */
   ALERT_DELIVERY_BACKOFF_MS: z.coerce.number().int().positive().default(60_000),
+
+  // --- Review queue / held-call retention (Task 6.1) ---
+
+  /**
+   * Per-`held_reason` review SLA, in minutes, as a JSON object (e.g.
+   * `{"emergency_review":15,"redaction_failed":60,...}`). REQUIRED with no default — the
+   * pipeline must not run without an explicit SLA policy (fail-closed). Validated in three
+   * layers so a bad value becomes a named CONFIG_MISSING_OR_INVALID rather than a crash:
+   *   1. parse JSON inside a transform that reports a Zod issue (malformed JSON ⇒ named
+   *      config error, never an uncaught SyntaxError escaping safeParse);
+   *   2. every value is a positive integer number of minutes;
+   *   3. superRefine asserts (a) every HELD_REASON is present (totality — the completeness
+   *      oracle is the enum), (b) `emergency_review` is the STRICT minimum, and (c) every
+   *      value is at least {@link REVIEW_SLA_SCAN_CADENCE_MINUTES} so no SLA is shorter than
+   *      the breach-detection interval.
+   */
+  REVIEW_SLA_MINUTES_BY_REASON: z
+    .string()
+    .transform((s, ctx) => {
+      try {
+        return JSON.parse(s) as unknown;
+      } catch {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'must be valid JSON' });
+        return z.NEVER;
+      }
+    })
+    .pipe(z.record(heldReasonSchema, z.coerce.number().int().positive()))
+    .superRefine((map, ctx) => {
+      // (a) Totality: fail closed on any missing reason, naming it.
+      for (const reason of HELD_REASON) {
+        if (map[reason] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `missing SLA for held_reason '${reason}'`,
+          });
+        }
+      }
+      // (b) emergency_review is the strict minimum: every other present reason must be > it.
+      const emergency = map.emergency_review;
+      if (emergency !== undefined) {
+        for (const reason of HELD_REASON) {
+          if (reason === 'emergency_review') continue;
+          const value = map[reason];
+          if (value !== undefined && value <= emergency) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `emergency_review (${emergency}) must be the strict minimum SLA; '${reason}' (${value}) is not greater`,
+            });
+          }
+        }
+      }
+      // (c) No SLA shorter than the breach-detection cadence.
+      for (const reason of HELD_REASON) {
+        const value = map[reason];
+        if (value !== undefined && value < REVIEW_SLA_SCAN_CADENCE_MINUTES) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `SLA for '${reason}' (${value}) is below the scan cadence (${REVIEW_SLA_SCAN_CADENCE_MINUTES} min)`,
+          });
+        }
+      }
+    }),
+
+  /** Max age (hours) an unresolved held call's raw transcript + token vault may be retained
+   * before the retention cron (Task 8.1) purges them, regardless of review status. REQUIRED
+   * with no default — a raw-PII retention cap must be an explicit decision. */
+  REVIEW_HELD_RAW_RETENTION_CAP_HOURS: z.coerce.number().int().positive(),
 });
 
 /** Validated, typed configuration object. */
