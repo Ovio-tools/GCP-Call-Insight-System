@@ -10,6 +10,7 @@ import {
 import {
   AlertWebhookError,
   type AlertWebhookPoster,
+  deliverAlertRow,
   emitAlert,
   retryPendingDeliveries,
 } from '../../src/alerting/index.js';
@@ -189,6 +190,30 @@ describe.skipIf(!hasTestDb)('alert delivery reliability (Task 7.3)', () => {
     expect(cap.calls).toHaveLength(1);
     // Rendered from the row alone via catalog fallback (empty snapshot).
     expect(cap.calls[0]!.text).toContain('REDIS_UNAVAILABLE');
+  });
+
+  it('concurrent deliveries of the same owed row claim atomically → exactly one POST', async () => {
+    // A single pending obligation both callers see (same row object, attempts = 0).
+    const row = await recordAlert(app, {
+      errorCode: 'DATABASE_UNAVAILABLE',
+      rootCauseCategory: 'DATABASE_UNAVAILABLE',
+      severity: 'critical',
+      dedupKey: 'db:concurrent',
+    });
+    const { logger } = makeCapturingLogger();
+    const cap = capturing();
+    // Two overlapping sweeps / an escalate + a sweep hitting the same row at once. The atomic
+    // compare-and-swap on delivery_attempts lets exactly one win; the loser claims nothing and
+    // never POSTs.
+    const [a, b] = await Promise.all([
+      deliverAlertRow(app, cfg(), row, { now: NOW, logger, post: cap.post }),
+      deliverAlertRow(app, cfg(), row, { now: NOW, logger, post: cap.post }),
+    ]);
+    expect([a, b].sort()).toEqual(['delivered', 'skipped']);
+    expect(cap.calls).toHaveLength(1);
+    const persisted = await getRow(row.id);
+    expect(persisted.delivery_state).toBe('delivered');
+    expect(persisted.delivery_attempts).toBe(1); // claimed exactly once, never double-counted
   });
 
   it('recordAlertWithInsertStatus reports inserted true for new and false for a deduped existing row', async () => {

@@ -85,6 +85,38 @@ describe.skipIf(!hasTestDb)('escalateAndDeliver (Task 7.3)', () => {
     expect(rows[0]!.delivery_state).toBe('delivered');
   });
 
+  it('a second run after a delivered escalation re-returns the row but never re-POSTs', async () => {
+    await seedStaleCritical('esc:db-repeat');
+    const { logger } = makeCapturingLogger();
+    const cap = capturing();
+    // Run 1: escalation row created and delivered.
+    const first = await escalateAndDeliver(app, cfg(), {
+      now: new Date(),
+      windowMs: WINDOW_MS,
+      logger,
+      post: cap.post,
+    });
+    expect(first).toHaveLength(1);
+    expect(cap.calls).toHaveLength(1);
+    // The original critical is STILL unacknowledged, so it still "should escalate"; the
+    // escalation row already exists (deduped) and is already delivered. A second run must not
+    // re-send it — the delivered guard in the atomic claim skips it.
+    const second = await escalateAndDeliver(app, cfg(), {
+      now: new Date(),
+      windowMs: WINDOW_MS,
+      logger,
+      post: cap.post,
+    });
+    expect(second).toHaveLength(1); // still returns the existing escalation row
+    expect(cap.calls).toHaveLength(1); // but NO second POST
+    const { rows } = await owner.query<{ delivery_state: string; delivery_attempts: number }>(
+      `SELECT delivery_state, delivery_attempts FROM alert_events WHERE dedup_key = $1`,
+      [`${ESCALATION_PREFIX}esc:db-repeat`],
+    );
+    expect(rows[0]!.delivery_state).toBe('delivered');
+    expect(Number(rows[0]!.delivery_attempts)).toBe(1); // claimed + delivered exactly once
+  });
+
   it('a failed escalation delivery is attempted, sanitized-logged, and never throws', async () => {
     await seedStaleCritical('esc:db-2');
     const { logger, lines } = makeCapturingLogger();

@@ -3,7 +3,11 @@ import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import { renderAlertEventText } from '../failure-model/index.js';
 import type { AlertEventRow } from '../db/schemas/alert-events.js';
-import { markDelivered, markFailed } from '../db/repositories/alert-events-repo.js';
+import {
+  claimAlertForDelivery,
+  markDelivered,
+  markFailed,
+} from '../db/repositories/alert-events-repo.js';
 import { type AlertWebhookPoster, httpPostAlert, sanitizeWebhookError } from './webhook.js';
 
 /** The outcome of a single delivery attempt. */
@@ -47,16 +51,20 @@ async function safeMarkFailed(
 }
 
 /**
- * Deliver ONE persisted alert row, best-effort and idempotently (Task 7.3). Renders from the
- * row alone (`renderAlertEventText`), POSTs to `ALERT_WEBHOOK_URL`, and durably records the
- * result. NEVER throws into the caller and never leaks the URL/secret/PII:
+ * Deliver ONE persisted alert row, best-effort and idempotently (Task 7.3). ATOMICALLY CLAIMS
+ * the row before doing anything observable, then renders from the row alone
+ * (`renderAlertEventText`), POSTs to `ALERT_WEBHOOK_URL`, and durably records the result. NEVER
+ * throws into the caller and never leaks the URL/secret/PII:
  *
  *  - `ALERT_WEBHOOK_URL` unset → `skipped`: the row stays `pending`/`failed` and the sweep
  *    re-attempts later (logged once, not per row).
+ *  - claim returns nothing → `skipped`, NO POST: the row was already delivered (a repeat
+ *    escalation run), the max-attempts cap is hit, or a concurrent caller won the claim first.
+ *    This is what makes overlapping sweeps and a re-run escalation deliver exactly once.
  *  - render throws (unrenderable legacy row) → `failed` with a sanitized reason; the sweep's
  *    max-attempts cap eventually stops retrying, leaving the row visible for follow-up.
- *  - POST fails → `failed`, attempts++ and `next_attempt_at` pushed out by exponential backoff,
- *    `last_delivery_error` sanitized (never the URL).
+ *  - POST fails → `failed`, `next_attempt_at` pushed out by exponential backoff (the attempt
+ *    was already counted at claim), `last_delivery_error` sanitized (never the URL).
  *  - POST succeeds → `delivered` (idempotent: `markDelivered` no-ops a row already delivered).
  */
 export async function deliverAlertRow(
@@ -72,13 +80,24 @@ export async function deliverAlertRow(
     return 'skipped';
   }
 
+  // Claim exactly one attempt before rendering/POSTing. If we lose the race, the row is
+  // already delivered, or the cap is reached, no row comes back — skip WITHOUT sending.
+  const claimed = await claimAlertForDelivery(pool, {
+    id: row.id,
+    expectedAttempts: row.delivery_attempts,
+    maxAttempts: config.ALERT_DELIVERY_MAX_ATTEMPTS,
+  });
+  if (!claimed) {
+    return 'skipped';
+  }
+
   let text: string;
   try {
-    text = renderAlertEventText(row, { environment: config.NODE_ENV, now });
+    text = renderAlertEventText(claimed, { environment: config.NODE_ENV, now });
   } catch (err) {
-    await safeMarkFailed(pool, config, row, now, `unrenderable alert (${coarse(err)})`, logger);
+    await safeMarkFailed(pool, config, claimed, now, `unrenderable alert (${coarse(err)})`, logger);
     logger.warn(
-      { component: 'alerting', error_code: row.error_code },
+      { component: 'alerting', error_code: claimed.error_code },
       `alert unrenderable — marked failed (${coarse(err)})`,
     );
     return 'failed';
@@ -86,13 +105,13 @@ export async function deliverAlertRow(
 
   try {
     await post(config.ALERT_WEBHOOK_URL, text, config.ALERT_WEBHOOK_TIMEOUT_MS);
-    await markDelivered(pool, row.id);
+    await markDelivered(pool, claimed.id);
     return 'delivered';
   } catch (err) {
     const reason = sanitizeWebhookError(err);
-    await safeMarkFailed(pool, config, row, now, reason, logger);
+    await safeMarkFailed(pool, config, claimed, now, reason, logger);
     logger.warn(
-      { component: 'alerting', error_code: row.error_code },
+      { component: 'alerting', error_code: claimed.error_code },
       `alert delivery failed: ${reason}`,
     );
     return 'failed';

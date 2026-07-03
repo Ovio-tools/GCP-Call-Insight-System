@@ -116,9 +116,40 @@ export async function listRetryable(
 }
 
 /**
- * Mark a row delivered, idempotently: the `delivery_state <> 'delivered'` guard means a
- * second (concurrent) delivery of the same row is a no-op, so an incident is delivered
- * exactly once. Returns the updated row, or undefined when it was already delivered.
+ * Atomically claim a row for ONE delivery attempt (Task 7.3, concurrency-safe). A
+ * compare-and-swap on `delivery_attempts`: the UPDATE matches only when the row is still owed
+ * (`delivery_state IN ('pending', 'failed')`), under the max-attempts cap, AND its attempt
+ * count is exactly what the caller read (`expectedAttempts`). The winner gets the row back
+ * with `delivery_attempts` already incremented; a concurrent second claimant — or a repeat
+ * escalation run whose row is already `delivered` — matches nothing and gets `undefined`, so
+ * only the winner POSTs. There is deliberately NO due-time gate here: the retry sweep
+ * pre-filters by `next_attempt_at` (see {@link listRetryable}) while the immediate-delivery
+ * path must send a just-inserted row now. Attempt counting lives HERE, before the POST, so no
+ * caller double-counts and no two callers can claim the same alert.
+ */
+export async function claimAlertForDelivery(
+  pool: Pool,
+  opts: { id: string; expectedAttempts: number; maxAttempts: number },
+): Promise<AlertEventRow | undefined> {
+  const rows = await query<AlertEventRow>(
+    pool,
+    `UPDATE alert_events
+        SET delivery_attempts = delivery_attempts + 1
+      WHERE id = $1
+        AND delivery_state IN ('pending', 'failed')
+        AND delivery_attempts = $2
+        AND delivery_attempts < $3
+      RETURNING *`,
+    [opts.id, opts.expectedAttempts, opts.maxAttempts],
+  );
+  return rows[0] ? parseOrThrow(TABLE, alertEventRowSchema, rows[0]) : undefined;
+}
+
+/**
+ * Mark a claimed row delivered, idempotently: the `delivery_state <> 'delivered'` guard means
+ * a second (concurrent) mark of the same row is a no-op, so an incident is delivered exactly
+ * once. The attempt count is NOT touched here — {@link claimAlertForDelivery} already counted
+ * this attempt before the POST. Returns the updated row, or undefined when already delivered.
  */
 export async function markDelivered(pool: Pool, id: string): Promise<AlertEventRow | undefined> {
   const rows = await query<AlertEventRow>(
@@ -126,7 +157,6 @@ export async function markDelivered(pool: Pool, id: string): Promise<AlertEventR
     `UPDATE alert_events
         SET delivery_state = 'delivered',
             delivered_at = now(),
-            delivery_attempts = delivery_attempts + 1,
             last_delivery_error = NULL
       WHERE id = $1 AND delivery_state <> 'delivered'
       RETURNING *`,
@@ -136,9 +166,10 @@ export async function markDelivered(pool: Pool, id: string): Promise<AlertEventR
 }
 
 /**
- * Mark a delivery attempt failed and schedule the next: bump the attempt count, move to
- * `failed`, set `next_attempt_at` to the backoff instant, and store a SANITIZED error string
- * (the caller must never pass the webhook URL, a secret, or PII). A delivered row is left
+ * Mark a claimed delivery attempt failed and schedule the next: move to `failed`, set
+ * `next_attempt_at` to the backoff instant, and store a SANITIZED error string (the caller
+ * must never pass the webhook URL, a secret, or PII). The attempt count is NOT touched here —
+ * {@link claimAlertForDelivery} already counted this attempt. A delivered row is left
  * untouched (the guard) so a late failure can't undo a success.
  */
 export async function markFailed(
@@ -150,7 +181,6 @@ export async function markFailed(
     pool,
     `UPDATE alert_events
         SET delivery_state = 'failed',
-            delivery_attempts = delivery_attempts + 1,
             next_attempt_at = $2,
             last_delivery_error = $3
       WHERE id = $1 AND delivery_state <> 'delivered'
