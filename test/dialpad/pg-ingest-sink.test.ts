@@ -68,4 +68,42 @@ describe.skipIf(!hasTestDb)('createPgIngestSink', () => {
 
     expect(added).toEqual([CALL_ID]);
   });
+
+  it('does NOT rewind or clobber an in-flight call on a repeat delivery (seed-if-absent)', async () => {
+    const config = makeTestConfig();
+    const sink = createPgIngestSink({ pool: app, queue: stubQueue, config });
+    const callId = 'test-dialpad-sink-inflight';
+    const stamp = new Date('2026-07-02T09:00:00.000Z');
+
+    // First delivery seeds the call; the worker then advances it well past stage 0.
+    await sink.ingest({
+      callId,
+      sourceMetadata: { direction: 'inbound', state: 'ringing' },
+      auditPayload: { event_id: 'id:first', call_id: callId },
+      receivedAt: stamp,
+      retentionEligibleAt: stamp,
+    });
+    await repositories.callState.advanceStage(app, {
+      callId,
+      toStage: 'classify',
+      status: 'processing',
+      logEntry: { stage: 'classify', outcome: 'continue' },
+    });
+
+    // A second, distinct Dialpad event for the same call_id arrives while it is mid-pipeline.
+    await sink.ingest({
+      callId,
+      sourceMetadata: { direction: 'inbound', state: 'hangup' },
+      auditPayload: { event_id: 'id:second', call_id: callId },
+      receivedAt: stamp,
+      retentionEligibleAt: stamp,
+    });
+
+    // The in-flight stage and original metadata must survive — no rewind to metadata-pre-filter,
+    // no source_metadata clobber (that was the upsert-vs-seed bug).
+    const state = await repositories.callState.getCallState(app, callId);
+    expect(state?.current_stage).toBe('classify');
+    expect(state?.status).toBe('processing');
+    expect(state?.source_metadata).toEqual({ direction: 'inbound', state: 'ringing' });
+  });
 });

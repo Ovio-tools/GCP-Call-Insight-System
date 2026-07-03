@@ -2,7 +2,7 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import type { LightMyRequestResponse } from 'fastify';
 import { createWebhookApp, MemoryRateStore, MemoryReplayStore } from '../../src/http/index.js';
-import { FailureError } from '../../src/failure-model/index.js';
+import { ConfigError } from '../../src/config/index.js';
 import { createRootLogger } from '../../src/logging/logger.js';
 import type { Config } from '../../src/config/schema.js';
 import { makeTestConfig } from '../_config.js';
@@ -284,7 +284,7 @@ describe('Dialpad webhook route — privacy', () => {
 });
 
 describe('Dialpad webhook route — registration guards', () => {
-  async function tryRegister(overrides: Partial<Config>): Promise<FailureError | null> {
+  async function tryRegister(overrides: Partial<Config>): Promise<ConfigError | null> {
     const clock = new FakeClock();
     const config = makeTestConfig(overrides);
     const webhookApp = await createWebhookApp({
@@ -297,19 +297,24 @@ describe('Dialpad webhook route — registration guards', () => {
       registerDialpadWebhook(webhookApp, { config, sink: new FakeSink(), clock });
       return null;
     } catch (err) {
-      return err as FailureError;
+      return err as ConfigError;
     }
   }
 
-  it('throws CONFIG_MISSING_OR_INVALID when the signing secret is absent', async () => {
+  it('throws CONFIG_MISSING_OR_INVALID naming DIALPAD_WEBHOOK_SECRET when the signing secret is absent', async () => {
     const err = await tryRegister({ DIALPAD_PII_HASH_SECRET: HASH });
-    expect(err).toBeInstanceOf(FailureError);
-    expect(err?.error_code).toBe('CONFIG_MISSING_OR_INVALID');
+    expect(err).toBeInstanceOf(ConfigError);
+    expect(err?.code).toBe('CONFIG_MISSING_OR_INVALID');
+    // The failure must NAME the exact missing variable (CLAUDE.md §5), not just the error code.
+    expect(err?.invalid).toEqual(['DIALPAD_WEBHOOK_SECRET']);
+    expect(err?.message).toContain('DIALPAD_WEBHOOK_SECRET');
   });
 
-  it('throws CONFIG_MISSING_OR_INVALID when the PII hash secret is absent', async () => {
+  it('throws CONFIG_MISSING_OR_INVALID naming DIALPAD_PII_HASH_SECRET when the PII hash secret is absent', async () => {
     const err = await tryRegister({ DIALPAD_WEBHOOK_SECRET: PRIMARY });
-    expect(err).toBeInstanceOf(FailureError);
-    expect(err?.error_code).toBe('CONFIG_MISSING_OR_INVALID');
+    expect(err).toBeInstanceOf(ConfigError);
+    expect(err?.code).toBe('CONFIG_MISSING_OR_INVALID');
+    expect(err?.invalid).toEqual(['DIALPAD_PII_HASH_SECRET']);
+    expect(err?.message).toContain('DIALPAD_PII_HASH_SECRET');
   });
 });

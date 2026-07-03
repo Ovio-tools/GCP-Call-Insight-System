@@ -68,6 +68,9 @@ describe('buildWebhookReceiverApp', () => {
         sink: new FakeSink(),
         clock,
       }),
-    ).rejects.toMatchObject({ error_code: 'CONFIG_MISSING_OR_INVALID' });
+    ).rejects.toMatchObject({
+      code: 'CONFIG_MISSING_OR_INVALID',
+      invalid: ['DIALPAD_PII_HASH_SECRET'],
+    });
   });
 });

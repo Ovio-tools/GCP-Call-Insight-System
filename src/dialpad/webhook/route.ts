@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import type { Logger } from 'pino';
 import type { Config } from '../../config/schema.js';
+import { CONFIG_ERROR_CODE, ConfigError } from '../../config/index.js';
 import { createFailure } from '../../failure-model/index.js';
 import { createCallLogger, logger as defaultLogger } from '../../logging/logger.js';
 import { systemClock, type Clock, type WebhookApp } from '../../http/index.js';
@@ -21,7 +22,7 @@ const PROVIDER = 'dialpad';
 
 export interface DialpadWebhookDeps {
   config: Config;
-  /** The side effect (call_state upsert + audit row + enqueue), behind a port for testability. */
+  /** The side effect (call_state seed + audit row + enqueue), behind a port for testability. */
   sink: DialpadIngestSink;
   logger?: Logger;
   /** Time source shared with freshness/replay so the retention stamp is deterministic in tests. */
@@ -46,11 +47,17 @@ function rawBodyOf(request: FastifyRequest): Buffer {
   return Buffer.isBuffer(raw) ? raw : Buffer.from(raw ?? '');
 }
 
-function configFailure(config: Config): never {
-  throw createFailure('CONFIG_MISSING_OR_INVALID', {
-    processingState: 'paused',
-    context: { environment: config.NODE_ENV, component: 'webhook-receiver' },
-  });
+/**
+ * Fail fast at registration if a required Dialpad secret is absent, emitting
+ * CONFIG_MISSING_OR_INVALID that NAMES the exact variable (the same shape as `requireCheckUrl` /
+ * `requireDialpadApiKey`). The two secrets are checked separately so an operator sees precisely
+ * which one to set — `!primary || !hashSecret` collapsed both into one indistinguishable failure.
+ */
+function requireWebhookSecret(value: string | undefined, varName: string, reason: string): string {
+  if (!value) {
+    throw new ConfigError([varName], `${CONFIG_ERROR_CODE}: ${varName} is required — ${reason}`);
+  }
+  return value;
 }
 
 /**
@@ -68,11 +75,16 @@ export function registerDialpadWebhook(webhookApp: WebhookApp, deps: DialpadWebh
   const logger = deps.logger ?? defaultLogger;
   const clock = deps.clock ?? systemClock;
 
-  const primary = config.DIALPAD_WEBHOOK_SECRET;
-  const hashSecret = config.DIALPAD_PII_HASH_SECRET;
-  if (!primary || !hashSecret) {
-    configFailure(config);
-  }
+  const primary = requireWebhookSecret(
+    config.DIALPAD_WEBHOOK_SECRET,
+    'DIALPAD_WEBHOOK_SECRET',
+    'the Dialpad webhook receiver cannot verify any event signature without it',
+  );
+  const hashSecret = requireWebhookSecret(
+    config.DIALPAD_PII_HASH_SECRET,
+    'DIALPAD_PII_HASH_SECRET',
+    'phone/name must be hashed and there is no plaintext fallback',
+  );
   const secrets: DialpadSecrets = {
     primary,
     ...(config.DIALPAD_WEBHOOK_SECRET_PREVIOUS
