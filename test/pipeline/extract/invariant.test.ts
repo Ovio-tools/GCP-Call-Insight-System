@@ -348,10 +348,12 @@ describe.skipIf(!hasTestDb)('extract stage invariants (handler)', () => {
       const cand = await getExtractionCandidate(app, callId);
       expect(cand?.sentiment).toBe(sentiment);
 
-      // The only call-specific outbound content is the redacted transcript in the user message;
-      // the model's chosen sentiment is never echoed back into it. (REDACTED contains no sentiment
-      // word, so a match would be a real leak, not a coincidence. The fixed system prompt DOES
-      // enumerate the sentiment vocabulary as policy — that is not egress of THIS call's value.)
+      // NOT load-bearing: the outbound request is built from buildExtractUserMessage(REDACTED)
+      // BEFORE the model responds, so the model's chosen sentiment is structurally unknowable at
+      // request-build time and can never appear here — this assertion cannot fail on the real
+      // response path. It only guards against a hypothetical future design that echoes an extracted
+      // value back into the prompt. The StageResult and log-line checks below are the assertions
+      // that actually enforce the internal-only invariant.
       const req = spy.mock.calls[0]?.[0] as { system: string; userText: string };
       expect(req.userText).not.toContain(sentiment);
 
