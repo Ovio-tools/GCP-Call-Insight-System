@@ -18,6 +18,7 @@ import {
 import { loadDenyList } from '../../redaction/deny-list.js';
 import type { Clock } from '../fetch-transcript.js';
 import {
+  emitCostWarningIfReached,
   handleModelError,
   parkStageDisabled,
   recordStageAlert,
@@ -136,6 +137,11 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
       logger.info({ stage }, 'daily model cost cap reached — holding cost_cap_held');
       return { action: 'hold', reason: 'cost_cap_held', errorCode: 'MODEL_COST_CAP_EXCEEDED' };
     }
+
+    // 5b. Advisory cost-warning alert (Task 7.2). Non-blocking and best-effort: emitted at most
+    //     once per UTC day when estimated spend crosses the warning threshold; it never holds,
+    //     retries, or converts the call. Runs AFTER the cost-cap gate (the hard cap supersedes).
+    await emitCostWarningIfReached(pool, callId, stage, config, reservation, logger);
 
     // 6. Call the model. try/catch wraps BOTH getModel() and extract(). On any thrown error
     //    the reservation is released/kept per the billing disposition, then rethrown.

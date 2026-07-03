@@ -232,6 +232,21 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
     owner: OVIO,
     runbookRef: 'runbook#model-cost-cap-exceeded',
   },
+  MODEL_COST_WARNING_THRESHOLD_EXCEEDED: {
+    rootCauseCategory: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+    // Advisory only (Task 7.2): callsState is 'none' — nothing is held, retried, or dropped, and
+    // processing continues. Emitted at most once per UTC day as estimated spend approaches the
+    // hard cap, so an operator can act before MODEL_COST_CAP_EXCEEDED starts holding calls.
+    impact:
+      'Daily model spend crossed the warning threshold; processing continues, but the daily hard cap is approaching and will start holding calls if spend reaches it.',
+    remediationNow:
+      'Review daily cost usage against the cap, then raise the cap deliberately or reduce model volume before the hard cap is reached.',
+    remediationFix: 'Add cost forecasting and volume controls so spend is managed before the cap.',
+    dataSafe: true,
+    callsState: 'none',
+    owner: OVIO,
+    runbookRef: 'runbook#model-cost-warning-threshold-exceeded',
+  },
   QUEUE_RETRY_EXHAUSTED: {
     rootCauseCategory: 'QUEUE_RETRY_EXHAUSTED',
     impact:

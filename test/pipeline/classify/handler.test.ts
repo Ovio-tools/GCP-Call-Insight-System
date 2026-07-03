@@ -11,6 +11,7 @@ import * as anthropicClient from '../../../src/anthropic/client.js';
 import { createClassifyHandler } from '../../../src/pipeline/classify/handler.js';
 import { getLatestClassificationBucket } from '../../../src/pipeline/classify/classification-marker.js';
 import * as alertRepo from '../../../src/db/repositories/alert-events-repo.js';
+import { acknowledgeAlert } from '../../../src/db/repositories/alert-events-repo.js';
 import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
 import { runPipeline } from '../../../src/pipeline/state-machine.js';
 import type { Clock } from '../../../src/pipeline/fetch-transcript.js';
@@ -152,8 +153,8 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
     await cleanupCalls(owner, PATTERN);
     await owner.query(
       `DELETE FROM alert_events WHERE error_code IN
-        ('MODEL_COST_CAP_EXCEEDED','MODEL_MALFORMED_RESPONSE','MODEL_AUTH_FAILED',
-         'MODEL_RATE_LIMITED','CONFIG_MISSING_OR_INVALID')`,
+        ('MODEL_COST_CAP_EXCEEDED','MODEL_COST_WARNING_THRESHOLD_EXCEEDED','MODEL_MALFORMED_RESPONSE',
+         'MODEL_AUTH_FAILED','MODEL_RATE_LIMITED','CONFIG_MISSING_OR_INVALID')`,
     );
     await owner.query(`DELETE FROM daily_cost_usage WHERE day = $1`, [FIXED_DAY]);
   });
@@ -461,6 +462,166 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
     );
     expect(reviews.rows).toEqual([{ held_reason: 'cost_cap_held' }]);
     expect(await countRows('model_invocations', callId)).toBe(0);
+  });
+
+  // ---- cost warning threshold (Task 7.2) ---------------------------------------
+
+  /** The day-scoped dedup key the warning emitter uses. */
+  const WARNING_CODE = 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED';
+  const warningDedupKey = `${WARNING_CODE}:day:${FIXED_DAY}`;
+  const dedupKeyCount = async (key: string): Promise<number> => {
+    const r = await owner.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM alert_events WHERE dedup_key = $1`,
+      [key],
+    );
+    return Number(r.rows[0]?.n);
+  };
+  // A classify reservation (ceiling 30k input, 512 output at 1/5 per Mtok) costs ~0.03256 USD.
+  // cap 0.05 + ratio 0.5 → warningUsd 0.025: a single reservation lands ABOVE the warning yet
+  // still fits under the cap (non-blocking).
+  const WARN_ABOVE = {
+    DAILY_MODEL_COST_CAP_USD: 0.05,
+    DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: 0.5,
+  };
+  // cap 1 + ratio 0.8 → warningUsd 0.8: the same reservation stays well below the warning.
+  const WARN_BELOW = { DAILY_MODEL_COST_CAP_USD: 1, DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: 0.8 };
+
+  it('below the warning threshold → no warning alert, model called, invocation success', async () => {
+    const callId = 'test-cls-warn-below';
+    await seed(callId);
+    const { model, spy } = fakeModel(() => Promise.resolve(result()));
+    await runPipeline(
+      app,
+      callId,
+      silent,
+      set(() => model, WARN_BELOW),
+    );
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(await alertCount(WARNING_CODE)).toBe(0);
+    const invocations = await listInvocations(app, callId);
+    expect(invocations[0]?.outcome).toBe('success');
+  });
+
+  it('at/above the warning threshold → exactly one warning alert AND the model call still proceeds (non-blocking)', async () => {
+    const callId = 'test-cls-warn-above';
+    await seed(callId);
+    const { model, spy } = fakeModel(() => Promise.resolve(result()));
+    await runPipeline(
+      app,
+      callId,
+      silent,
+      set(() => model, WARN_ABOVE),
+    );
+
+    // Non-blocking: the model still ran and settled a success invocation.
+    expect(spy).toHaveBeenCalledTimes(1);
+    const invocations = await listInvocations(app, callId);
+    expect(invocations[0]?.outcome).toBe('success');
+    // The call was NOT held on the warning — it advanced past classify (parks at disabled extract).
+    const state = await getCallState(app, callId);
+    expect(state?.status).toBe('processing');
+    expect(state?.current_stage).toBe('extract');
+    // Exactly one advisory alert, under the day-scoped dedup key.
+    expect(await alertCount(WARNING_CODE)).toBe(1);
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+  });
+
+  it('multiple above-threshold calls the same UTC day → still exactly one warning alert (day dedup)', async () => {
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    for (const callId of [
+      'test-cls-warn-dedup-1',
+      'test-cls-warn-dedup-2',
+      'test-cls-warn-dedup-3',
+    ]) {
+      await seed(callId);
+      await runPipeline(
+        app,
+        callId,
+        silent,
+        set(() => model, WARN_ABOVE),
+      );
+    }
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+  });
+
+  it('strict once-per-day even after acknowledgment: ack then re-trigger the same UTC day → still one row', async () => {
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    await seed('test-cls-warn-ack-1');
+    await runPipeline(
+      app,
+      'test-cls-warn-ack-1',
+      silent,
+      set(() => model, WARN_ABOVE),
+    );
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+
+    // An operator acknowledges it (the partial-unique index now sees no ACTIVE row).
+    expect(await acknowledgeAlert(app, warningDedupKey)).toBe(1);
+
+    // A later above-threshold call the SAME day must NOT re-fire — the existence check matches
+    // the acknowledged row too.
+    await seed('test-cls-warn-ack-2');
+    await runPipeline(
+      app,
+      'test-cls-warn-ack-2',
+      silent,
+      set(() => model, WARN_ABOVE),
+    );
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+  });
+
+  it('robustness: a swallowed first emit does not block the call, and a later call still creates the row', async () => {
+    const { model } = fakeModel(() => Promise.resolve(result()));
+
+    // Force the FIRST warning insert to fail; resilientSideEffect must swallow it and let the
+    // call proceed, WITHOUT persisting a row (the transaction rolls back).
+    const spy = vi
+      .spyOn(alertRepo, 'recordAlertWithInsertStatus')
+      .mockRejectedValueOnce(new Error('simulated alert_events insert failure'));
+    try {
+      await seed('test-cls-warn-robust-1');
+      await runPipeline(
+        app,
+        'test-cls-warn-robust-1',
+        silent,
+        set(() => model, WARN_ABOVE),
+      );
+      // The call still completed classify (advanced), and no row was written by the failed emit.
+      const state = await getCallState(app, 'test-cls-warn-robust-1');
+      expect(state?.current_stage).toBe('extract');
+      expect(await dedupKeyCount(warningDedupKey)).toBe(0);
+
+      // A second above-threshold call the same day retries and creates exactly one row.
+      await seed('test-cls-warn-robust-2');
+      await runPipeline(
+        app,
+        'test-cls-warn-robust-2',
+        silent,
+        set(() => model, WARN_ABOVE),
+      );
+      expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('hard cap supersedes: cap reached → cost_cap_held, MODEL_COST_CAP_EXCEEDED, NO warning alert', async () => {
+    const callId = 'test-cls-warn-vs-cap';
+    await seed(callId);
+    await upsertDailyCost(owner, {
+      day: FIXED_DAY,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCost: makeTestConfig().DAILY_MODEL_COST_CAP_USD,
+    });
+    const getModel = (): ClassifyModelClient => {
+      throw new Error('getModel must not be called when the cost cap is reached');
+    };
+    await runPipeline(app, callId, silent, set(getModel));
+
+    expect(await alertCount('MODEL_COST_CAP_EXCEEDED')).toBe(1);
+    expect(await alertCount(WARNING_CODE)).toBe(0); // the more severe alert supersedes
   });
 
   // ---- production wiring (lazy client) -----------------------------------------

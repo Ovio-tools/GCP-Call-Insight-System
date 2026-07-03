@@ -257,6 +257,12 @@ export const configSchema = z.object({
    * classify. */
   DAILY_MODEL_COST_CAP_USD: z.coerce.number().positive().default(25),
 
+  /** Fraction of `DAILY_MODEL_COST_CAP_USD` at which an advisory warning alert
+   * (`MODEL_COST_WARNING_THRESHOLD_EXCEEDED`) is emitted — at most once per UTC day, without
+   * ever blocking the pipeline (Task 7.2). A strict fraction in (0, 1): 0 would alert on every
+   * call and 1 (or above) would collapse the warning onto the hard cap. */
+  DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: z.coerce.number().gt(0).lt(1).default(0.8),
+
   /** Haiku 4.5 list price per million input/output tokens (USD). Deliberately
    * classify-scoped, not shared: Task 5.2 adds its own EXTRACT_* rates for Sonnet, and the
    * shared cost helper takes explicit rates with no defaults so a different model can never

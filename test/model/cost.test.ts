@@ -10,7 +10,7 @@ import {
   settleModelUsage,
   utcDay,
 } from '../../src/model/cost.js';
-import { getDay } from '../../src/db/repositories/daily-cost-usage-repo.js';
+import { getDay, upsertDailyCost } from '../../src/db/repositories/daily-cost-usage-repo.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
 import { makeAppPool } from '../db/_dal.js';
 
@@ -138,7 +138,8 @@ describe.skipIf(!hasTestDb)('model budget reservation / settlement (DB)', () => 
   it('reserves while under the cap and records the reservation on the day row', async () => {
     const day = '1999-01-02';
     const r = await reserveModelBudget(app, { config, now: at(day), requestCostUsd: 0.25 });
-    expect(r).toEqual({ day, reservedUsd: 0.25 });
+    // warningUsd = cap 0.5 * default ratio 0.8 = 0.4; 0 + 0.25 = 0.25 < 0.4 → not reached.
+    expect(r).toEqual({ day, reservedUsd: 0.25, warningThresholdReached: false });
     const row = await getDay(app, day);
     expect(row?.estimated_cost).toBe('0.250000');
     expect(row?.input_tokens).toBe('0');
@@ -204,3 +205,82 @@ describe.skipIf(!hasTestDb)('model budget reservation / settlement (DB)', () => 
     expect(row?.estimated_cost).toBe('0.500000');
   });
 });
+
+describe.skipIf(!hasTestDb)(
+  'warning-threshold level flag on reserveModelBudget (DB, Task 7.2)',
+  () => {
+    let owner!: Pool;
+    let app!: Pool;
+
+    // cap 2.0, ratio 0.4 → warningUsd = 0.8. Leaves headroom for several 0.5 reservations so we
+    // can prove the flag is a LEVEL check (true on every admitted reservation at/above 0.8), not a
+    // one-shot low→high transition.
+    const config = makeTestConfig({
+      DAILY_MODEL_COST_CAP_USD: 2,
+      DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: 0.4,
+    });
+    const at = (day: string) => new Date(`${day}T12:00:00Z`);
+
+    async function cleanDays(): Promise<void> {
+      await owner.query(`DELETE FROM daily_cost_usage WHERE day BETWEEN $1 AND $2`, [
+        DAYS_FROM,
+        DAYS_TO,
+      ]);
+    }
+
+    beforeAll(async () => {
+      await migrate('up');
+      owner = makePool();
+      app = makeAppPool();
+      await cleanDays();
+    });
+    afterAll(async () => {
+      await cleanDays();
+      await owner.end();
+      await app.end();
+    });
+
+    it('reservation wholly below the warning threshold → warningThresholdReached false', async () => {
+      const day = '1999-01-20';
+      // 0 + 0.5 = 0.5 < 0.8.
+      const r = await reserveModelBudget(app, { config, now: at(day), requestCostUsd: 0.5 });
+      expect(r).toEqual({ day, reservedUsd: 0.5, warningThresholdReached: false });
+    });
+
+    it('reservation landing at/above the warning threshold → warningThresholdReached true', async () => {
+      const day = '1999-01-21';
+      // First 0.5 lands at 0.5 (< 0.8) → false.
+      const first = await reserveModelBudget(app, { config, now: at(day), requestCostUsd: 0.5 });
+      expect(first?.warningThresholdReached).toBe(false);
+      // Second 0.5 lands at 1.0 (>= 0.8) → true.
+      const second = await reserveModelBudget(app, { config, now: at(day), requestCostUsd: 0.5 });
+      expect(second?.warningThresholdReached).toBe(true);
+    });
+
+    it('a subsequent admitted reservation already above the threshold stays true (level, not transition)', async () => {
+      const day = '1999-01-22';
+      // Seed the day already above the warning threshold (1.0 >= 0.8) but below the cap (2.0).
+      await upsertDailyCost(owner, {
+        day,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCost: 1.0,
+      });
+      // 1.0 + 0.5 = 1.5, still <= cap 2.0 → admitted, and still at/above the threshold → true.
+      const r = await reserveModelBudget(app, { config, now: at(day), requestCostUsd: 0.5 });
+      expect(r).toEqual({ day, reservedUsd: 0.5, warningThresholdReached: true });
+    });
+
+    it('a reservation refused at the cap returns null (no flag)', async () => {
+      const day = '1999-01-23';
+      await upsertDailyCost(owner, {
+        day,
+        inputTokens: 0,
+        outputTokens: 0,
+        estimatedCost: 2.0, // exactly at the cap
+      });
+      const r = await reserveModelBudget(app, { config, now: at(day), requestCostUsd: 0.000001 });
+      expect(r).toBeNull();
+    });
+  },
+);

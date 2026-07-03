@@ -222,6 +222,44 @@ describe('classify stage config (Task 5.1)', () => {
   });
 });
 
+describe('cost warning-threshold config (Task 7.2)', () => {
+  it('defaults DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO to 0.8 when unset', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO).toBe(0.8);
+  });
+
+  it("coerces a numeric-string override ('0.5')", () => {
+    const result = validateEnv({
+      ...validEnv(),
+      DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: '0.5',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO).toBe(0.5);
+  });
+
+  it('rejects out-of-range, boundary, and non-numeric values, naming the variable', () => {
+    // The ratio is a strict fraction of the cap: (0, 1) exclusive on both ends. A ratio of 0
+    // would alert on every call; a ratio of 1 (or above) collapses the warning onto the cap.
+    for (const bad of ['0', '1', '1.5', '-0.1', 'abc', '']) {
+      const result = validateEnv({
+        ...validEnv(),
+        DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: bad,
+      });
+      expect(result.ok, `value ${JSON.stringify(bad)} should be rejected`).toBe(false);
+      if (result.ok) return;
+      expect(result.error.invalid).toContain('DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO');
+    }
+  });
+
+  it('is present in .env.example (kept in lockstep with the schema)', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    expect(example).toContain('DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO');
+  });
+});
+
 describe('per-component heartbeat config (Task 7.1)', () => {
   it('resolves defaults when unset', () => {
     const result = validateEnv(validEnv());

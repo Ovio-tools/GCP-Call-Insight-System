@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { parseOrThrow } from '../errors.js';
 import { query, toJsonParam } from '../sql.js';
+import type { Queryable } from '../types.js';
 import {
   type AlertEventInsert,
   type AlertEventRow,
@@ -29,12 +30,14 @@ export interface RecordAlertResult {
  * reset delivery state, so a once-delivered incident is never re-sent.
  */
 export async function recordAlertWithInsertStatus(
-  pool: Pool,
+  q: Queryable,
   input: AlertEventInsert,
 ): Promise<RecordAlertResult> {
+  // Accepts any `Queryable` (a pool for a one-shot insert, or a transaction client to enlist the
+  // insert in an open transaction — used by the Task 7.2 warning emitter's lock→check→insert).
   const v = parseOrThrow(TABLE, alertEventInsertSchema, input);
   const inserted = await query<AlertEventRow>(
-    pool,
+    q,
     `INSERT INTO alert_events (error_code, root_cause_category, severity, dedup_key, failure_snapshot)
      VALUES ($1, $2, $3, $4, COALESCE($5::jsonb, '{}'::jsonb))
      ON CONFLICT (dedup_key) WHERE acknowledged_at IS NULL DO NOTHING
@@ -46,7 +49,7 @@ export async function recordAlertWithInsertStatus(
   }
   // Deduped: return the live alert that already holds this dedup_key.
   const existing = await query<AlertEventRow>(
-    pool,
+    q,
     `SELECT * FROM alert_events WHERE dedup_key = $1 AND acknowledged_at IS NULL`,
     [v.dedupKey],
   );

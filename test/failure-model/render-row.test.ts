@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { AlertEventRow } from '../../src/db/schemas/alert-events.js';
 import type { JsonValue } from '../../src/db/types.js';
-import { createFailure, renderAlertEventText } from '../../src/failure-model/index.js';
+import {
+  createFailure,
+  failureSnapshot,
+  renderAlertEventText,
+} from '../../src/failure-model/index.js';
 
 const NOW = new Date('2026-07-01T12:00:00.000Z');
 
@@ -94,6 +98,30 @@ describe('renderAlertEventText', () => {
     expect(text).not.toContain('sensitive words');
     expect(text).not.toContain('transcript');
     expect(text).toContain('Affected: call_id');
+  });
+
+  it('renders/delivers a MODEL_COST_WARNING_THRESHOLD_EXCEEDED row with scope key names only, no context values (Task 7.2)', () => {
+    // The emitter persists the full sanitized snapshot with context { stage, environment }.
+    const failure = createFailure('MODEL_COST_WARNING_THRESHOLD_EXCEEDED', {
+      processingState: 'continuing',
+      context: { stage: 'classify', environment: 'staging' },
+    });
+    const text = renderAlertEventText(
+      makeRow({
+        error_code: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+        root_cause_category: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+        severity: 'medium',
+        failure_snapshot: failureSnapshot(failure) as unknown as Record<string, JsonValue>,
+      }),
+      { environment: 'production', now: NOW },
+    );
+    // Renders the advisory (path 1) without throwing.
+    expect(text).toContain('MODEL_COST_WARNING_THRESHOLD_EXCEEDED');
+    expect(text).toContain('crossed the warning threshold');
+    // Affected line lists the scope KEY NAMES in priority order, never their values.
+    expect(text).toContain('Affected: stage, environment');
+    // The stage VALUE ('classify') must never appear — only the key name does.
+    expect(text).not.toContain('classify');
   });
 
   it('throws on an unknown error_code so the caller can mark delivery failed', () => {
