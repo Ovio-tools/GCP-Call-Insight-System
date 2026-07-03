@@ -9,8 +9,14 @@ plan (`gcp-call-insight-execution-plan-v8.md`, §2 and §3); this is its working
 summary.
 
 Several conventions reference modules not yet built (Task 2.3 hardening/auth
-middleware, Task 8.2 crypto/restore procedures, §6.1 held-call retention). When you
-implement those, wire them in here rather than rolling your own. The Task 2.2 failure
+middleware, Task 8.2 crypto/restore procedures). When you implement those, wire them
+in here rather than rolling your own. The §6.1 held-call retention POLICY + review-queue
+wiring now exists (Task 6.1, `src/review-queue/`): per-`held_reason` SLA, the
+unresolved-held raw-retention cap, SLA-breach escalation folded into the reconciliation
+cron, and the `markUnresolvable`/`review_closed` transition — but the actual raw/vault
+PURGE stays Task 8.1 (deletion never runs in the per-call path); Task 6.1 leaves the
+`listRawPurgeEligible` / `hasBlockingReviewFor*` / `markRawPurged` hooks for it (see
+`docs/adr/0004-held-call-retention-and-review-sla.md`). The Task 2.2 failure
 model now exists under `src/failure-model/` — the canonical home the forerunner error
 modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) and the
 `SEAM(Task 2.2)` worker shims (`src/worker/errors.ts`, `src/worker/dead-letter.ts`)
@@ -35,7 +41,10 @@ parked-call requeue scripts (`src/scripts/requeue-parked-classify.ts`,
 `src/scripts/requeue-parked-extract.ts`), the per-component heartbeats (Task 7.1,
 `src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron), and
 the authenticated status surface + alert delivery (Task 7.3, `src/status/` +
-`src/alerting/` + `src/services/status-surface.ts`, see `docs/status-surface.md`) exist;
+`src/alerting/` + `src/services/status-surface.ts`, see `docs/status-surface.md`), and the
+review-queue wiring + held-call retention policy (Task 6.1, `src/review-queue/` — per-reason
+SLA, stalled-review scan folded into the reconciliation cron, `markUnresolvable`, and the
+Task 8.1 purge hooks; see `docs/adr/0004-held-call-retention-and-review-sla.md`) exist;
 the remaining surfaces and the retention cron's purge logic (Task 8.1 — the entrypoint
 exists but only runs the heartbeat contract) do not yet. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY

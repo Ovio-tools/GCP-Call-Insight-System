@@ -4,7 +4,7 @@ import type { Pool } from 'pg';
 import type { ClassifyModelClient, ClassifyModelResult } from '../../../src/anthropic/client.js';
 import { createClassifyHandler } from '../../../src/pipeline/classify/handler.js';
 import { buildProductionStageHandlers } from '../../../src/pipeline/handlers.js';
-import { runPipeline } from '../../../src/pipeline/state-machine.js';
+import { runPipeline } from '../../_run-pipeline.js';
 import {
   CLASSIFY_SYSTEM_PROMPT,
   buildClassifyUserMessage,

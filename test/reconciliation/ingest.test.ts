@@ -102,11 +102,30 @@ describe.skipIf(!hasTestDb)('createPgReconciliationIngest', () => {
       currentStage: 'redact',
       status: STATUS_PROCESSING,
     });
-    await holdCall(app, { callId: held, atStage: 'redact', heldReason: 'redaction_failed' });
+    await holdCall(app, {
+      callId: held,
+      atStage: 'redact',
+      heldReason: 'redaction_failed',
+      slaMinutes: 60,
+    });
+
+    // A review_closed (unresolvable) call is terminal — it must read as in-pipeline so the sweep
+    // never resurrects it (its non-pristine status makes alreadyInPipeline return true).
+    const reviewClosed = 'test-rc-review-closed';
+    await upsertCallState(app, {
+      callId: reviewClosed,
+      source: 'dialpad-webhook',
+      currentStage: 'redact',
+      status: STATUS_PROCESSING,
+    });
+    await owner.query(`UPDATE call_state SET status='review_closed' WHERE call_id=$1`, [
+      reviewClosed,
+    ]);
 
     const ingest = makeIngest();
     expect(await ingest.alreadyInPipeline(advanced)).toBe(true);
     expect(await ingest.alreadyInPipeline(held)).toBe(true);
+    expect(await ingest.alreadyInPipeline(reviewClosed)).toBe(true);
   });
 
   it('alreadyInPipeline is false for a row still sitting un-advanced at the first stage', async () => {

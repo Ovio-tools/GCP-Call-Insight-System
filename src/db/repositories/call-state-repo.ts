@@ -1,9 +1,15 @@
 import type { Pool } from 'pg';
 import { z } from 'zod';
-import { DAL_STALE_STAGE, DalError, parseOrThrow } from '../errors.js';
+import { DAL_REVIEW_INVARIANT, DAL_STALE_STAGE, DalError, parseOrThrow } from '../errors.js';
 import { query, toJsonParam, withTransaction } from '../sql.js';
 import { type JsonValue, jsonValueSchema } from '../types.js';
-import { type DropReason, type HeldReason, dropReasonSchema, heldReasonSchema } from '../enums.js';
+import {
+  type DropReason,
+  type HeldReason,
+  UPSERT_PROTECTED_CALL_STATE_STATUSES,
+  dropReasonSchema,
+  heldReasonSchema,
+} from '../enums.js';
 import {
   type CallStateInsert,
   type CallStateRow,
@@ -14,25 +20,41 @@ import { appendLog } from './processing-log-repo.js';
 
 const TABLE = 'call_state';
 
-/** Idempotent upsert keyed on call_id: re-running a job updates, never duplicates. */
+/**
+ * Idempotent upsert keyed on call_id: re-running a job updates, never duplicates. A conflicting
+ * row is left UNTOUCHED whenever its status is one of the non-reseedable
+ * {@link UPSERT_PROTECTED_CALL_STATE_STATUSES} (`completed`/`skipped`/`held`/`review_closed`) —
+ * so a duplicate webhook can never flip a live `held` call (or an archived `review_closed` one)
+ * back to `processing` and resurrect the pipeline while it has an active/terminal review row
+ * (Task 6.1 [W2][V1]). The protected list is passed as a parameter sourced from the db-layer
+ * vocabulary, never inline literals, so it can't drift.
+ */
 export async function upsertCallState(pool: Pool, input: CallStateInsert): Promise<CallStateRow> {
   const v = parseOrThrow(TABLE, callStateInsertSchema, input);
+  const protectedStatuses = Array.from(UPSERT_PROTECTED_CALL_STATE_STATUSES);
   const rows = await query<CallStateRow>(
     pool,
     `INSERT INTO call_state (call_id, source, source_metadata, current_stage, status)
      VALUES ($1, $2, COALESCE($3::jsonb, '{}'::jsonb), $4, $5)
      ON CONFLICT (call_id) DO UPDATE SET
-       source = CASE WHEN call_state.status IN ('skipped','completed')
+       source = CASE WHEN call_state.status = ANY($6)
                      THEN call_state.source ELSE EXCLUDED.source END,
-       source_metadata = CASE WHEN call_state.status IN ('skipped','completed')
+       source_metadata = CASE WHEN call_state.status = ANY($6)
                      THEN call_state.source_metadata ELSE EXCLUDED.source_metadata END,
-       current_stage = CASE WHEN call_state.status IN ('skipped','completed')
+       current_stage = CASE WHEN call_state.status = ANY($6)
                      THEN call_state.current_stage ELSE EXCLUDED.current_stage END,
-       status = CASE WHEN call_state.status IN ('skipped','completed')
+       status = CASE WHEN call_state.status = ANY($6)
                      THEN call_state.status ELSE EXCLUDED.status END,
        updated_at = now()
      RETURNING *`,
-    [v.callId, v.source, toJsonParam(v.sourceMetadata), v.currentStage, v.status],
+    [
+      v.callId,
+      v.source,
+      toJsonParam(v.sourceMetadata),
+      v.currentStage,
+      v.status,
+      protectedStatuses,
+    ],
   );
   return parseOrThrow(TABLE, callStateRowSchema, rows[0]);
 }
@@ -230,6 +252,10 @@ export interface HoldCallInput {
   /** Optimistic guard: only hold a call currently at this stage. */
   atStage: string;
   heldReason: HeldReason;
+  /** Per-`held_reason` SLA in minutes (the caller resolves it via `slaMinutesFor(config,
+   * reason)`). Required — there is no default 24h literal; the SLA is computed off the
+   * transaction clock so `sla_due_at = created_at + slaMinutes` exactly. */
+  slaMinutes: number;
   /** Failure-model error code recorded on the processing_log row (e.g. DIALPAD_TRANSCRIPT_MISSING). */
   errorCode?: string;
   /** A JSON object of PII-free extra detail merged into the processing_log row. */
@@ -240,6 +266,7 @@ const holdCallSchema = z.object({
   callId: z.string().min(1),
   atStage: z.string().min(1),
   heldReason: heldReasonSchema,
+  slaMinutes: z.number().int().positive(),
   errorCode: z.string().min(1).optional(),
   logDetail: z.record(z.string(), jsonValueSchema).optional(),
 });
@@ -252,9 +279,13 @@ const holdCallSchema = z.object({
  *
  * The `status='processing'` term in the guard makes the write idempotent under
  * concurrency: once the row is `held`, a second runner matches zero rows and gets
- * {@link DAL_STALE_STAGE}, so no duplicate review_queue/log row is written. The SLA is
- * seeded to now()+24h here (a coarse default; the review surface, Task 6.x, owns SLA
- * policy). Unlike a drop, a hold IS a failure-model event, so `error_code` is recorded.
+ * {@link DAL_STALE_STAGE}, so no duplicate review_queue/log row is written. The active-row
+ * write targets the partial unique index (`review_queue_one_active_per_call`) BY INFERENCE
+ * (`ON CONFLICT (call_id) WHERE ...`), never a named constraint, and computes the SLA off
+ * the transaction clock. If a conflict surfaces an active row under a DIFFERENT reason, that
+ * is genuine corruption — {@link DAL_REVIEW_INVARIANT} rolls the whole hold back rather than
+ * silently logging a discrepancy. Unlike a drop, a hold IS a failure-model event, so
+ * `error_code` is recorded.
  */
 export async function holdCall(pool: Pool, input: HoldCallInput): Promise<CallStateRow> {
   const v = parseOrThrow(TABLE, holdCallSchema, input);
@@ -279,20 +310,50 @@ export async function holdCall(pool: Pool, input: HoldCallInput): Promise<CallSt
       );
     }
 
-    // Only insert a review_queue row if the call isn't already open/in_review — defensive,
-    // though the status guard above already serializes holds. We hold the call_state row
-    // lock via the UPDATE above, so this check is race-free within the transaction.
-    const existing = await query<{ id: string }>(
+    // Upsert-safe active-row write. `now()` is transaction-stable, so `sla_due_at =
+    // created_at + slaMinutes` exactly (tests assert equality). DO NOTHING on a conflict with
+    // an existing active row; RETURNING is empty in that case.
+    const inserted = await query<{ held_reason: string }>(
       client,
-      `SELECT id FROM review_queue WHERE call_id = $1 AND status IN ('open', 'in_review') LIMIT 1`,
-      [v.callId],
+      `INSERT INTO review_queue (call_id, held_reason, sla_due_at)
+       VALUES ($1, $2, now() + ($3 * interval '1 minute'))
+       ON CONFLICT (call_id) WHERE status IN ('open', 'in_review')
+       DO NOTHING
+       RETURNING held_reason`,
+      [v.callId, v.heldReason, v.slaMinutes],
     );
-    if (existing.length === 0) {
-      await query(
+
+    // Determine the EFFECTIVE active-row reason: the freshly-inserted one, or the pre-existing
+    // one under a conflict. A same-reason conflict is a benign idempotent re-hold; a different
+    // reason is an invariant violation (a single-worker-per-call pipeline should never hold one
+    // call under two reasons) and rolls the hold back.
+    let effectiveReason: string;
+    if (inserted.length > 0) {
+      effectiveReason = inserted[0]!.held_reason;
+    } else {
+      const active = await query<{ held_reason: string }>(
         client,
-        `INSERT INTO review_queue (call_id, held_reason, sla_due_at)
-         VALUES ($1, $2, now() + interval '24 hours')`,
-        [v.callId, v.heldReason],
+        `SELECT held_reason FROM review_queue
+          WHERE call_id = $1 AND status IN ('open', 'in_review')
+          LIMIT 1`,
+        [v.callId],
+      );
+      if (active.length === 0) {
+        throw new DalError(
+          DAL_REVIEW_INVARIANT,
+          `${DAL_REVIEW_INVARIANT}: review_queue active row for ${v.callId} vanished mid-hold`,
+          { table: 'review_queue', call_id: v.callId },
+        );
+      }
+      effectiveReason = active[0]!.held_reason;
+    }
+
+    if (effectiveReason !== v.heldReason) {
+      throw new DalError(
+        DAL_REVIEW_INVARIANT,
+        `${DAL_REVIEW_INVARIANT}: call ${v.callId} already held under '${effectiveReason}', ` +
+          `cannot re-hold under '${v.heldReason}'`,
+        { table: 'review_queue', call_id: v.callId },
       );
     }
 

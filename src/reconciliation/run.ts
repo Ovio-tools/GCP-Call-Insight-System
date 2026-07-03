@@ -4,11 +4,12 @@ import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import {
   checkUrlFor,
-  httpPing,
   pingSuccess,
   requireCheckUrl,
   sanitizePingError,
+  type HeartbeatPinger,
 } from '../heartbeat/index.js';
+import type { ScanResult } from '../review-queue/scan.js';
 import type { DialpadClient, RecentCall } from '../dialpad/client/index.js';
 import { DialpadError } from '../dialpad/client/index.js';
 import { getCallState, seedCallStateIfAbsent } from '../db/repositories/call-state-repo.js';
@@ -44,8 +45,6 @@ export interface ReconciliationDeps {
   alreadyInPipeline: (callId: string) => Promise<boolean>;
   /** Seed `call_state` (insert-if-absent) and enqueue the pipeline job (idempotent). */
   ingestGap: (call: RecentCall) => Promise<void>;
-  /** Fire the dead-man's-switch ping. Defaults to an HTTP GET; injectable for tests. */
-  pingCheck?: (url: string) => Promise<void>;
   /**
    * Best-effort in-DB liveness mirror (Task 7.3): recorded on a fully-successful sweep for the
    * status surface, INDEPENDENTLY of the external ping. A failure here is sanitized-logged and
@@ -96,8 +95,10 @@ function shouldSweepListedCall(call: RecentCall, concludedSince: number): boolea
  * Dialpad METADATA, find any not yet in the pipeline (the webhook missed them, or a prior
  * ingest died between seeding and enqueueing), and seed + enqueue exactly those. The worker
  * does everything else (pre-filter, then transcript fetch); this never reads a transcript.
- * Runs to completion, logs ONE summary line, and pings its own external check only after
- * the whole sweep succeeded.
+ * Runs to completion and logs ONE summary line. It does NOT ping: the external dead-man's-
+ * switch ping is owned by the cron entrypoint (`runReconciliationCron`), which fires it only
+ * when BOTH the sweep AND the SLA-breach scan succeeded (Task 6.1). A sweep failure rejects,
+ * so the entrypoint withholds the ping.
  *
  * Dialpad's list API filters by START time only, so the query reaches back
  * `window + max-call-duration`: a call that started before the window but concluded inside
@@ -157,9 +158,9 @@ export async function runReconciliation(deps: ReconciliationDeps): Promise<Recon
     'reconciliation sweep complete',
   );
 
-  // Best-effort in-DB liveness mirror for the status surface, written BEFORE the ping but
-  // fully wrapped so a DB-write failure never skips the ping (they are independent): the
-  // external check stays the authoritative alert source. Counts only, no PII.
+  // Best-effort in-DB liveness mirror for the status surface, fully wrapped so a DB-write
+  // failure never fails the sweep: the external check (fired by the entrypoint on combined
+  // success) stays the authoritative alert source. Counts only, no PII.
   if (deps.heartbeat !== undefined) {
     try {
       await deps.heartbeat(summary);
@@ -170,16 +171,6 @@ export async function runReconciliation(deps: ReconciliationDeps): Promise<Recon
       );
     }
   }
-
-  // Success ping — this cron's OWN check, never the worker's or retention's. A ping failure
-  // is logged (sanitized, no URL) but does not fail the run: the sweep genuinely succeeded,
-  // and a missed ping is exactly the signal the dead-man's switch exists to raise monitor-side.
-  await pingSuccess({
-    component: 'reconciliation-cron',
-    url: checkUrlFor(config, 'reconciliation-cron'),
-    logger,
-    ping: deps.pingCheck ?? httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
-  });
 
   return summary;
 }
@@ -233,4 +224,84 @@ export function createPgReconciliationIngest(deps: {
       await enqueueCall(queue, call.callId, config);
     },
   };
+}
+
+export interface ReconciliationCronDeps {
+  config: Config;
+  logger: Logger;
+  /** The Dialpad metadata sweep. Rejects on a Dialpad/enqueue failure. */
+  runSweep: () => Promise<unknown>;
+  /** The review-SLA-breach scan; its `failed`/`lockedSkipped` tally marks incompleteness. */
+  runScan: () => Promise<ScanResult>;
+  /** External dead-man's-switch ping. */
+  ping: HeartbeatPinger;
+  /** Handle a sweep failure (map a typed Dialpad failure → deduped alert, log). Best-effort —
+   * MUST NOT throw; the ping is withheld by the combined-health gate regardless. */
+  onSweepError: (err: unknown) => Promise<void>;
+}
+
+/**
+ * Reconciliation-cron orchestration (Task 6.1). Two INDEPENDENT duties — the Dialpad metadata
+ * sweep and the review-SLA-breach scan — each attempted so one failing never skips the other
+ * (overdue held calls must still escalate/alert even when reconciliation is broken). The scan
+ * runs REGARDLESS of the sweep outcome. The external ping (now a COMBINED health signal) fires
+ * ONLY when BOTH duties fully succeed; otherwise this throws so the process exits non-zero and
+ * the missed check IS the alert for whichever duty failed. Consistent with CLAUDE.md's "crons
+ * ping only after a fully successful run."
+ *
+ * The sweep + scan are injected (not called directly) so the entrypoint keeps the Dialpad-alert
+ * mapping and DB wiring while this stays a pure, unit-testable orchestrator.
+ */
+export async function runReconciliationCron(deps: ReconciliationCronDeps): Promise<void> {
+  const { config, logger } = deps;
+
+  let sweepOk = true;
+  try {
+    await deps.runSweep();
+  } catch (err) {
+    sweepOk = false;
+    // The handler SHOULD be best-effort, but wrap it so a throwing/buggy handler can never skip
+    // the SLA scan below — the scan must run regardless of the sweep outcome.
+    try {
+      await deps.onSweepError(err);
+    } catch (handlerErr) {
+      logger.error(
+        { component: 'reconciliation-cron' },
+        `sweep error handler failed: ${handlerErr instanceof Error ? handlerErr.name : typeof handlerErr}`,
+      );
+    }
+  }
+
+  // The scan is attempted whether or not the sweep succeeded. Healthy rows are escalated+alerted
+  // before it returns its tally, so one bad row only withholds the heartbeat.
+  let scanIncomplete = false;
+  try {
+    const { escalated, failed, lockedSkipped } = await deps.runScan();
+    scanIncomplete = failed > 0 || lockedSkipped > 0;
+    if (scanIncomplete) {
+      logger.warn(
+        { component: 'reconciliation-cron', escalated, failed, locked_skipped: lockedSkipped },
+        'stalled-review scan incomplete — withholding heartbeat',
+      );
+    }
+  } catch (err) {
+    scanIncomplete = true;
+    logger.error(
+      { component: 'reconciliation-cron' },
+      `stalled-review scan failed: ${err instanceof Error ? err.name : typeof err}`,
+    );
+  }
+
+  if (sweepOk && !scanIncomplete) {
+    // The combined ping: this cron's OWN check, only after BOTH duties succeeded. A ping failure
+    // is logged (sanitized, no URL) but does not fail the run — the missed check is the alarm.
+    await pingSuccess({
+      component: 'reconciliation-cron',
+      url: checkUrlFor(config, 'reconciliation-cron'),
+      logger,
+      ping: deps.ping,
+    });
+    return;
+  }
+  throw new Error('reconciliation-cron: a duty failed — external ping withheld');
 }

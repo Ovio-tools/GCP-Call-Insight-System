@@ -166,6 +166,55 @@ describe.skipIf(!hasTestDb)('upsertCallState preserves terminal rows', () => {
     expect(after.current_stage).toBe('mark-retention-eligible');
   });
 
+  it('does not resurrect a held call on re-seed (fixes the latent reseed bug)', async () => {
+    const callId = 'test-reseed-held';
+    await upsertCallState(app, {
+      callId,
+      source: 'dialpad',
+      sourceMetadata: { duration: 5 },
+      currentStage: 'redact',
+      status: 'processing',
+    });
+    // Mark held directly (an active review row would exist via holdCall; SQL is enough here).
+    await owner.query(`UPDATE call_state SET status='held' WHERE call_id=$1`, [callId]);
+
+    const after = await upsertCallState(app, {
+      callId,
+      source: 'reconciliation',
+      sourceMetadata: { duration: 999 },
+      currentStage: 'metadata-pre-filter',
+      status: 'processing',
+    });
+
+    // A duplicate webhook must NOT flip a live held call back to processing and re-run it.
+    expect(after.status).toBe('held');
+    expect(after.current_stage).toBe('redact');
+    expect(after.source).toBe('dialpad');
+    expect(after.source_metadata).toEqual({ duration: 5 });
+  });
+
+  it('does not resurrect a review_closed call on re-seed', async () => {
+    const callId = 'test-reseed-reviewclosed';
+    await upsertCallState(app, {
+      callId,
+      source: 'dialpad',
+      currentStage: 'redact',
+      status: 'processing',
+    });
+    await owner.query(`UPDATE call_state SET status='review_closed' WHERE call_id=$1`, [callId]);
+
+    const after = await upsertCallState(app, {
+      callId,
+      source: 'reconciliation',
+      currentStage: 'metadata-pre-filter',
+      status: 'processing',
+    });
+
+    expect(after.status).toBe('review_closed');
+    expect(after.current_stage).toBe('redact');
+    expect(after.source).toBe('dialpad');
+  });
+
   it('still overwrites a non-terminal (processing) row', async () => {
     const callId = 'test-reseed-proc';
     await upsertCallState(app, {

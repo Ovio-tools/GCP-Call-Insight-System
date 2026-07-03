@@ -9,6 +9,7 @@ import { mergeDetections } from '../../src/redaction/spans.js';
 import { tokenize } from '../../src/redaction/tokenize.js';
 import type { Detector, RiskSignal } from '../../src/redaction/types.js';
 import { configSchema } from '../../src/config/schema.js';
+import { REQUIRED_REVIEW_ENV } from '../_config.js';
 import { makeNerConfig } from './_ner.js';
 
 /**
@@ -47,7 +48,7 @@ export function loadCorpus(name: string): Corpus {
 
 /** The gate's targets/knobs come from env with the schema's defaults. */
 export function corpusConfig(): { recallTarget: number; riskThreshold: number } {
-  const parsed = configSchema.parse({ NODE_ENV: 'test', ...process.env });
+  const parsed = configSchema.parse({ NODE_ENV: 'test', ...REQUIRED_REVIEW_ENV, ...process.env });
   return {
     recallTarget: parsed.REDACTION_RECALL_TARGET,
     riskThreshold: parsed.REDACTION_RISK_THRESHOLD,
