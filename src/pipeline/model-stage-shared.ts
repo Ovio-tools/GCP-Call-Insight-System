@@ -8,6 +8,7 @@ import {
   type ProcessingState,
   createFailure,
   dedupKey,
+  failureSnapshot,
 } from '../failure-model/index.js';
 import { recordAlert } from '../db/repositories/alert-events-repo.js';
 import { appendLog } from '../db/repositories/processing-log-repo.js';
@@ -42,7 +43,9 @@ export async function recordStageAlert(
     rootCauseCategory: failure.root_cause_category,
     severity: failure.severity,
     dedupKey: dedupKey(failure),
-    failureSnapshot: { call_id: callId, stage, ...extraSnapshot },
+    // Full §4 snapshot (Task 7.4) so alert_events stays explainable after the alert is gone,
+    // plus the sanitized top-level diagnostics (call_id/stage + closed-vocab counts/status).
+    failureSnapshot: { ...failureSnapshot(failure), call_id: callId, stage, ...extraSnapshot },
   });
 }
 
@@ -216,6 +219,7 @@ export async function handleModelError(
         severity: failure.severity,
         dedupKey: dedupKey(failure),
         failureSnapshot: {
+          ...failureSnapshot(failure),
           call_id: callId,
           stage,
           ...(variable !== undefined ? { variable } : {}),

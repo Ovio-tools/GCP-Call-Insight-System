@@ -3,6 +3,8 @@ import type { Logger } from 'pino';
 // Imported from db/errors.js directly (not the db barrel): the model-stage import
 // guard forbids pipeline modules from reaching modules that re-export raw/vault access.
 import { DalError, DAL_STALE_STAGE } from '../db/errors.js';
+import { createFailure, failureSnapshot } from '../failure-model/index.js';
+import { logStageFailure, logStageStart, logStageSuccess } from '../logging/stage-log.js';
 import {
   advanceStage,
   getCallState,
@@ -193,10 +195,15 @@ export async function runPipeline(
   while (index <= LAST_INDEX) {
     const stage = PIPELINE_STAGES[index] as PipelineStage;
 
+    const startedAt = Date.now();
+    const durationMs = (): number => Date.now() - startedAt;
+    logStageStart(logger, { callId, stage });
+
     let result: StageResult | void;
     try {
       result = await handlers[stage]({ callId, stage, logger, pool });
     } catch (cause) {
+      logStageFailure(logger, { callId, stage, outcome: 'failed', durationMs: durationMs() });
       // Wrap so the worker's failed-handler knows exactly which stage failed. Fail-closed:
       // PipelineStageError never carries the raw error message.
       throw new PipelineStageError(stage, callId, cause);
@@ -221,6 +228,7 @@ export async function runPipeline(
         if (raced.status === STATUS_SKIPPED || raced.status === STATUS_COMPLETED) return;
         throw new Error(`${callId}: skip raced but status is '${raced.status}' — inconsistent`);
       }
+      logStageSuccess(logger, { callId, stage, outcome: 'skipped', durationMs: durationMs() });
       return;
     }
 
@@ -228,13 +236,29 @@ export async function runPipeline(
     // not-ready transcript retry). STOP here without advancing or failing — the call stays
     // at this stage in `processing` and resumes when the delayed job fires.
     if (result && result.action === 'defer') {
-      logger.info({ stage }, 'stage deferred — awaiting delayed re-run');
+      logStageSuccess(logger, { callId, stage, outcome: 'deferred', durationMs: durationMs() });
       return;
     }
 
     // A stage asked to hold the call for a person: hold it atomically (status + review_queue
     // + processing_log) and STOP. Mirrors the drop path's stale-race handling.
     if (result && result.action === 'hold') {
+      // A hold carrying an error_code IS a failure-model event, so its processing_log row must
+      // carry the full §4 snapshot (Task 7.4). A stage may pass an explicit `failureSnapshot`
+      // (with its own processing_state / diagnostics); otherwise the runner synthesizes one
+      // from the catalog so EVERY error-coded hold row stays explainable after its alert is
+      // gone. A hold with no error_code is a routing hold (spam, emergency review), not a
+      // failure — no snapshot, mirroring the drop path.
+      const holdSnapshot =
+        result.failureSnapshot ??
+        (result.errorCode !== undefined
+          ? failureSnapshot(
+              createFailure(result.errorCode, {
+                processingState: 'continuing',
+                context: { call_id: callId, stage },
+              }),
+            )
+          : undefined);
       try {
         await holdCall(pool, {
           callId,
@@ -243,6 +267,7 @@ export async function runPipeline(
           slaMinutes: options.slaMinutesFor(result.reason),
           ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
           ...(result.detail !== undefined ? { logDetail: result.detail } : {}),
+          ...(holdSnapshot !== undefined ? { failureSnapshot: holdSnapshot } : {}),
         });
       } catch (err) {
         if (!isStaleStageError(err)) throw err;
@@ -259,6 +284,13 @@ export async function runPipeline(
         }
         throw new Error(`${callId}: hold raced but status is '${raced.status}' — inconsistent`);
       }
+      logStageFailure(logger, {
+        callId,
+        stage,
+        outcome: 'held',
+        ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
+        durationMs: durationMs(),
+      });
       return;
     }
 
@@ -282,6 +314,7 @@ export async function runPipeline(
           ...(continueDetail !== undefined ? { detail: continueDetail } : {}),
         },
       });
+      logStageSuccess(logger, { callId, stage, outcome: 'completed', durationMs: durationMs() });
     } catch (err) {
       if (!isStaleStageError(err)) throw err;
       const resolution = await resolveStale(pool, callId, targetIndex);

@@ -84,6 +84,23 @@ export async function listActive(pool: Pool): Promise<AlertEventRow[]> {
   return rows.map((r) => parseOrThrow(TABLE, alertEventRowSchema, r));
 }
 
+/** Alert counts grouped by error_code + severity — the `alerts_total` metric (Task 7.4).
+ *  Both labels are closed, low-cardinality sets (catalog codes × 4 severities). Read-only. */
+export interface AlertCodeSeverityCount {
+  error_code: string;
+  severity: string;
+  count: number;
+}
+export async function countAlertsByCodeSeverity(pool: Pool): Promise<AlertCodeSeverityCount[]> {
+  return query<AlertCodeSeverityCount>(
+    pool,
+    `SELECT error_code, severity::text AS severity, count(*)::int AS count
+       FROM alert_events
+      GROUP BY error_code, severity
+      ORDER BY error_code, severity`,
+  );
+}
+
 /** The newest still-active (unacknowledged) alert, or undefined when none — the status
  * surface's `latest_issue` / broken-cause source. */
 export async function latestActive(pool: Pool): Promise<AlertEventRow | undefined> {

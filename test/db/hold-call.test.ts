@@ -75,6 +75,54 @@ describe.skipIf(!hasTestDb)('holdCall + markTranscriptWaitStarted', () => {
     expect(held[0]?.detail).toMatchObject({ held_reason: 'missing_transcript', waited_ms: 123 });
   });
 
+  it('persists the full failure_snapshot on the held processing_log row', async () => {
+    const callId = 'test-hold-snapshot';
+    await seed(callId);
+
+    const snapshot = {
+      error_code: 'DIALPAD_TRANSCRIPT_MISSING',
+      root_cause_category: 'DIALPAD_TRANSCRIPT_MISSING',
+      severity: 'low',
+      impact: 'held for review',
+      processing_state: 'degraded',
+      remediation_now: 'review the held call',
+      remediation_fix: 'same as the immediate step',
+      data_safe: true,
+      calls_state: 'held',
+      owner: 'OVIO on-call',
+      runbook_ref: 'runbook#dialpad-transcript-missing',
+      context: { call_id: callId, stage: 'fetch-transcript' },
+    };
+
+    await holdCall(app, {
+      callId,
+      atStage: 'fetch-transcript',
+      heldReason: 'missing_transcript',
+      slaMinutes: 60,
+      errorCode: 'DIALPAD_TRANSCRIPT_MISSING',
+      failureSnapshot: snapshot,
+    });
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held).toHaveLength(1);
+    expect(held[0]?.failure_snapshot).toEqual(snapshot);
+  });
+
+  it('leaves failure_snapshot null on a held row when none is supplied', async () => {
+    const callId = 'test-hold-nosnapshot';
+    await seed(callId);
+
+    await holdCall(app, {
+      callId,
+      atStage: 'fetch-transcript',
+      heldReason: 'classifier_uncertain',
+      slaMinutes: 60,
+    });
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held[0]?.failure_snapshot).toBeNull();
+  });
+
   it('is idempotent under a concurrent/repeated hold (second call is stale, no duplicate rows)', async () => {
     const callId = 'test-hold-idem';
     await seed(callId);

@@ -212,6 +212,106 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
     expect((await loggedStages(callId)).length).toBe(heldLogsBefore);
   });
 
+  it("forwards a hold action's failureSnapshot onto the held processing_log row", async () => {
+    const callId = 'test-sm-hold-snapshot';
+    await seed(callId, 'fetch-transcript');
+
+    const snapshot = {
+      error_code: 'DIALPAD_TRANSCRIPT_MISSING',
+      root_cause_category: 'DIALPAD_TRANSCRIPT_MISSING',
+      severity: 'low',
+      impact: 'held for review',
+      processing_state: 'degraded',
+      remediation_now: 'review the held call',
+      remediation_fix: 'same as the immediate step',
+      data_safe: true,
+      calls_state: 'held',
+      owner: 'OVIO on-call',
+      runbook_ref: 'runbook#dialpad-transcript-missing',
+      context: { call_id: callId, stage: 'fetch-transcript' },
+    };
+
+    await runPipeline(
+      app,
+      callId,
+      logger,
+      handlersWith({
+        'fetch-transcript': () =>
+          Promise.resolve({
+            action: 'hold' as const,
+            reason: 'missing_transcript' as const,
+            errorCode: 'DIALPAD_TRANSCRIPT_MISSING' as const,
+            failureSnapshot: snapshot,
+          }),
+      }),
+    );
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held).toHaveLength(1);
+    expect(held[0]?.failure_snapshot).toEqual(snapshot);
+  });
+
+  it('synthesizes a full failure_snapshot for a hold carrying an errorCode but no explicit snapshot', async () => {
+    const callId = 'test-sm-hold-synth';
+    await seed(callId, 'fetch-transcript');
+
+    await runPipeline(
+      app,
+      callId,
+      logger,
+      handlersWith({
+        'fetch-transcript': () =>
+          Promise.resolve({
+            action: 'hold' as const,
+            reason: 'missing_transcript' as const,
+            errorCode: 'DIALPAD_TRANSCRIPT_MISSING' as const,
+          }),
+      }),
+    );
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held).toHaveLength(1);
+    const snap = held[0]?.failure_snapshot as Record<string, unknown>;
+    expect(snap).toMatchObject({
+      error_code: 'DIALPAD_TRANSCRIPT_MISSING',
+      root_cause_category: 'DIALPAD_TRANSCRIPT_MISSING',
+      runbook_ref: 'runbook#dialpad-transcript-missing',
+      calls_state: 'held',
+      context: { call_id: callId, stage: 'fetch-transcript' },
+    });
+    // Every §4 field is present.
+    for (const key of [
+      'severity',
+      'impact',
+      'processing_state',
+      'remediation_now',
+      'remediation_fix',
+      'data_safe',
+      'owner',
+    ]) {
+      expect(snap).toHaveProperty(key);
+    }
+  });
+
+  it('leaves failure_snapshot null for a hold with no errorCode (a routing hold, not a failure)', async () => {
+    const callId = 'test-sm-hold-noerr';
+    await seed(callId, 'classify');
+
+    await runPipeline(
+      app,
+      callId,
+      logger,
+      handlersWith({
+        classify: () =>
+          Promise.resolve({ action: 'hold' as const, reason: 'classified_spam' as const }),
+      }),
+    );
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held).toHaveLength(1);
+    expect(held[0]?.failure_snapshot).toBeNull();
+  });
+
   it('rejects a corrupt held row sitting at an unknown stage', async () => {
     const callId = 'test-sm-held-badstage';
     await seed(callId, 'not-a-real-stage', 'held');

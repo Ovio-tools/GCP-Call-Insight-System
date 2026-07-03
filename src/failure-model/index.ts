@@ -8,6 +8,7 @@ export * from './categories.js';
 export * from './catalog.js';
 export * from './severity.js';
 export * from './error.js';
+export * from './snapshot.js';
 export * from './dedup.js';
 export * from './alert.js';
 export * from './render-row.js';

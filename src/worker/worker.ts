@@ -10,8 +10,9 @@ import type { StageHandlers } from '../pipeline/stages.js';
 import { productionStageHandlers } from '../pipeline/handlers.js';
 import { slaMinutesFor } from '../review-queue/sla.js';
 import type { PipelineJobData } from '../queue/pipeline-queue.js';
+import { createFailure, failureSnapshot } from '../failure-model/index.js';
 import { handleExhaustedJob } from './dead-letter.js';
-import { QUEUE_RETRY_EXHAUSTED, sanitizeFailure } from './errors.js';
+import { QUEUE_RETRY_EXHAUSTED, failureContext, sanitizeFailure } from './errors.js';
 
 export interface PipelineWorkerOptions {
   /** Stage handlers; injectable so tests can force a stage to fail. Defaults to the stubs. */
@@ -32,7 +33,7 @@ async function onJobFailed(
   err: unknown,
   logger: Logger,
 ): Promise<void> {
-  const { snapshot, failedStage } = sanitizeFailure(job, err);
+  const { snapshot: diagnostic, failedStage } = sanitizeFailure(job, err);
   const callId = typeof job.data.callId === 'string' ? job.data.callId : null;
   // Source of truth is the JOB'S own attempts (set at enqueue), not the worker's current
   // config — a job that outlived a redeploy/config change must still dead-letter exactly when
@@ -40,16 +41,31 @@ async function onJobFailed(
   const maxAttempts = job.opts.attempts ?? config.WORKER_MAX_ATTEMPTS;
   const exhausted = job.attemptsMade >= maxAttempts;
 
-  await appendLog(pool, {
-    callId,
-    stage: failedStage,
-    outcome: 'failed',
-    ...(exhausted ? { errorCode: QUEUE_RETRY_EXHAUSTED } : {}),
-    failureSnapshot: snapshot,
-  });
-
   if (exhausted) {
+    // Terminal failure: the audit row carries the full §4 snapshot (QUEUE_RETRY_EXHAUSTED) so
+    // it stays explainable, with the sanitized diagnostic (attempts, error class) in `detail`.
+    const failure = createFailure(QUEUE_RETRY_EXHAUSTED, {
+      processingState: 'continuing',
+      context: failureContext(callId, job.id, failedStage),
+    });
+    await appendLog(pool, {
+      callId,
+      stage: failedStage,
+      outcome: 'failed',
+      errorCode: QUEUE_RETRY_EXHAUSTED,
+      detail: diagnostic,
+      failureSnapshot: failureSnapshot(failure),
+    });
     await handleExhaustedJob(pool, job, err, logger);
+  } else {
+    // A still-retrying attempt: no terminal code yet, so record the sanitized diagnostic in
+    // `detail` (the call is not the failure of record until retries are exhausted).
+    await appendLog(pool, {
+      callId,
+      stage: failedStage,
+      outcome: 'failed',
+      detail: diagnostic,
+    });
   }
 }
 

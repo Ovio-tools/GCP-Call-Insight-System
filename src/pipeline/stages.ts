@@ -124,6 +124,10 @@ export type StageResult =
       reason: HeldReason;
       errorCode?: ErrorCode;
       detail?: Record<string, JsonValue>;
+      /** The full sanitized failure_snapshot (Task 2.2 §4 fields) for this hold, built via
+       *  `failureSnapshot(failure)`. The runner persists it on the held processing_log row so
+       *  a hold stays explainable after its alert is gone (Task 7.4). */
+      failureSnapshot?: JsonValue;
     };
 
 /** Context handed to each stage handler. `pool` lets a real stage read/write the DB. */

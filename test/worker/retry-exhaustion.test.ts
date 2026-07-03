@@ -18,13 +18,31 @@ describe.skipIf(!hasTestDb || !hasTestRedis)('retry exhaustion → dead_letter',
     h = makeWorkerHarness();
   });
   afterEach(async () => {
-    // alert_events has no call_id column, so remove this test's alert by its dedup key.
+    // alert_events has no call_id column, so remove this test's alert by its dedup key. The
+    // dead-letter alert now deduplicates via the shared failure-model key (DEAD_LETTER_CREATED
+    // scoped by call_id), not the old bespoke `dead_letter:` prefix.
     await h.owner.query('DELETE FROM alert_events WHERE dedup_key LIKE $1', [
-      'dead_letter:test-wk-%',
+      'DEAD_LETTER_CREATED:call_id:test-wk-%',
     ]);
     await cleanupCalls(h.owner, PATTERN);
     await h.close();
   });
+
+  /** The §4 fields every persisted failure_snapshot must carry (Task 7.4). */
+  const FULL_SNAPSHOT_KEYS = [
+    'error_code',
+    'root_cause_category',
+    'severity',
+    'impact',
+    'processing_state',
+    'remediation_now',
+    'remediation_fix',
+    'data_safe',
+    'calls_state',
+    'owner',
+    'runbook_ref',
+    'context',
+  ];
 
   it('lands in dead_letter with QUEUE_RETRY_EXHAUSTED and emits one DEAD_LETTER_CREATED alert', async () => {
     const callId = 'test-wk-exhaust';
@@ -64,24 +82,42 @@ describe.skipIf(!hasTestDb || !hasTestRedis)('retry exhaustion → dead_letter',
     };
     expect(row.error_code).toBe('QUEUE_RETRY_EXHAUSTED');
     expect(row.root_cause_category).toBe('QUEUE_RETRY_EXHAUSTED');
-    expect(row.failure_snapshot.failed_stage).toBe('classify');
-    // Fail-closed: sanitized metadata carries no raw error message.
+    // The full §4 snapshot is persisted, so the dead-letter row is explainable after the alert.
+    expect(Object.keys(row.failure_snapshot).sort()).toEqual([...FULL_SNAPSHOT_KEYS].sort());
+    expect(row.failure_snapshot.error_code).toBe('QUEUE_RETRY_EXHAUSTED');
+    expect(row.failure_snapshot.runbook_ref).toBe('runbook#queue-retry-exhausted');
+    // The failed stage is carried in the sanitized context (allowlisted key).
+    expect(row.failure_snapshot.context).toMatchObject({ stage: 'classify', call_id: callId });
+    // Fail-closed: neither the sanitized last_error nor the snapshot carries the raw message.
     expect(row.last_error).not.toMatch(/permanent classify failure/);
     expect(JSON.stringify(row.failure_snapshot)).not.toMatch(/permanent classify failure/);
 
-    // Exactly one actionable alert.
-    const alerts = await h.owner.query('SELECT error_code FROM alert_events WHERE dedup_key = $1', [
-      `dead_letter:${callId}`,
-    ]);
+    // Exactly one actionable alert, deduped via the shared failure-model key.
+    const alerts = await h.owner.query(
+      'SELECT error_code, failure_snapshot FROM alert_events WHERE dedup_key = $1',
+      [`DEAD_LETTER_CREATED:call_id:${callId}`],
+    );
     expect(alerts.rowCount).toBe(1);
-    expect((alerts.rows[0] as { error_code: string }).error_code).toBe('DEAD_LETTER_CREATED');
+    const alertRow = alerts.rows[0] as {
+      error_code: string;
+      failure_snapshot: Record<string, unknown>;
+    };
+    expect(alertRow.error_code).toBe('DEAD_LETTER_CREATED');
+    expect(Object.keys(alertRow.failure_snapshot).sort()).toEqual([...FULL_SNAPSHOT_KEYS].sort());
 
-    // The failed stage is also identified in a processing_log failure row.
+    // The failed stage is identified in a processing_log failure row, which carries the full
+    // QUEUE_RETRY_EXHAUSTED snapshot and the sanitized diagnostic in `detail`.
     const failed = await h.owner.query(
-      "SELECT 1 FROM processing_log WHERE call_id = $1 AND outcome = 'failed' AND stage = 'classify'",
+      "SELECT detail, failure_snapshot FROM processing_log WHERE call_id = $1 AND outcome = 'failed' AND stage = 'classify' AND error_code = 'QUEUE_RETRY_EXHAUSTED'",
       [callId],
     );
     expect(failed.rowCount ?? 0).toBeGreaterThan(0);
+    const failedRow = failed.rows[0] as {
+      detail: Record<string, unknown>;
+      failure_snapshot: Record<string, unknown>;
+    };
+    expect(Object.keys(failedRow.failure_snapshot).sort()).toEqual([...FULL_SNAPSHOT_KEYS].sort());
+    expect(failedRow.detail).toMatchObject({ failed_stage: 'classify' });
   });
 
   it("dead-letters per the JOB's attempts even when the worker's config differs", async () => {
@@ -112,14 +148,15 @@ describe.skipIf(!hasTestDb || !hasTestRedis)('retry exhaustion → dead_letter',
       await worker.close();
     }
 
-    const dl = await h.owner.query('SELECT failure_snapshot FROM dead_letter WHERE call_id = $1', [
-      callId,
-    ]);
+    const dl = await h.owner.query('SELECT 1 FROM dead_letter WHERE call_id = $1', [callId]);
     expect(dl.rowCount).toBe(1);
-    // Dead-lettered on the job's 2nd (final) attempt, not the worker's 3rd.
-    expect(
-      (dl.rows[0] as { failure_snapshot: { attempts_made: number } }).failure_snapshot
-        .attempts_made,
-    ).toBe(2);
+    // Dead-lettered on the job's 2nd (final) attempt, not the worker's 3rd. The attempt count
+    // lives in the sanitized diagnostic `detail` of the exhausted processing_log failure row.
+    const failed = await h.owner.query(
+      "SELECT detail FROM processing_log WHERE call_id = $1 AND outcome = 'failed' AND error_code = 'QUEUE_RETRY_EXHAUSTED'",
+      [callId],
+    );
+    expect(failed.rowCount).toBe(1);
+    expect((failed.rows[0] as { detail: { attempts_made: number } }).detail.attempts_made).toBe(2);
   });
 });

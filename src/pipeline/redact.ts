@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
 import { DAL_QUERY_FAILED, DalError } from '../db/errors.js';
-import { createFailure, dedupKey } from '../failure-model/index.js';
+import { createFailure, dedupKey, failureSnapshot } from '../failure-model/index.js';
 import { recordAlert } from '../db/repositories/alert-events-repo.js';
 import {
   hasHardDeletedCleanTranscript,
@@ -87,6 +87,7 @@ async function recordRedactionHoldAlert(
     severity: failure.severity,
     dedupKey: dedupKey(failure),
     failureSnapshot: {
+      ...failureSnapshot(failure),
       call_id: ctx.callId,
       stage: ctx.stage,
       held_reason: reason,
