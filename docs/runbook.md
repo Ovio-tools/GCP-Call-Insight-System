@@ -249,6 +249,22 @@ queued calls wait.
 - **Do now:** Review daily cost usage, then raise the cap deliberately or wait for the next window.
 - **Longer-term fix:** Add cost forecasting and staged alerts before the cap is hit.
 
+## Model cost warning threshold exceeded
+
+<!-- anchor: model-cost-warning-threshold-exceeded — MODEL_COST_WARNING_THRESHOLD_EXCEEDED -->
+
+**Code:** `MODEL_COST_WARNING_THRESHOLD_EXCEEDED` · **Severity:** medium · **Calls:** none · **Owner:** OVIO on-call · **Data safe:** yes
+
+Estimated daily model spend crossed the warning threshold
+(`DAILY_MODEL_COST_CAP_USD * DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO`). This is advisory only:
+nothing is held, retried, or dropped, and the pipeline keeps running. It fires **at most once
+per UTC day** (including after a same-day acknowledgment) and re-arms at the next UTC day. Its
+purpose is lead time before the hard cap (`MODEL_COST_CAP_EXCEEDED`) starts holding calls.
+
+- **Do now:** Review daily cost usage against the cap, then raise the cap deliberately or reduce
+  model volume before the hard cap is reached.
+- **Longer-term fix:** Add cost forecasting and volume controls so spend is managed before the cap.
+
 ## Queue retry exhausted
 
 <!-- anchor: queue-retry-exhausted — QUEUE_RETRY_EXHAUSTED -->

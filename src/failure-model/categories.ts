@@ -34,6 +34,11 @@ export const ROOT_CAUSE_CATEGORIES = [
   'MODEL_RATE_LIMITED',
   'MODEL_MALFORMED_RESPONSE',
   'MODEL_COST_CAP_EXCEEDED',
+  // Warning threshold (Task 7.2): an advisory, PII-free, non-blocking alert emitted at most
+  // once per UTC day when estimated daily model spend crosses
+  // DAILY_MODEL_COST_CAP_USD * DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO. Distinct from the
+  // hard-cap MODEL_COST_CAP_EXCEEDED, which pauses new sends and holds the call.
+  'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
   'QUEUE_RETRY_EXHAUSTED',
   'DEAD_LETTER_CREATED',
   'RETENTION_PURGE_FAILED',

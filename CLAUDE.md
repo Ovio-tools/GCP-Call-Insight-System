@@ -193,7 +193,11 @@ fields:
 `RATE_LIMIT_EXCEEDED`, `AUTH_REQUIRED`, `CSRF_TOKEN_INVALID`, `WEBHOOK_TIMESTAMP_INVALID`,
 `INTERNAL_ERROR` (the eight before this added by the Task 2.3 shared hardening/auth
 middleware), `VERBATIM_PII_DETECTED` (Task 5.2: the second PII scan found possible
-residual PII in a model-extracted verbatim phrase — a post-egress hit).
+residual PII in a model-extracted verbatim phrase — a post-egress hit),
+`MODEL_COST_WARNING_THRESHOLD_EXCEEDED` (Task 7.2: an advisory, non-blocking alert emitted at
+most once per UTC day when estimated daily model spend crosses
+`DAILY_MODEL_COST_CAP_USD * DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO` — distinct from the
+hard-cap `MODEL_COST_CAP_EXCEEDED`).
 
 > The config loader in this scaffold already emits `CONFIG_MISSING_OR_INVALID` and
 > names the offending variable; it is the first member of this taxonomy.

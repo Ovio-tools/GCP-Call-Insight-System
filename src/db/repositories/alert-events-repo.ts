@@ -33,6 +33,8 @@ export async function recordAlertWithInsertStatus(
   db: Queryable,
   input: AlertEventInsert,
 ): Promise<RecordAlertResult> {
+  // Accepts any `Queryable` (a pool for a one-shot insert, or a transaction client to enlist the
+  // insert in an open transaction — used by the Task 7.2 warning emitter's lock→check→insert).
   const v = parseOrThrow(TABLE, alertEventInsertSchema, input);
   const inserted = await query<AlertEventRow>(
     db,

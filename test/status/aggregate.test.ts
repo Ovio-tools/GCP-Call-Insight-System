@@ -166,6 +166,32 @@ describe.skipIf(!hasTestDb)('buildStatus (DB integration, Task 7.3)', () => {
     expect(dto.summary.spend.model_paused).toBe(true);
   });
 
+  it('an active cost-warning alert with spend below cap does NOT pause the model (Task 7.2 non-blocking)', async () => {
+    const config = makeTestConfig({
+      CLASSIFY_ENABLED: true,
+      EXTRACT_ENABLED: true,
+      DAILY_MODEL_COST_CAP_USD: 10,
+    });
+    // Spend is comfortably under the cap — the hard cap is NOT reached.
+    await upsertDailyCost(app, { day, inputTokens: 0, outputTokens: 0, estimatedCost: 8 });
+    // An advisory warning alert is active (medium severity, mapped to the classify stage).
+    await recordAlert(app, {
+      errorCode: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+      rootCauseCategory: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+      severity: 'medium',
+      dedupKey: `MODEL_COST_WARNING_THRESHOLD_EXCEEDED:day:${day}`,
+      failureSnapshot: { context: { stage: 'classify' } },
+    });
+    const dto = await buildStatus(app, { config, now, logger: silentLogger });
+
+    // The warning never pauses the model — spend is under cap and both stages are enabled.
+    expect(dto.summary.spend.model_paused).toBe(false);
+    const classify = dto.pipeline_nodes.find((n) => n.key === 'classify');
+    const extract = dto.pipeline_nodes.find((n) => n.key === 'extract');
+    expect(classify?.state).not.toBe('paused');
+    expect(extract?.state).not.toBe('paused');
+  });
+
   it('a critical alert makes the pipeline broken, surfaces the cause, and breaks the mapped stage', async () => {
     await seedCall('test-status-r', 'redact', 'processing');
     await recordAlert(app, {
