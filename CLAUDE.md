@@ -13,10 +13,10 @@ middleware, Task 8.2 crypto/restore procedures). When you implement those, wire 
 in here rather than rolling your own. The §6.1 held-call retention POLICY + review-queue
 wiring now exists (Task 6.1, `src/review-queue/`): per-`held_reason` SLA, the
 unresolved-held raw-retention cap, SLA-breach escalation folded into the reconciliation
-cron, and the `markUnresolvable`/`review_closed` transition — but the actual raw/vault
-PURGE stays Task 8.1 (deletion never runs in the per-call path); Task 6.1 leaves the
-`listRawPurgeEligible` / `hasBlockingReviewFor*` / `markRawPurged` hooks for it (see
-`docs/adr/0004-held-call-retention-and-review-sla.md`). The Task 2.2 failure
+cron, and the `markUnresolvable`/`review_closed` transition. The actual raw/vault PURGE now
+exists (Task 8.1, `src/retention/purge.ts` — deletion never runs in the per-call path, only in
+the retention cron): it consumes the Task 6.1 `listRawPurgeEligible` / `hasBlockingReviewFor*` /
+`markRawPurged` hooks (see `docs/adr/0004-held-call-retention-and-review-sla.md`). The Task 2.2 failure
 model now exists under `src/failure-model/` — the canonical home the forerunner error
 modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) fold into when their
 code paths are next edited. The worker dead-letter path (`src/worker/dead-letter.ts`,
@@ -45,14 +45,22 @@ the authenticated status surface + alert delivery (Task 7.3, `src/status/` +
 `src/alerting/` + `src/services/status-surface.ts`, see `docs/status-surface.md`), the
 review-queue wiring + held-call retention policy (Task 6.1, `src/review-queue/` — per-reason
 SLA, stalled-review scan folded into the reconciliation cron, `markUnresolvable`, and the
-Task 8.1 purge hooks; see `docs/adr/0004-held-call-retention-and-review-sla.md`), and the
+Task 8.1 purge hooks; see `docs/adr/0004-held-call-retention-and-review-sla.md`), the
 logging/audit/metrics finalization (Task 7.4 — the canonical `failureSnapshot()` serializer
 `src/failure-model/snapshot.ts` writes the full §4 snapshot identically to `alert_events`,
 `processing_log` failure/hold rows, and `dead_letter`; uniform per-stage structured logging
 `src/logging/stage-log.ts`; DB-derived counters `src/metrics/counters.ts`; the resolvable
-`docs/runbook.md` + the `docs/failure-paths.md` matrix) exist;
-the remaining surfaces and the retention cron's purge logic (Task 8.1 — the entrypoint
-exists but only runs the heartbeat contract) do not yet. The NER model is vendored by
+`docs/runbook.md` + the `docs/failure-paths.md` matrix), and the scheduled retention/purge
+cron (Task 8.1, `src/retention/purge.ts` + `src/services/retention-cron.ts`, migration 013):
+required per-group soft/hard windows in config (CLEAN is a two-mode `never`/numeric), creation-time
+`retention_eligible_at` stamping on clean/findings/webhook/match_keys, a dedicated-client advisory
+lock, parent-driven coupled RAW/CLEAN purge, single-table WEBHOOK/MATCH/EXTRACT purge, the held-cap
+physical delete, dry-run, and fail-loud `RETENTION_PURGE_FAILED`. **NORMAL hard delete is
+stamp-and-scrub** (an UPDATE that sets `hard_deleted_at` and overwrites content, keeping the
+tombstone so the recreate finality guards stay meaningful); **the held-cap purge is a physical
+`DELETE`** of `raw_transcripts` + `token_vault` (no tombstone — finality there is a `raw_purged_at`
+write-guard). exist; the remaining surfaces (knowledge-base surface, ServiceTitan, backfill) and
+Task 8.2 crypto/restore do not yet. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY
 `clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
