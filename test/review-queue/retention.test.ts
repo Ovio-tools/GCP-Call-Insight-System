@@ -8,7 +8,8 @@ import {
   markRawPurged,
 } from '../../src/db/repositories/review-queue-repo.js';
 import { withTransaction } from '../../src/db/sql.js';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
+import { createAppPool } from '../../src/db/index.js';
+import { hasTestDb, makePool, migrate, TEST_DATABASE_URL } from '../db/_pg.js';
 import { cleanupCalls, makeAppPool, seedKeyVersion } from '../db/_dal.js';
 
 const PATTERN = 'test-ret-%';
@@ -17,6 +18,7 @@ const CAP_HOURS = 72;
 describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () => {
   let owner!: Pool;
   let app!: Pool;
+  let purge!: Pool;
 
   interface SeedOpts {
     status?: 'open' | 'in_review' | 'unresolvable' | 'resolved';
@@ -76,6 +78,7 @@ describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () =>
     await migrate('up');
     owner = makePool();
     app = makeAppPool();
+    purge = createAppPool(TEST_DATABASE_URL as string, 'purge_role');
     await seedKeyVersion(owner);
   });
   afterEach(async () => {
@@ -84,6 +87,21 @@ describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () =>
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await purge.end();
+  });
+
+  it('listRawPurgeEligible runs under the narrow purge_role grant (lean projection)', async () => {
+    // The reshape (Task 8.1): the read must project ONLY the columns purge_role is granted
+    // (id, call_id, status, created_at, raw_purged_at) — a SELECT * would hit assignee/
+    // held_reason/sla_due_at and fail with 42501 under purge_role.
+    const id = await seedReview('test-ret-lean', { status: 'unresolvable', ageHours: 100 });
+    const rows = await listRawPurgeEligible(purge, CAP_HOURS, new Date());
+    const found = rows.find((r) => r.id === id);
+    expect(found).toBeDefined();
+    // Lean shape: the sensitive review columns are absent from the candidate.
+    expect(found).not.toHaveProperty('assignee');
+    expect(found).not.toHaveProperty('held_reason');
+    expect(found).toMatchObject({ id, call_id: 'test-ret-lean', status: 'unresolvable' });
   });
 
   it('an open item within the cap is recoverable — not raw-purge-eligible', async () => {
