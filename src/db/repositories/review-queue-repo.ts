@@ -80,15 +80,24 @@ export async function hasActiveReviewForCall(pool: Pool, callId: string): Promis
 }
 
 /**
- * Whether a call has a TERMINAL (`unresolvable`) review row. The runner's `review_closed`
- * terminal guard uses this to confirm a `review_closed` call_state genuinely has its matching
- * terminal review — a stray `review_closed` with no terminal review is corruption, not a
- * completed transition (Task 6.1 [V2]).
+ * Whether a call has a CLOSED review row — one whose `status IN ('resolved','unresolvable')`
+ * (Task 6.2, broadened from `unresolvable`-only). The runner's `review_closed` terminal guard
+ * uses this to confirm a `review_closed` call_state genuinely has its matching closed review —
+ * a stray `review_closed` with no closed review is corruption, not a completed transition
+ * (Task 6.1 [V2]).
+ *
+ * Broadened because two review-surface action classes now move a held call to `review_closed`:
+ * `mark_unresolvable` closes the review as `unresolvable`, while `reject` / `mark_spam` close it
+ * as `resolved`. Both are legitimate closed reviews, so the guard must accept either — otherwise
+ * a reconciliation/duplicate re-enqueue of a rejected/spam call would spuriously throw
+ * "inconsistent" instead of no-op'ing. (The name is kept for its importers; conceptually it is
+ * "has a closed review for this call".)
  */
 export async function hasTerminalReviewForCall(pool: Pool, callId: string): Promise<boolean> {
   const rows = await query<{ one: number }>(
     pool,
-    `SELECT 1 AS one FROM review_queue WHERE call_id = $1 AND status = 'unresolvable' LIMIT 1`,
+    `SELECT 1 AS one FROM review_queue
+      WHERE call_id = $1 AND status IN ('resolved', 'unresolvable') LIMIT 1`,
     [callId],
   );
   return rows.length > 0;
@@ -165,6 +174,78 @@ export async function markUnresolvable(pool: Pool, callId: string, actor: string
       after: { review_status: 'unresolvable', call_state_status: 'review_closed' },
     });
   });
+}
+
+/** The before/after state a review-id-scoped transition returns, for the caller's audit row. */
+export interface ReviewTransition {
+  reviewQueueId: string;
+  callId: string;
+  before: { review_status: string; call_state_status: string };
+  after: { review_status: string; call_state_status: string };
+}
+
+/**
+ * Review-ID-scoped `mark_unresolvable` transition (Task 6.2), enlisted in the caller's
+ * transaction ({@link Queryable}). Locks the EXACT review row by id (`FOR UPDATE`), requires it
+ * `open`/`in_review`, sets it `unresolvable` + `resolved_at` (+ assignee ← actor when null), and
+ * moves the matching `call_state` `held` → `review_closed` (requiring exactly one row). Returns
+ * the before/after state and does **NOT** write the `operator_actions` row — the generic
+ * review-action handler writes the single audit row (with the `action_params` fingerprint +
+ * idempotency), so `mark_unresolvable` yields exactly one audit row.
+ *
+ * Deliberately NOT the call-id-based {@link markUnresolvable}: a stale review id could otherwise
+ * operate on a DIFFERENT active review for the same call. Locking by review id makes it exact.
+ * Any guard miss (missing/terminal review, a `call_state` not `held`) throws
+ * {@link DAL_REVIEW_INVARIANT} → the caller's tx rolls back → no partial write.
+ */
+export async function markUnresolvableByReviewId(
+  db: Queryable,
+  reviewQueueId: string,
+  actor: string,
+): Promise<ReviewTransition> {
+  const locked = await query<{ id: string; status: string; call_id: string }>(
+    db,
+    `SELECT id, status, call_id FROM review_queue WHERE id = $1 FOR UPDATE`,
+    [reviewQueueId],
+  );
+  const review = locked[0];
+  if (!review || (review.status !== 'open' && review.status !== 'in_review')) {
+    throw new DalError(
+      DAL_REVIEW_INVARIANT,
+      `${DAL_REVIEW_INVARIANT}: markUnresolvableByReviewId requires an active review ${reviewQueueId}, found ${review?.status ?? 'none'}`,
+      { table: TABLE },
+    );
+  }
+
+  await query(
+    db,
+    `UPDATE review_queue
+        SET status = 'unresolvable', resolved_at = now(), assignee = COALESCE(assignee, $2)
+      WHERE id = $1`,
+    [reviewQueueId, actor],
+  );
+
+  const moved = await query<{ call_id: string }>(
+    db,
+    `UPDATE call_state SET status = 'review_closed', updated_at = now()
+      WHERE call_id = $1 AND status = 'held'
+      RETURNING call_id`,
+    [review.call_id],
+  );
+  if (moved.length !== 1) {
+    throw new DalError(
+      DAL_REVIEW_INVARIANT,
+      `${DAL_REVIEW_INVARIANT}: markUnresolvableByReviewId expected call_state ${review.call_id} to be 'held', moved ${moved.length} rows`,
+      { table: 'call_state', call_id: review.call_id },
+    );
+  }
+
+  return {
+    reviewQueueId,
+    callId: review.call_id,
+    before: { review_status: review.status, call_state_status: 'held' },
+    after: { review_status: 'unresolvable', call_state_status: 'review_closed' },
+  };
 }
 
 export async function getReview(pool: Pool, id: string): Promise<ReviewQueueRow | undefined> {

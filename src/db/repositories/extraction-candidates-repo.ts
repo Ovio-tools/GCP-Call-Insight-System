@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { DAL_QUERY_FAILED, DalError, parseOrThrow } from '../errors.js';
 import { query, toJsonParam } from '../sql.js';
+import type { Queryable } from '../types.js';
 import {
   type ExtractionCandidateInsert,
   type ExtractionCandidateRow,
@@ -29,12 +30,12 @@ const TABLE = 'extraction_candidates';
  * pattern as upsertCleanTranscript).
  */
 export async function upsertExtractionCandidate(
-  pool: Pool,
+  db: Queryable,
   input: ExtractionCandidateInsert,
 ): Promise<ExtractionCandidateRow> {
   const v = parseOrThrow(TABLE, extractionCandidateInsertSchema, input);
   const rows = await query<ExtractionCandidateRow>(
-    pool,
+    db,
     `INSERT INTO extraction_candidates (
        call_id, call_intent, service_category, problem_statement, symptoms, customer_language,
        location_in_home, access_or_scheduling_notes, prior_attempts, urgency, concerns,

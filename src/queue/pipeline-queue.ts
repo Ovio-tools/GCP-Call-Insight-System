@@ -60,6 +60,43 @@ export async function enqueueCall(
   await queue.add(PIPELINE_JOB_NAME, { callId }, pipelineJobOptions(config, callId));
 }
 
+/**
+ * Deterministic job id for a REVIEW-driven reprocess (Task 6.2). Distinct from the base
+ * {@link jobIdForCall} id so it never dedups against a retained COMPLETED base job lingering in
+ * the `removeOnComplete` set — that dedup would silently drop the reprocess. Scoped by review id
+ * (a review is resolved by the action that enqueues its reprocess, so at most one reprocess per
+ * review). Stays a clean `[A-Za-z0-9_-]` token: base64url + uuid, no `:` (which BullMQ rejects).
+ */
+export function reprocessJobId(callId: string, reviewQueueId: string): string {
+  return `${jobIdForCall(callId)}-reprocess-${reviewQueueId}`;
+}
+
+/** Minimal queue surface {@link enqueueReprocess} needs — BullMQ's `Queue` satisfies it. */
+export interface ReprocessQueue {
+  add(name: string, data: PipelineJobData, opts: JobsOptions & { jobId: string }): Promise<unknown>;
+}
+
+/**
+ * Enqueue a review-driven reprocess of a call (Task 6.2). The `call_state` transition that
+ * precedes this already moved the call to `status='processing'` at the target stage, so the
+ * runner resumes from `current_stage`; this only schedules the job. Uses {@link reprocessJobId}
+ * so a retained completed base job can never dedup it away. Idempotent within a review: the
+ * reconciliation-cron drain and the optimistic post-commit enqueue both use this id, so a retry
+ * collapses onto the same job.
+ */
+export async function enqueueReprocess(
+  queue: ReprocessQueue,
+  callId: string,
+  config: Config,
+  reviewQueueId: string,
+): Promise<void> {
+  await queue.add(
+    PIPELINE_JOB_NAME,
+    { callId },
+    { ...pipelineJobOptions(config, callId), jobId: reprocessJobId(callId, reviewQueueId) },
+  );
+}
+
 /** Minimal queue surface the fetch-transcript stage needs — BullMQ's `Queue` satisfies it. */
 export interface DelayedRetryQueue {
   add(

@@ -12,8 +12,8 @@ import {
 import { PIPELINE_STAGES } from '../../src/pipeline/stages.js';
 
 describe('categories', () => {
-  it('has 34 root-cause categories and 1:1 error codes', () => {
-    expect(ROOT_CAUSE_CATEGORIES).toHaveLength(34);
+  it('has 35 root-cause categories and 1:1 error codes', () => {
+    expect(ROOT_CAUSE_CATEGORIES).toHaveLength(35);
     expect([...ERROR_CODES].sort()).toEqual([...ROOT_CAUSE_CATEGORIES].sort());
   });
 

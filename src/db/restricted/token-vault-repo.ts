@@ -79,6 +79,29 @@ export async function markTokensRetentionEligible(
   );
 }
 
+/**
+ * Whether a live (non-deleted) vault row exists for exactly this (call_id, token) — WITHOUT
+ * decrypting it (Task 6.2). The review surface's elevated single-value reveal calls this FIRST
+ * to reject a token that does not belong to the call before it decrypts, so a reviewer can never
+ * pivot one call's reveal into another call's vault value. Restricted-role, metadata-only: it
+ * touches no ciphertext and returns only a boolean.
+ */
+export async function tokenExistsForCall(
+  runner: RestrictedRunner,
+  input: { callId: string; token: string },
+): Promise<boolean> {
+  const rows = await runner.run((client) =>
+    query<{ one: number }>(
+      client,
+      `SELECT 1 AS one FROM token_vault
+        WHERE call_id = $1 AND token = $2 AND soft_deleted_at IS NULL AND hard_deleted_at IS NULL
+        LIMIT 1`,
+      [input.callId, input.token],
+    ),
+  );
+  return rows.length > 0;
+}
+
 /** Decrypt and return the original value for a token, or undefined if absent/soft-deleted. */
 export async function getToken(
   runner: RestrictedRunner,

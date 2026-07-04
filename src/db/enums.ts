@@ -100,6 +100,15 @@ export const UPSERT_PROTECTED_CALL_STATE_STATUSES = [
   'review_closed',
 ] as const satisfies readonly CallStateStatus[];
 
+/**
+ * `operator_actions.action` — the review-surface actions (Task 6.1/6.2).
+ *
+ * `reveal_raw` (Task 6.2): appended because an elevated reviewer's audited raw/vault reveal
+ * must carry a controlled `operator_action` value and no existing one fits — it is a read
+ * disclosure, not a state transition. Appended at the END so the value ordinal matches the
+ * migration's `addTypeValue` (default end position) — the parity test compares `enum_range`
+ * order exactly.
+ */
 export const OPERATOR_ACTION = [
   'approve',
   'reject',
@@ -108,6 +117,7 @@ export const OPERATOR_ACTION = [
   'mark_spam',
   'correct_extraction',
   'mark_unresolvable',
+  'reveal_raw',
 ] as const;
 
 export const KEY_VERSION_STATUS = ['active', 'rotating', 'retired', 'destroyed'] as const;
@@ -178,6 +188,22 @@ export const PII_SCAN_FAILURE_KINDS = [
   'tokened_phrase',
   'verbatim_mismatch',
 ] as const;
+
+/**
+ * `reprocess_requests.status` — where a reprocess/approve/correct_extraction outbox row stands
+ * (Task 6.2). A `text` column guarded by the migration-`1782864000015` CHECK constraint, NOT a
+ * native pg enum (same convention as `PII_SCAN_STATUSES`). MUST stay in sync with that CHECK
+ * list by hand. Do NOT add to `PG_ENUMS`.
+ *
+ * - `pending`   — written in the state-change tx; the enqueue has not been confirmed.
+ * - `sent`      — the reprocess job was enqueued (the deterministic reprocess job id).
+ * - `superseded` — the reconciliation drain found `call_state` no longer at
+ *   `processing`@`target_stage` (a later operator/manual recovery moved the call), so the stale
+ *   work is NOT enqueued.
+ */
+export const REPROCESS_REQUEST_STATUSES = ['pending', 'sent', 'superseded'] as const;
+export const reprocessRequestStatusSchema = z.enum(REPROCESS_REQUEST_STATUSES);
+export type ReprocessRequestStatus = z.infer<typeof reprocessRequestStatusSchema>;
 
 /** name -> value tuple, for the parity test to iterate. */
 export const PG_ENUMS = {

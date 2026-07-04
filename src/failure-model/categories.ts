@@ -57,6 +57,10 @@ export const ROOT_CAUSE_CATEGORIES = [
   'CSRF_TOKEN_INVALID',
   'WEBHOOK_TIMESTAMP_INVALID',
   'INTERNAL_ERROR',
+  // Authenticated but insufficient role (Task 6.2). Distinct from AUTH_REQUIRED (unauthenticated):
+  // a valid session lacking the REVIEW_ELEVATED_ROLE needed for an elevated raw/vault reveal is
+  // refused 403. A routine client rejection — logged, not alerted.
+  'AUTH_FORBIDDEN',
   // Extract stage (Task 5.2). The second PII scan found possible residual PII in a
   // model-extracted verbatim marketing phrase — a POST-extraction hit, distinct from the
   // pre-egress redaction holds: the redacted transcript already crossed to Anthropic.

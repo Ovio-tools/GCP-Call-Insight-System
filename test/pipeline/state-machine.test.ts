@@ -372,6 +372,30 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
     expect((await getCallState(app, callId))?.status).toBe('review_closed');
   });
 
+  it('a reject/mark_spam-style review_closed (review resolved) no-ops on re-enqueue', async () => {
+    // reject and mark_spam resolve the review (status='resolved') and move call_state to
+    // review_closed. The broadened terminal-review guard (Task 6.2) treats a resolved review as
+    // a valid closed review, so a reconciliation/duplicate re-enqueue is a logged no-op, not an
+    // "inconsistent" throw.
+    const callId = 'test-sm-reviewclosed-resolved';
+    await seed(callId, 'classify');
+    await holdCall(app, {
+      callId,
+      atStage: 'classify',
+      heldReason: 'classified_spam',
+      slaMinutes: 60,
+    });
+    const { rows } = await owner.query<{ id: string }>(
+      `SELECT id FROM review_queue WHERE call_id = $1`,
+      [callId],
+    );
+    await setStatus(app, rows[0]!.id, 'resolved');
+    await owner.query(`UPDATE call_state SET status='review_closed' WHERE call_id=$1`, [callId]);
+
+    await runPipeline(app, callId, logger); // must not throw — terminal no-op
+    expect((await getCallState(app, callId))?.status).toBe('review_closed');
+  });
+
   it('a stray review_closed with NO terminal review throws inconsistent', async () => {
     const callId = 'test-sm-stray-reviewclosed';
     await seed(callId, 'redact');

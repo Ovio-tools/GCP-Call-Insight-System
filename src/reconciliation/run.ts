@@ -233,6 +233,10 @@ export interface ReconciliationCronDeps {
   runSweep: () => Promise<unknown>;
   /** The review-SLA-breach scan; its `failed`/`lockedSkipped` tally marks incompleteness. */
   runScan: () => Promise<ScanResult>;
+  /** Drain the reprocess-request outbox (Task 6.2). Optional; its `failed` tally marks
+   * incompleteness exactly like the scan, so an incomplete drain withholds the ping. Runs AFTER
+   * the scan and independently of the sweep. */
+  runDrain?: () => Promise<{ failed: number }>;
   /** External dead-man's-switch ping. */
   ping: HeartbeatPinger;
   /** Handle a sweep failure (map a typed Dialpad failure → deduped alert, log). Best-effort —
@@ -292,8 +296,31 @@ export async function runReconciliationCron(deps: ReconciliationCronDeps): Promi
     );
   }
 
-  if (sweepOk && !scanIncomplete) {
-    // The combined ping: this cron's OWN check, only after BOTH duties succeeded. A ping failure
+  // The reprocess-outbox drain (Task 6.2): runs after the scan, independently of the sweep. An
+  // incomplete drain (an enqueue failure left a row pending) or a throwing drain withholds the
+  // ping so the missed check surfaces the stranded reprocess. Absent in tests/older callers.
+  let drainIncomplete = false;
+  if (deps.runDrain) {
+    try {
+      const { failed } = await deps.runDrain();
+      drainIncomplete = failed > 0;
+      if (drainIncomplete) {
+        logger.warn(
+          { component: 'reconciliation-cron', failed },
+          'reprocess drain incomplete — withholding heartbeat',
+        );
+      }
+    } catch (err) {
+      drainIncomplete = true;
+      logger.error(
+        { component: 'reconciliation-cron' },
+        `reprocess drain failed: ${err instanceof Error ? err.name : typeof err}`,
+      );
+    }
+  }
+
+  if (sweepOk && !scanIncomplete && !drainIncomplete) {
+    // The combined ping: this cron's OWN check, only after ALL duties succeeded. A ping failure
     // is logged (sanitized, no URL) but does not fail the run — the missed check is the alarm.
     await pingSuccess({
       component: 'reconciliation-cron',

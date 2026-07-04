@@ -167,12 +167,14 @@ export async function runPipeline(
     );
   }
 
-  // Terminal no-op guard for a review-closed call (Task 6.1) — mirrors the held guard strictly.
-  // A valid `review_closed` row sits at a known stage AND has a matching TERMINAL review row
-  // (`review_queue.status='unresolvable'`), which `markUnresolvable` writes in one transaction.
-  // Re-enqueueing it must be a no-op. A `review_closed` missing either invariant — unknown stage,
-  // or no terminal review — is real corruption (a stray terminal status), so surface it rather
-  // than silently dropping the call from the pipeline.
+  // Terminal no-op guard for a review-closed call (Task 6.1, broadened Task 6.2) — mirrors the
+  // held guard strictly. A valid `review_closed` row sits at a known stage AND has a matching
+  // CLOSED review row (`review_queue.status IN ('resolved','unresolvable')`): `mark_unresolvable`
+  // closes it `unresolvable`, while `reject`/`mark_spam` close it `resolved` — both write the
+  // review status + `call_state='review_closed'` in one transaction. Re-enqueueing it must be a
+  // no-op. A `review_closed` missing either invariant — unknown stage, or no closed review — is
+  // real corruption (a stray terminal status), so surface it rather than silently dropping the
+  // call from the pipeline.
   if (state.status === STATUS_REVIEW_CLOSED) {
     const knownStage = isPipelineStage(state.current_stage);
     const hasTerminal = knownStage && (await hasTerminalReviewForCall(pool, callId));

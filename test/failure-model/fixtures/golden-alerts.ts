@@ -510,6 +510,23 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     environment: 'staging',
     affectedScope: ['component', 'environment'],
   },
+  AUTH_FORBIDDEN: {
+    errorCode: 'AUTH_FORBIDDEN',
+    severity: 'low',
+    whatBroke: 'AUTH_FORBIDDEN',
+    likelyRootCause: 'AUTH_FORBIDDEN',
+    impact:
+      'An authenticated request was refused because the session lacked the required elevated role; no protected data was exposed.',
+    immediateRemediation:
+      'Grant the reviewer the required elevated role, or confirm the action legitimately needs elevation; if valid elevated sessions are being rejected, check the role configuration.',
+    longerTermFix: 'Same as the immediate step.',
+    dataSafe: true,
+    callsState: 'none',
+    runbookRef: 'runbook#auth-forbidden',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    environment: 'staging',
+    affectedScope: ['component', 'environment'],
+  },
   CSRF_TOKEN_INVALID: {
     errorCode: 'CSRF_TOKEN_INVALID',
     severity: 'low',
