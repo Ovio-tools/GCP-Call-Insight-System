@@ -21,7 +21,7 @@ describe('runRetention', () => {
   it('pings its own check exactly once, only after the run succeeds', async () => {
     const { logger } = collectingLogger();
     const pingCheck = vi.fn((_url: string) => Promise.resolve());
-    const purge = vi.fn(() => Promise.resolve());
+    const purge = vi.fn(() => Promise.resolve({ dryRun: false, actions: [], groupCounts: [] }));
     const config = makeTestConfig({ RETENTION_CHECK_URL: CHECK_URL });
 
     await runRetention({ config, logger, purge, pingCheck });
@@ -33,6 +33,21 @@ describe('runRetention', () => {
     expect(pingCheck.mock.invocationCallOrder[0]).toBeGreaterThan(
       purge.mock.invocationCallOrder[0]!,
     );
+  });
+
+  it('does not ping when the purge reports skipped (another run holds the lock)', async () => {
+    const { logger } = collectingLogger();
+    const pingCheck = vi.fn((_url: string) => Promise.resolve());
+    const purge = vi.fn(() =>
+      Promise.resolve({ dryRun: false, skipped: true, actions: [], groupCounts: [] }),
+    );
+    const config = makeTestConfig({ RETENTION_CHECK_URL: CHECK_URL });
+
+    await expect(runRetention({ config, logger, purge, pingCheck })).resolves.toBeUndefined();
+
+    expect(purge).toHaveBeenCalledTimes(1);
+    // A skipped run did no work — pinging success would mask the active run's own missed ping.
+    expect(pingCheck).not.toHaveBeenCalled();
   });
 
   it('does not ping when the run throws — the missed check is the alert', async () => {
