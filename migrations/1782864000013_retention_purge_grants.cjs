@@ -113,7 +113,9 @@ exports.up = (pgm) => {
   // One-time eligibility backfill (FORWARD-ONLY — see header). Rows created before the
   // creation-time stamping change have retention_eligible_at IS NULL and would never purge.
   // Raw/vault are intentionally NOT backfilled (their eligibility is post-store, via the
-  // mark-retention-eligible stage + the held-cap/blocking predicate).
+  // mark-retention-eligible stage + the held-cap/blocking predicate). `match_keys` IS backfilled:
+  // it already had a live writer (`putMatchKeys`) that did not stamp eligibility, so any deployed
+  // rows would be immortal to the purge predicate; a hard-deleted (crypto-shredded) row is skipped.
   pgm.sql(
     `UPDATE raw_webhook_events SET retention_eligible_at = received_at WHERE retention_eligible_at IS NULL;`,
   );
@@ -122,6 +124,9 @@ exports.up = (pgm) => {
   );
   pgm.sql(
     `UPDATE redaction_findings SET retention_eligible_at = created_at WHERE retention_eligible_at IS NULL;`,
+  );
+  pgm.sql(
+    `UPDATE match_keys SET retention_eligible_at = created_at WHERE retention_eligible_at IS NULL AND hard_deleted_at IS NULL;`,
   );
 };
 

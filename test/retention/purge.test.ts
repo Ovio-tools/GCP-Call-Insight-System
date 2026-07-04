@@ -1,12 +1,33 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool, PoolClient } from 'pg';
-import { runPurge } from '../../src/retention/purge.js';
+import { RetentionPurgeError, runPurge } from '../../src/retention/purge.js';
 import { createAppPool } from '../../src/db/index.js';
 import type { Config } from '../../src/config/schema.js';
 import { makeTestConfig } from '../_config.js';
 import { makeCapturingLogger } from '../http/_helpers.js';
 import { hasTestDb, makePool, migrate, TEST_DATABASE_URL } from '../db/_pg.js';
 import { cleanupCalls, seedKeyVersion } from '../db/_dal.js';
+
+describe('RetentionPurgeError sanitization', () => {
+  it('never leaks the underlying cause text into message or String()', () => {
+    const err = new RetentionPurgeError(
+      {
+        group: 'RAW',
+        table: 'raw_transcripts',
+        action: 'hard_delete',
+        dry_run: false,
+        sqlstate: 'XX000',
+      },
+      new Error('SECRET_TRANSCRIPT_TEXT from a DETAIL clause'),
+    );
+    expect(err.message).not.toContain('SECRET_TRANSCRIPT_TEXT');
+    expect(String(err)).not.toContain('SECRET_TRANSCRIPT_TEXT');
+    // The sanitized diagnostic is still present for operators.
+    expect(err.message).toContain('raw_transcripts');
+    expect(err.message).toContain('hard_delete');
+    expect(err.message).toContain('XX000');
+  });
+});
 
 const PATTERN = 'test-purge-%';
 const NOW = new Date('2026-06-01T00:00:00.000Z');
@@ -336,6 +357,62 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
         )
       ).rows[0]?.raw_purged_at,
     ).toBeNull();
+  });
+
+  it('dry-run reports parent-driven child rows, matching the real run (not just orphans)', async () => {
+    // Vault is eligible ONLY through its parent: its own retention_eligible_at is recent, so an
+    // orphan-only count would report token_vault soft=0 even though the real parent-driven run
+    // soft-deletes it. Same for findings under clean.
+    await seedRaw('test-purge-pdc', daysAgo(20)); // parent past soft(10)
+    await seedVault('test-purge-pdc', new Date(NOW.getTime() - 1000)); // own window NOT eligible
+    await seedClean('test-purge-pdc2', daysAgo(40)); // parent past CLEAN soft(30)
+    await seedFinding('test-purge-pdc2', new Date(NOW.getTime() - 1000));
+
+    const report = await run(purgeConfig({ RETENTION_DRY_RUN: true }));
+    const vaultSoft = report.actions.find(
+      (a) => a.table === 'token_vault' && a.action === 'soft_delete',
+    );
+    const findingsSoft = report.actions.find(
+      (a) => a.table === 'redaction_findings' && a.action === 'soft_delete',
+    );
+    expect(vaultSoft?.count).toBe(1);
+    expect(findingsSoft?.count).toBe(1);
+    // Still zero writes.
+    expect(await col('token_vault', 'test-purge-pdc', 'soft_deleted_at')).toBeNull();
+    expect(await col('redaction_findings', 'test-purge-pdc2', 'soft_deleted_at')).toBeNull();
+
+    // And the real run actually soft-deletes exactly those parent-driven children.
+    await run();
+    expect(await col('token_vault', 'test-purge-pdc', 'soft_deleted_at')).not.toBeNull();
+    expect(await col('redaction_findings', 'test-purge-pdc2', 'soft_deleted_at')).not.toBeNull();
+  });
+
+  it('held-cap purge honors the batch size across a backlog (batch=1, two candidates)', async () => {
+    const id1 = await seedReview('test-purge-batch1', 'unresolvable', daysAgo(5));
+    await seedRaw('test-purge-batch1', null);
+    await seedVault('test-purge-batch1', null);
+    const id2 = await seedReview('test-purge-batch2', 'unresolvable', daysAgo(6));
+    await seedRaw('test-purge-batch2', null);
+    await seedVault('test-purge-batch2', null);
+
+    const report = await run(purgeConfig({ RETENTION_PURGE_BATCH_SIZE: 1 }));
+
+    // Both drained despite batch=1 (the loop re-fetches until empty).
+    expect(await rowExists('raw_transcripts', 'test-purge-batch1')).toBe(false);
+    expect(await rowExists('raw_transcripts', 'test-purge-batch2')).toBe(false);
+    expect(await rowExists('token_vault', 'test-purge-batch1')).toBe(false);
+    for (const id of [id1, id2]) {
+      expect(
+        (
+          await owner.query<{ raw_purged_at: Date | null }>(
+            `SELECT raw_purged_at FROM review_queue WHERE id = $1`,
+            [id],
+          )
+        ).rows[0]?.raw_purged_at,
+      ).not.toBeNull();
+    }
+    const capAction = report.actions.find((a) => a.action === 'held_cap_purge');
+    expect(capAction?.count).toBe(2);
   });
 
   it('CLEAN indefinite mode (never/never) never soft- or hard-deletes clean/findings', async () => {

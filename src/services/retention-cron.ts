@@ -129,7 +129,11 @@ async function main(): Promise<void> {
 // Auto-run only as the cron entrypoint, never when a test imports runRetentionService.
 if (process.env.VITEST === undefined) {
   main().catch((err: unknown) => {
-    process.stderr.write(`retention-cron crashed: ${String(err)}\n`);
+    // Only the error CLASS, never its message: a raw pg error can carry row data (DETAIL/WHERE)
+    // and must never reach a log line. The sanitized failure fields already went to the fatal
+    // log + the RETENTION_PURGE_FAILED alert inside runRetentionService.
+    const name = err instanceof Error ? err.name : 'unknown error';
+    process.stderr.write(`retention-cron crashed (${name}); see the structured log / alert\n`);
     process.exit(1);
   });
 }

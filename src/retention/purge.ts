@@ -2,7 +2,11 @@ import type { Pool, PoolClient } from 'pg';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import { withClientTransaction } from '../db/sql.js';
-import { listRawPurgeEligible, markRawPurged } from '../db/repositories/review-queue-repo.js';
+import {
+  countRawPurgeEligible,
+  listRawPurgeEligible,
+  markRawPurged,
+} from '../db/repositories/review-queue-repo.js';
 
 /**
  * Task 8.1 — scheduled retention purge. Deletion lives ONLY here (never the per-call path).
@@ -59,17 +63,23 @@ export interface PurgeErrorContext {
   sqlstate?: string;
 }
 
-/** A purge step failed. Carries sanitized context for the RETENTION_PURGE_FAILED alert. */
+/**
+ * A purge step failed. Its `message` is SANITIZED — only the group/table/action/dry_run/sqlstate
+ * context, never the underlying pg error text (which can carry row data via DETAIL). The raw
+ * cause is attached via the standard `cause` option for local debugging only; it is NOT folded
+ * into `message` or `stack`, so `String(err)` / an entrypoint stderr dump stays PII-free
+ * ("no transcript content or PII in any log line, ever").
+ */
 export class RetentionPurgeError extends Error {
   readonly context: PurgeErrorContext;
   constructor(context: PurgeErrorContext, cause: unknown) {
-    const detail = cause instanceof Error ? cause.message : String(cause);
+    const sqlstate = context.sqlstate ? ` sqlstate=${context.sqlstate}` : '';
     super(
-      `retention purge failed at ${context.group}/${context.table} (${context.action}): ${detail}`,
+      `retention purge failed at ${context.group}/${context.table} (${context.action}, dry_run=${context.dry_run})${sqlstate}`,
+      { cause },
     );
     this.name = 'RetentionPurgeError';
     this.context = context;
-    if (cause instanceof Error) this.stack += `\nCaused by: ${cause.stack ?? cause.message}`;
   }
 }
 
@@ -283,13 +293,33 @@ async function purgeCoupled(ctx: PurgeContext, spec: CoupledSpec): Promise<void>
   if (dryRun) {
     const parentSoft = await countWhere(client, parent, 'p', parentSoftWhere, now);
     const parentHard = await countWhere(client, parent, 'p', parentHardWhere, now);
-    // Child counts approximate the parent-driven + orphan sets.
+    // Child counts must match the REAL run: parent-driven children (rows the parent selection
+    // drags along) PLUS orphan children on their own window — a child eligible only through its
+    // parent would otherwise be under-reported as 0.
+    const childParentSoft = await countWhere(
+      client,
+      child,
+      'cc',
+      `cc.soft_deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM ${parent} p WHERE p.call_id = cc.call_id AND (${parentSoftWhere}))`,
+      now,
+    );
+    const childParentHard = await countWhere(
+      client,
+      child,
+      'cc',
+      `cc.hard_deleted_at IS NULL
+         AND EXISTS (SELECT 1 FROM ${parent} p WHERE p.call_id = cc.call_id AND (${parentHardWhere}))`,
+      now,
+    );
     const childOrphanSoft = await countWhere(client, child, 'c', orphanSoftWhere, now);
     const childOrphanHard = await countWhere(client, child, 'c', orphanHardWhere, now);
+    const childSoftTotal = childParentSoft + childOrphanSoft;
+    const childHardTotal = childParentHard + childOrphanHard;
     pushAction(ctx, { table: parent, group, action: 'soft_delete', window, count: parentSoft });
     pushAction(ctx, { table: parent, group, action: 'hard_delete', window, count: parentHard });
-    pushAction(ctx, { table: child, group, action: 'soft_delete', window, count: childOrphanSoft });
-    pushAction(ctx, { table: child, group, action: 'hard_delete', window, count: childOrphanHard });
+    pushAction(ctx, { table: child, group, action: 'soft_delete', window, count: childSoftTotal });
+    pushAction(ctx, { table: child, group, action: 'hard_delete', window, count: childHardTotal });
     addGroupCalls(ctx, group, 'soft_delete', parentSoft + childOrphanSoft);
     addGroupCalls(ctx, group, 'hard_delete', parentHard + childOrphanHard);
     return;
@@ -450,43 +480,44 @@ async function purgeSingle(ctx: PurgeContext, spec: SingleSpec): Promise<void> {
 // --- Held-cap physical purge ----------------------------------------------------------------
 
 async function purgeHeldCap(ctx: PurgeContext, capHours: number): Promise<void> {
-  const { client, now, dryRun } = ctx;
+  const { client, now, batch, dryRun } = ctx;
   const group = 'HELD_CAP';
   const window = `cap=${capHours}h`;
-  const candidates = await step(
-    { group, table: 'review_queue', action: 'held_cap_purge', dry_run: dryRun },
-    () => listRawPurgeEligible(client, capHours, now),
-  );
 
   if (dryRun) {
-    pushAction(ctx, {
-      table: 'raw_transcripts',
-      group,
-      action: 'held_cap_purge',
-      window,
-      count: candidates.length,
-    });
-    pushAction(ctx, {
-      table: 'token_vault',
-      group,
-      action: 'held_cap_purge',
-      window,
-      count: candidates.length,
-    });
-    addGroupCalls(ctx, group, 'held_cap_purge', candidates.length);
+    const count = await step(
+      { group, table: 'review_queue', action: 'held_cap_purge', dry_run: true },
+      () => countRawPurgeEligible(client, capHours, now),
+    );
+    pushAction(ctx, { table: 'raw_transcripts', group, action: 'held_cap_purge', window, count });
+    pushAction(ctx, { table: 'token_vault', group, action: 'held_cap_purge', window, count });
+    addGroupCalls(ctx, group, 'held_cap_purge', count);
     return;
   }
 
+  // Batched: fetch at most `batch` eligible rows, purge each (each stamps raw_purged_at so it
+  // leaves the eligible set), then re-fetch until a batch comes back empty. Honors
+  // RETENTION_PURGE_BATCH_SIZE so a large held-call backlog cannot be loaded/processed unbounded.
   let purged = 0;
-  for (const row of candidates) {
-    await step({ group, table: 'raw_transcripts', action: 'held_cap_purge', dry_run: false }, () =>
-      withClientTransaction(client, async (c) => {
-        await c.query(`DELETE FROM token_vault WHERE call_id = $1`, [row.call_id]);
-        await c.query(`DELETE FROM raw_transcripts WHERE call_id = $1`, [row.call_id]);
-        await markRawPurged(c, row.id, now);
-      }),
+  for (;;) {
+    const candidates = await step(
+      { group, table: 'review_queue', action: 'held_cap_purge', dry_run: false },
+      () => listRawPurgeEligible(client, capHours, now, batch),
     );
-    purged += 1;
+    if (candidates.length === 0) break;
+    for (const row of candidates) {
+      await step(
+        { group, table: 'raw_transcripts', action: 'held_cap_purge', dry_run: false },
+        () =>
+          withClientTransaction(client, async (c) => {
+            await c.query(`DELETE FROM token_vault WHERE call_id = $1`, [row.call_id]);
+            await c.query(`DELETE FROM raw_transcripts WHERE call_id = $1`, [row.call_id]);
+            await markRawPurged(c, row.id, now);
+          }),
+      );
+      purged += 1;
+    }
+    if (candidates.length < batch) break;
   }
   pushAction(ctx, {
     table: 'raw_transcripts',

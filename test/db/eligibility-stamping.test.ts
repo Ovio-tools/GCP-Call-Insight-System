@@ -185,8 +185,15 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
       `UPDATE raw_transcripts SET retention_eligible_at = NULL WHERE call_id = $1`,
       ['test-elig-bf'],
     );
+    // A pre-existing match_keys row with no eligibility stamp (its writer predates the stamping
+    // fix) — must be backfilled, else it would be immortal to the purge predicate.
+    await owner.query(
+      `INSERT INTO match_keys (call_id, phone_hmac, name_hmac, key_version, retention_eligible_at)
+       VALUES ($1, 'p', 'n', 1, NULL)`,
+      ['test-elig-bf'],
+    );
 
-    // Re-run migration 013 → its forward-only backfill stamps clean/findings/webhook.
+    // Re-run migration 013 → its forward-only backfill stamps clean/findings/webhook/match_keys.
     await migrate('down', 1);
     await migrate('up');
 
@@ -197,6 +204,11 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
       [wh.id],
     );
     expect(whAfter.rows[0]?.retention_eligible_at).not.toBeNull();
+    const mkAfter = await owner.query<{ retention_eligible_at: Date | null }>(
+      `SELECT retention_eligible_at FROM match_keys WHERE call_id = $1`,
+      ['test-elig-bf'],
+    );
+    expect(mkAfter.rows[0]?.retention_eligible_at).not.toBeNull();
     // Raw is intentionally NOT backfilled (post-store eligibility only).
     const rawAfter = await owner.query<{ retention_eligible_at: Date | null }>(
       `SELECT retention_eligible_at FROM raw_transcripts WHERE call_id = $1`,

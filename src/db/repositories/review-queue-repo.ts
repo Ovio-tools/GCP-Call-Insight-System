@@ -260,11 +260,15 @@ export interface RawPurgeCandidate {
  *
  * Takes a {@link Queryable} so Task 8.1 runs it on the advisory-lock-holding client, and
  * projects only the {@link RawPurgeCandidate} columns so the narrow `purge_role` grant suffices.
+ * An optional `limit` bounds the batch so the held-cap purge honors `RETENTION_PURGE_BATCH_SIZE`
+ * (each processed row leaves the eligible set — `raw_purged_at` is stamped — so re-fetching
+ * drains a backlog batch by batch).
  */
 export async function listRawPurgeEligible(
   db: Queryable,
   capHours: number,
   now: Date,
+  limit?: number,
 ): Promise<RawPurgeCandidate[]> {
   return query<RawPurgeCandidate>(
     db,
@@ -272,9 +276,30 @@ export async function listRawPurgeEligible(
       WHERE status IN ('open', 'in_review', 'unresolvable')
         AND raw_purged_at IS NULL
         AND created_at + ($1 * interval '1 hour') < $2
-      ORDER BY created_at`,
+      ORDER BY created_at
+      ${limit === undefined ? '' : 'LIMIT $3'}`,
+    limit === undefined ? [capHours, now] : [capHours, now, limit],
+  );
+}
+
+/**
+ * Count held-cap-eligible review items (same predicate as {@link listRawPurgeEligible}), for the
+ * retention dry-run report — so reporting is exact without loading every candidate row.
+ */
+export async function countRawPurgeEligible(
+  db: Queryable,
+  capHours: number,
+  now: Date,
+): Promise<number> {
+  const rows = await query<{ n: string }>(
+    db,
+    `SELECT count(*)::text AS n FROM review_queue
+      WHERE status IN ('open', 'in_review', 'unresolvable')
+        AND raw_purged_at IS NULL
+        AND created_at + ($1 * interval '1 hour') < $2`,
     [capHours, now],
   );
+  return Number(rows[0]?.n ?? 0);
 }
 
 /**
