@@ -50,11 +50,9 @@ function retentionDays(): z.ZodType<number> {
 function cleanRetentionDays(): z.ZodType<number | 'never'> {
   return z.union([
     z.literal('never'),
-    z.coerce
-      .number()
-      .refine((n) => Number.isInteger(n) && n > 0, {
-        message: "must be a positive integer number of days or 'never'",
-      }),
+    z.coerce.number().refine((n) => Number.isInteger(n) && n > 0, {
+      message: "must be a positive integer number of days or 'never'",
+    }),
   ]);
 }
 
@@ -563,7 +561,11 @@ export const configSchema = configObjectSchema.superRefine((cfg, ctx) => {
       path: ['RETENTION_CLEAN_HARD_DELETE_DAYS'],
       message: `CLEAN retention must be a whole mode: set BOTH RETENTION_CLEAN_SOFT_DELETE_DAYS and RETENTION_CLEAN_HARD_DELETE_DAYS to 'never', or BOTH to numeric days — not a mix`,
     });
-  } else if (!softNever && !hardNever && (cleanHard as number) <= (cleanSoft as number)) {
+  } else if (
+    typeof cleanSoft === 'number' &&
+    typeof cleanHard === 'number' &&
+    cleanHard <= cleanSoft
+  ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ['RETENTION_CLEAN_HARD_DELETE_DAYS'],

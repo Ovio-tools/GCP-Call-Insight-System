@@ -459,7 +459,11 @@ describe('retention windows config (Task 8.1)', () => {
   });
 
   it('coerces and validates RETENTION_DRY_RUN and RETENTION_PURGE_BATCH_SIZE', () => {
-    const on = validateEnv({ ...validEnv(), RETENTION_DRY_RUN: 'true', RETENTION_PURGE_BATCH_SIZE: '250' });
+    const on = validateEnv({
+      ...validEnv(),
+      RETENTION_DRY_RUN: 'true',
+      RETENTION_PURGE_BATCH_SIZE: '250',
+    });
     expect(on.ok).toBe(true);
     if (!on.ok) return;
     expect(on.config.RETENTION_DRY_RUN).toBe(true);

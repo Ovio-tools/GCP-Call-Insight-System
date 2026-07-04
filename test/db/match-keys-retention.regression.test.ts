@@ -92,7 +92,12 @@ describe.skipIf(!hasTestDb)('putMatchKeys retention compliance (Task 8.1)', () =
 
   it('stamps retention_eligible_at at insert so match_keys can purge', async () => {
     const callId = 'test-mkret-stamp';
-    await upsertCallState(app, { callId, source: 'test', currentStage: 'store', status: 'processing' });
+    await upsertCallState(app, {
+      callId,
+      source: 'test',
+      currentStage: 'store',
+      status: 'processing',
+    });
     await putMatchKeys(createRestrictedRunner(app), {
       callId,
       phoneHmac: Buffer.from('p'),
@@ -107,7 +112,12 @@ describe.skipIf(!hasTestDb)('putMatchKeys retention compliance (Task 8.1)', () =
 
   it('refuses to recreate a hard-deleted (crypto-shredded) match key — retention finality', async () => {
     const callId = 'test-mkret-final';
-    await upsertCallState(app, { callId, source: 'test', currentStage: 'store', status: 'processing' });
+    await upsertCallState(app, {
+      callId,
+      source: 'test',
+      currentStage: 'store',
+      status: 'processing',
+    });
     const runner = createRestrictedRunner(app);
     await putMatchKeys(runner, { callId, phoneHmac: Buffer.from('p'), keyVersion: 1 });
     await owner.query(`UPDATE match_keys SET hard_deleted_at = now() WHERE call_id = $1`, [callId]);

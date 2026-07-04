@@ -64,7 +64,9 @@ export class RetentionPurgeError extends Error {
   readonly context: PurgeErrorContext;
   constructor(context: PurgeErrorContext, cause: unknown) {
     const detail = cause instanceof Error ? cause.message : String(cause);
-    super(`retention purge failed at ${context.group}/${context.table} (${context.action}): ${detail}`);
+    super(
+      `retention purge failed at ${context.group}/${context.table} (${context.action}): ${detail}`,
+    );
     this.name = 'RetentionPurgeError';
     this.context = context;
     if (cause instanceof Error) this.stack += `\nCaused by: ${cause.stack ?? cause.message}`;
@@ -154,7 +156,10 @@ export async function runPurge(deps: PurgeDeps): Promise<PurgeReport> {
           blocking: 'clean',
         });
       } else {
-        logger.info({ component: 'retention-cron' }, 'CLEAN retention is indefinite (never) — skipping');
+        logger.info(
+          { component: 'retention-cron' },
+          'CLEAN retention is indefinite (never) — skipping',
+        );
       }
 
       // Single-table groups (own window, no review coupling).
@@ -322,15 +327,18 @@ async function purgeCoupled(ctx: PurgeContext, spec: CoupledSpec): Promise<void>
   }
   // Orphan-child soft.
   for (;;) {
-    const n = await step({ group, table: child, action: 'soft_delete', dry_run: false }, async () => {
-      const res = await client.query(
-        `UPDATE ${child} SET soft_deleted_at = $1
+    const n = await step(
+      { group, table: child, action: 'soft_delete', dry_run: false },
+      async () => {
+        const res = await client.query(
+          `UPDATE ${child} SET soft_deleted_at = $1
           WHERE call_id IN (SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanSoftWhere} LIMIT ${batch})
             AND soft_deleted_at IS NULL`,
-        [now],
-      );
-      return res.rowCount ?? 0;
-    });
+          [now],
+        );
+        return res.rowCount ?? 0;
+      },
+    );
     childSoft += n;
     if (n === 0) break;
   }
@@ -369,15 +377,18 @@ async function purgeCoupled(ctx: PurgeContext, spec: CoupledSpec): Promise<void>
   }
   // Orphan-child hard.
   for (;;) {
-    const n = await step({ group, table: child, action: 'hard_delete', dry_run: false }, async () => {
-      const res = await client.query(
-        `UPDATE ${child} SET hard_deleted_at = $1, ${SCRUB[child]}
+    const n = await step(
+      { group, table: child, action: 'hard_delete', dry_run: false },
+      async () => {
+        const res = await client.query(
+          `UPDATE ${child} SET hard_deleted_at = $1, ${SCRUB[child]}
           WHERE call_id IN (SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanHardWhere} LIMIT ${batch})
             AND hard_deleted_at IS NULL`,
-        [now],
-      );
-      return res.rowCount ?? 0;
-    });
+          [now],
+        );
+        return res.rowCount ?? 0;
+      },
+    );
     childHard += n;
     if (n === 0) break;
   }
@@ -448,8 +459,20 @@ async function purgeHeldCap(ctx: PurgeContext, capHours: number): Promise<void> 
   );
 
   if (dryRun) {
-    pushAction(ctx, { table: 'raw_transcripts', group, action: 'held_cap_purge', window, count: candidates.length });
-    pushAction(ctx, { table: 'token_vault', group, action: 'held_cap_purge', window, count: candidates.length });
+    pushAction(ctx, {
+      table: 'raw_transcripts',
+      group,
+      action: 'held_cap_purge',
+      window,
+      count: candidates.length,
+    });
+    pushAction(ctx, {
+      table: 'token_vault',
+      group,
+      action: 'held_cap_purge',
+      window,
+      count: candidates.length,
+    });
     addGroupCalls(ctx, group, 'held_cap_purge', candidates.length);
     return;
   }
@@ -465,7 +488,13 @@ async function purgeHeldCap(ctx: PurgeContext, capHours: number): Promise<void> 
     );
     purged += 1;
   }
-  pushAction(ctx, { table: 'raw_transcripts', group, action: 'held_cap_purge', window, count: purged });
+  pushAction(ctx, {
+    table: 'raw_transcripts',
+    group,
+    action: 'held_cap_purge',
+    window,
+    count: purged,
+  });
   pushAction(ctx, { table: 'token_vault', group, action: 'held_cap_purge', window, count: purged });
   addGroupCalls(ctx, group, 'held_cap_purge', purged);
 }

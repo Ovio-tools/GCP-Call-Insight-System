@@ -170,18 +170,21 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
       ['test-elig-bf', Buffer.from([1])],
     );
     // Simulate pre-stamping rows: null out eligibility everywhere.
-    await owner.query(`UPDATE clean_transcripts SET retention_eligible_at = NULL WHERE call_id = $1`, [
-      'test-elig-bf',
-    ]);
-    await owner.query(`UPDATE redaction_findings SET retention_eligible_at = NULL WHERE call_id = $1`, [
-      'test-elig-bf',
-    ]);
+    await owner.query(
+      `UPDATE clean_transcripts SET retention_eligible_at = NULL WHERE call_id = $1`,
+      ['test-elig-bf'],
+    );
+    await owner.query(
+      `UPDATE redaction_findings SET retention_eligible_at = NULL WHERE call_id = $1`,
+      ['test-elig-bf'],
+    );
     await owner.query(`UPDATE raw_webhook_events SET retention_eligible_at = NULL WHERE id = $1`, [
       wh.id,
     ]);
-    await owner.query(`UPDATE raw_transcripts SET retention_eligible_at = NULL WHERE call_id = $1`, [
-      'test-elig-bf',
-    ]);
+    await owner.query(
+      `UPDATE raw_transcripts SET retention_eligible_at = NULL WHERE call_id = $1`,
+      ['test-elig-bf'],
+    );
 
     // Re-run migration 013 → its forward-only backfill stamps clean/findings/webhook.
     await migrate('down', 1);

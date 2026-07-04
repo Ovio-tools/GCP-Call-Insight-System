@@ -63,7 +63,8 @@ export async function runRetentionService(deps: RetentionServiceDeps): Promise<v
       config,
       logger,
       purge:
-        deps.purge ?? ((): Promise<PurgeReport> => runPurge({ pool: purgePool, config, logger, now: now() })),
+        deps.purge ??
+        ((): Promise<PurgeReport> => runPurge({ pool: purgePool, config, logger, now: now() })),
       ...(deps.pingCheck ? { pingCheck: deps.pingCheck } : {}),
     });
   } catch (err) {

@@ -37,8 +37,7 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
   let purge!: Pool;
   const logger = makeCapturingLogger().logger;
 
-  const run = (config = purgeConfig(), now = NOW) =>
-    runPurge({ pool: purge, config, logger, now });
+  const run = (config = purgeConfig(), now = NOW) => runPurge({ pool: purge, config, logger, now });
 
   // --- seeders (owner, explicit timestamps) ---
   async function ensureCall(callId: string, status = 'processing'): Promise<void> {
@@ -48,7 +47,11 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
       [callId, status],
     );
   }
-  async function seedRaw(callId: string, eligible: Date | null, soft: Date | null = null): Promise<void> {
+  async function seedRaw(
+    callId: string,
+    eligible: Date | null,
+    soft: Date | null = null,
+  ): Promise<void> {
     await ensureCall(callId);
     await owner.query(
       `INSERT INTO raw_transcripts (call_id, ciphertext, key_version, retention_eligible_at, soft_deleted_at)
@@ -56,14 +59,22 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
       [callId, Buffer.from('cipher'), eligible, soft],
     );
   }
-  async function seedVault(callId: string, eligible: Date | null, soft: Date | null = null): Promise<void> {
+  async function seedVault(
+    callId: string,
+    eligible: Date | null,
+    soft: Date | null = null,
+  ): Promise<void> {
     await owner.query(
       `INSERT INTO token_vault (call_id, token, ciphertext, key_version, retention_eligible_at, soft_deleted_at)
        VALUES ($1, '[NAME_1]', $2, 1, $3, $4)`,
       [callId, Buffer.from('cipher'), eligible, soft],
     );
   }
-  async function seedClean(callId: string, eligible: Date | null, soft: Date | null = null): Promise<void> {
+  async function seedClean(
+    callId: string,
+    eligible: Date | null,
+    soft: Date | null = null,
+  ): Promise<void> {
     await ensureCall(callId);
     await owner.query(
       `INSERT INTO clean_transcripts (call_id, redacted_text, redaction_risk_score, retention_eligible_at, soft_deleted_at)
@@ -71,7 +82,11 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
       [callId, eligible, soft],
     );
   }
-  async function seedFinding(callId: string, eligible: Date | null, soft: Date | null = null): Promise<void> {
+  async function seedFinding(
+    callId: string,
+    eligible: Date | null,
+    soft: Date | null = null,
+  ): Promise<void> {
     await ensureCall(callId);
     await owner.query(
       `INSERT INTO redaction_findings (call_id, entity_type, token_ref, value_hash, residual_scan_result, retention_eligible_at, soft_deleted_at)
@@ -87,11 +102,7 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     );
     return rows[0]!.id;
   }
-  async function seedReview(
-    callId: string,
-    status: string,
-    createdAt: Date,
-  ): Promise<string> {
+  async function seedReview(callId: string, status: string, createdAt: Date): Promise<string> {
     await ensureCall(callId, 'held');
     const active = status === 'open' || status === 'in_review';
     const { rows } = await owner.query<{ id: string }>(
@@ -104,7 +115,11 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
   }
 
   const col = async (table: string, callId: string, c: string): Promise<unknown> =>
-    (await owner.query(`SELECT ${c} AS v FROM ${table} WHERE call_id = $1`, [callId])).rows[0]?.v;
+    (
+      await owner.query<{ v: unknown }>(`SELECT ${c} AS v FROM ${table} WHERE call_id = $1`, [
+        callId,
+      ])
+    ).rows[0]?.v;
   const rowExists = async (table: string, callId: string): Promise<boolean> =>
     ((await owner.query(`SELECT 1 FROM ${table} WHERE call_id = $1`, [callId])).rowCount ?? 0) > 0;
 
@@ -204,8 +219,12 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     );
     await run();
     expect(
-      (await owner.query(`SELECT soft_deleted_at FROM raw_webhook_events WHERE id = $1`, [whId]))
-        .rows[0]?.soft_deleted_at,
+      (
+        await owner.query<{ soft_deleted_at: Date | null }>(
+          `SELECT soft_deleted_at FROM raw_webhook_events WHERE id = $1`,
+          [whId],
+        )
+      ).rows[0]?.soft_deleted_at,
     ).not.toBeNull();
     expect(await col('match_keys', 'test-purge-match', 'soft_deleted_at')).not.toBeNull();
   });
@@ -225,7 +244,9 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
       ['test-purge-extract', daysAgo(50), daysAgo(45)],
     );
     await run();
-    expect(await col('extraction_candidates', 'test-purge-extract', 'hard_deleted_at')).not.toBeNull();
+    expect(
+      await col('extraction_candidates', 'test-purge-extract', 'hard_deleted_at'),
+    ).not.toBeNull();
     for (const c of [
       'problem_statement',
       'location_in_home',
@@ -240,7 +261,9 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
       expect(await col('extraction_candidates', 'test-purge-extract', c), c).toEqual([]);
     }
     // Metadata kept for tombstone validity.
-    expect(await col('extraction_candidates', 'test-purge-extract', 'call_intent')).toBe('new_booking');
+    expect(await col('extraction_candidates', 'test-purge-extract', 'call_intent')).toBe(
+      'new_booking',
+    );
   });
 
   it('held call past the cap: raw/vault physically gone + raw_purged_at stamped, clean + queue survive', async () => {
@@ -253,8 +276,12 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     expect(await rowExists('token_vault', 'test-purge-cap')).toBe(false);
     expect(await rowExists('clean_transcripts', 'test-purge-cap')).toBe(true);
     expect(
-      (await owner.query(`SELECT raw_purged_at FROM review_queue WHERE id = $1`, [id])).rows[0]
-        ?.raw_purged_at,
+      (
+        await owner.query<{ raw_purged_at: Date | null }>(
+          `SELECT raw_purged_at FROM review_queue WHERE id = $1`,
+          [id],
+        )
+      ).rows[0]?.raw_purged_at,
     ).not.toBeNull();
   });
 
@@ -283,7 +310,9 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
       ['test-purge-held-clean'],
     );
     await run();
-    expect(await col('clean_transcripts', 'test-purge-held-clean', 'soft_deleted_at')).not.toBeNull();
+    expect(
+      await col('clean_transcripts', 'test-purge-held-clean', 'soft_deleted_at'),
+    ).not.toBeNull();
   });
 
   it('dry-run changes nothing and reports per-table + grouped counts', async () => {
@@ -300,8 +329,12 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     expect(await col('raw_transcripts', 'test-purge-dry', 'hard_deleted_at')).toBeNull();
     expect(await rowExists('raw_transcripts', 'test-purge-dry-cap')).toBe(true);
     expect(
-      (await owner.query(`SELECT raw_purged_at FROM review_queue WHERE id = $1`, [capId])).rows[0]
-        ?.raw_purged_at,
+      (
+        await owner.query<{ raw_purged_at: Date | null }>(
+          `SELECT raw_purged_at FROM review_queue WHERE id = $1`,
+          [capId],
+        )
+      ).rows[0]?.raw_purged_at,
     ).toBeNull();
   });
 
@@ -357,7 +390,9 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
             text.includes('UPDATE token_vault') &&
             text.includes('hard_deleted_at')
           ) {
-            return Promise.reject(Object.assign(new Error('injected vault failure'), { code: 'XX000' }));
+            return Promise.reject(
+              Object.assign(new Error('injected vault failure'), { code: 'XX000' }),
+            );
           }
           return (orig as (t: unknown, p: unknown) => unknown)(text, params);
         };

@@ -54,11 +54,17 @@ describe.skipIf(!hasTestDb)('recreate finality guards (Task 8.1)', () => {
         `UPDATE raw_transcripts SET hard_deleted_at = now(), ciphertext = ''::bytea WHERE call_id = $1`,
         [callId],
       );
-      const before = await owner.query(`SELECT ciphertext, hard_deleted_at FROM raw_transcripts WHERE call_id = $1`, [callId]);
+      const before = await owner.query(
+        `SELECT ciphertext, hard_deleted_at FROM raw_transcripts WHERE call_id = $1`,
+        [callId],
+      );
       await expect(putTranscript(app, keyProvider, { callId, transcript: 'new' })).rejects.toThrow(
         /retention conflict/,
       );
-      const after = await owner.query(`SELECT ciphertext, hard_deleted_at FROM raw_transcripts WHERE call_id = $1`, [callId]);
+      const after = await owner.query(
+        `SELECT ciphertext, hard_deleted_at FROM raw_transcripts WHERE call_id = $1`,
+        [callId],
+      );
       expect(after.rows).toEqual(before.rows);
     });
 
@@ -66,7 +72,9 @@ describe.skipIf(!hasTestDb)('recreate finality guards (Task 8.1)', () => {
       const callId = 'test-fin-clean-hd';
       await seedCall(callId);
       await upsertCleanTranscript(app, { callId, redactedText: 'v1', redactionRiskScore: 0.1 });
-      await owner.query(`UPDATE clean_transcripts SET hard_deleted_at = now() WHERE call_id = $1`, [callId]);
+      await owner.query(`UPDATE clean_transcripts SET hard_deleted_at = now() WHERE call_id = $1`, [
+        callId,
+      ]);
       await expect(
         upsertCleanTranscript(app, { callId, redactedText: 'v2', redactionRiskScore: 0.2 }),
       ).rejects.toThrow(/retention conflict/);
@@ -76,7 +84,10 @@ describe.skipIf(!hasTestDb)('recreate finality guards (Task 8.1)', () => {
       const callId = 'test-fin-find-hd';
       await seedCall(callId);
       await replaceFindings(app, callId, [{ entityType: 'NAME', tokenRef: '[NAME_1]' }]);
-      await owner.query(`UPDATE redaction_findings SET hard_deleted_at = now() WHERE call_id = $1`, [callId]);
+      await owner.query(
+        `UPDATE redaction_findings SET hard_deleted_at = now() WHERE call_id = $1`,
+        [callId],
+      );
       await expect(
         replaceFindings(app, callId, [{ entityType: 'PHONE', tokenRef: '[PHONE_1]' }]),
       ).rejects.toThrow(/retention conflict/);
@@ -86,7 +97,9 @@ describe.skipIf(!hasTestDb)('recreate finality guards (Task 8.1)', () => {
       const callId = 'test-fin-find-clean-hd';
       await seedCall(callId);
       await upsertCleanTranscript(app, { callId, redactedText: 'v1', redactionRiskScore: 0.1 });
-      await owner.query(`UPDATE clean_transcripts SET hard_deleted_at = now() WHERE call_id = $1`, [callId]);
+      await owner.query(`UPDATE clean_transcripts SET hard_deleted_at = now() WHERE call_id = $1`, [
+        callId,
+      ]);
       await expect(
         replaceFindings(app, callId, [{ entityType: 'NAME', tokenRef: '[NAME_1]' }]),
       ).rejects.toThrow(/retention conflict/);
@@ -96,8 +109,14 @@ describe.skipIf(!hasTestDb)('recreate finality guards (Task 8.1)', () => {
       const callId = 'test-fin-vault-hd';
       await seedCall(callId);
       const runner = createRestrictedRunner(app);
-      await putToken(runner, keyProvider, { callId, token: '[NAME_1]', plaintext: Buffer.from('x') });
-      await owner.query(`UPDATE token_vault SET hard_deleted_at = now() WHERE call_id = $1`, [callId]);
+      await putToken(runner, keyProvider, {
+        callId,
+        token: '[NAME_1]',
+        plaintext: Buffer.from('x'),
+      });
+      await owner.query(`UPDATE token_vault SET hard_deleted_at = now() WHERE call_id = $1`, [
+        callId,
+      ]);
       await expect(
         putToken(runner, keyProvider, { callId, token: '[NAME_1]', plaintext: Buffer.from('y') }),
       ).rejects.toThrow(/retention conflict/);
@@ -131,7 +150,9 @@ describe.skipIf(!hasTestDb)('recreate finality guards (Task 8.1)', () => {
       await expect(putTranscript(app, keyProvider, { callId, transcript: 'new' })).rejects.toThrow(
         /retention conflict/,
       );
-      expect((await owner.query(`SELECT 1 FROM raw_transcripts WHERE call_id = $1`, [callId])).rowCount).toBe(0);
+      expect(
+        (await owner.query(`SELECT 1 FROM raw_transcripts WHERE call_id = $1`, [callId])).rowCount,
+      ).toBe(0);
     });
 
     it('putToken (restricted_role) refuses to recreate after held-cap purge', async () => {
@@ -144,7 +165,9 @@ describe.skipIf(!hasTestDb)('recreate finality guards (Task 8.1)', () => {
           plaintext: Buffer.from('x'),
         }),
       ).rejects.toThrow(/retention conflict/);
-      expect((await owner.query(`SELECT 1 FROM token_vault WHERE call_id = $1`, [callId])).rowCount).toBe(0);
+      expect(
+        (await owner.query(`SELECT 1 FROM token_vault WHERE call_id = $1`, [callId])).rowCount,
+      ).toBe(0);
     });
   });
 });

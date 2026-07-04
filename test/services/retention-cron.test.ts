@@ -54,7 +54,9 @@ describe.skipIf(!hasTestDb)('runRetentionService (Task 8.1)', () => {
 
     expect(purge).toHaveBeenCalledTimes(1);
     expect(pingCheck).toHaveBeenCalledTimes(1);
-    const alerts = await owner.query(`SELECT 1 FROM alert_events WHERE error_code = 'RETENTION_PURGE_FAILED'`);
+    const alerts = await owner.query(
+      `SELECT 1 FROM alert_events WHERE error_code = 'RETENTION_PURGE_FAILED'`,
+    );
     expect(alerts.rowCount).toBe(0);
   });
 
@@ -63,7 +65,13 @@ describe.skipIf(!hasTestDb)('runRetentionService (Task 8.1)', () => {
     const pingCheck = vi.fn((_url: string) => Promise.resolve());
     const config = makeTestConfig({ RETENTION_CHECK_URL: CHECK_URL });
     const boom = new RetentionPurgeError(
-      { group: 'RAW', table: 'raw_transcripts', action: 'hard_delete', dry_run: false, sqlstate: 'XX000' },
+      {
+        group: 'RAW',
+        table: 'raw_transcripts',
+        action: 'hard_delete',
+        dry_run: false,
+        sqlstate: 'XX000',
+      },
       new Error('SECRET_TRANSCRIPT boom'),
     );
     const purge = vi.fn(() => Promise.reject(boom));

@@ -79,9 +79,14 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
   });
 
   it('purge_role can UPDATE soft/hard/scrub columns', async () => {
-    expect(await runAs('purge_role', `UPDATE raw_transcripts SET soft_deleted_at = now()`)).toBeUndefined();
     expect(
-      await runAs('purge_role', `UPDATE token_vault SET hard_deleted_at = now(), ciphertext = ''::bytea`),
+      await runAs('purge_role', `UPDATE raw_transcripts SET soft_deleted_at = now()`),
+    ).toBeUndefined();
+    expect(
+      await runAs(
+        'purge_role',
+        `UPDATE token_vault SET hard_deleted_at = now(), ciphertext = ''::bytea`,
+      ),
     ).toBeUndefined();
     expect(
       await runAs(
@@ -98,9 +103,9 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
   });
 
   it('purge_role cannot reset retention_eligible_at', async () => {
-    expect(await runAs('purge_role', `UPDATE raw_transcripts SET retention_eligible_at = now()`)).toBe(
-      PERMISSION_DENIED,
-    );
+    expect(
+      await runAs('purge_role', `UPDATE raw_transcripts SET retention_eligible_at = now()`),
+    ).toBe(PERMISSION_DENIED);
   });
 
   it('purge_role can DELETE only raw_transcripts and token_vault', async () => {
@@ -119,21 +124,37 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
       PERMISSION_DENIED,
     );
     expect(
-      await runAs('purge_role', `INSERT INTO clean_transcripts (call_id, redacted_text) VALUES ('x', 'y')`),
+      await runAs(
+        'purge_role',
+        `INSERT INTO clean_transcripts (call_id, redacted_text) VALUES ('x', 'y')`,
+      ),
     ).toBe(PERMISSION_DENIED);
   });
 
   it('purge_role has narrow review_queue access: select id/status/purged, update only raw_purged_at', async () => {
     expect(
-      await runAs('purge_role', `SELECT id, call_id, status, created_at, raw_purged_at FROM review_queue LIMIT 1`),
+      await runAs(
+        'purge_role',
+        `SELECT id, call_id, status, created_at, raw_purged_at FROM review_queue LIMIT 1`,
+      ),
     ).toBeUndefined();
-    expect(await runAs('purge_role', `UPDATE review_queue SET raw_purged_at = now()`)).toBeUndefined();
+    expect(
+      await runAs('purge_role', `UPDATE review_queue SET raw_purged_at = now()`),
+    ).toBeUndefined();
     // Cannot see the sensitive review columns...
-    expect(await runAs('purge_role', `SELECT assignee FROM review_queue LIMIT 1`)).toBe(PERMISSION_DENIED);
-    expect(await runAs('purge_role', `SELECT held_reason FROM review_queue LIMIT 1`)).toBe(PERMISSION_DENIED);
-    expect(await runAs('purge_role', `SELECT sla_due_at FROM review_queue LIMIT 1`)).toBe(PERMISSION_DENIED);
+    expect(await runAs('purge_role', `SELECT assignee FROM review_queue LIMIT 1`)).toBe(
+      PERMISSION_DENIED,
+    );
+    expect(await runAs('purge_role', `SELECT held_reason FROM review_queue LIMIT 1`)).toBe(
+      PERMISSION_DENIED,
+    );
+    expect(await runAs('purge_role', `SELECT sla_due_at FROM review_queue LIMIT 1`)).toBe(
+      PERMISSION_DENIED,
+    );
     // ...and cannot change the review status.
-    expect(await runAs('purge_role', `UPDATE review_queue SET status = 'resolved'`)).toBe(PERMISSION_DENIED);
+    expect(await runAs('purge_role', `UPDATE review_queue SET status = 'resolved'`)).toBe(
+      PERMISSION_DENIED,
+    );
   });
 
   it('restricted_role can read the two non-sensitive review_queue columns (putToken guard)', async () => {

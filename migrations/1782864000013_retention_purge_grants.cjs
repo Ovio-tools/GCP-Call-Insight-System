@@ -101,7 +101,9 @@ exports.up = (pgm) => {
 
   // review_queue: purge_role reads the held-cap seam columns + stamps raw_purged_at; it may
   // NOT see the sensitive review columns (assignee/held_reason/sla_due_at) or change status.
-  pgm.sql(`GRANT SELECT (id, call_id, status, created_at, raw_purged_at) ON review_queue TO purge_role;`);
+  pgm.sql(
+    `GRANT SELECT (id, call_id, status, created_at, raw_purged_at) ON review_queue TO purge_role;`,
+  );
   pgm.sql(`GRANT UPDATE (raw_purged_at) ON review_queue TO purge_role;`);
   // restricted_role needs the two non-sensitive columns for the putToken held-cap finality
   // guard (a minor, defensible boundary extension: review_queue holds no raw PII, and
@@ -127,7 +129,9 @@ exports.up = (pgm) => {
 exports.down = (pgm) => {
   pgm.sql(`REVOKE SELECT (call_id, raw_purged_at) ON review_queue FROM restricted_role;`);
   pgm.sql(`REVOKE UPDATE (raw_purged_at) ON review_queue FROM purge_role;`);
-  pgm.sql(`REVOKE SELECT (id, call_id, status, created_at, raw_purged_at) ON review_queue FROM purge_role;`);
+  pgm.sql(
+    `REVOKE SELECT (id, call_id, status, created_at, raw_purged_at) ON review_queue FROM purge_role;`,
+  );
 
   // Restore DELETE on the five stamp-and-scrub tables (migrations 5/9 granted it).
   for (const table of DELETE_REVOKED) {
