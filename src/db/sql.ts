@@ -57,6 +57,25 @@ export async function withTransaction<T>(
 ): Promise<T> {
   const client = await pool.connect();
   try {
+    return await withClientTransaction(client, fn);
+  } finally {
+    client.release();
+  }
+}
+
+/**
+ * Run `fn` inside a transaction on an ALREADY-CHECKED-OUT client: BEGIN, run, COMMIT; ROLLBACK
+ * on any throw. Unlike {@link withTransaction} it does NOT acquire or release the client — the
+ * caller owns its lifecycle. This is what the retention purge (Task 8.1) uses so every per-batch
+ * / per-held-row transaction runs on the SAME session that holds the advisory lock, instead of a
+ * fresh pooled connection that would escape the lock. The rollback error is swallowed (the
+ * original error is what matters) but the original always propagates.
+ */
+export async function withClientTransaction<T>(
+  client: PoolClient,
+  fn: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  try {
     await client.query('BEGIN');
     const result = await fn(client);
     await client.query('COMMIT');
@@ -64,7 +83,5 @@ export async function withTransaction<T>(
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
     throw err;
-  } finally {
-    client.release();
   }
 }

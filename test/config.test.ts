@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CONFIG_ERROR_CODE, ConfigError, loadConfig, validateEnv } from '../src/config/index.js';
 import { HELD_REASON } from '../src/db/enums.js';
 import { REVIEW_SLA_SCAN_CADENCE_MINUTES } from '../src/config/schema.js';
-import { DEFAULT_REVIEW_SLA_MINUTES_BY_REASON, REQUIRED_REVIEW_ENV } from './_config.js';
+import { DEFAULT_REVIEW_SLA_MINUTES_BY_REASON, REQUIRED_ENV } from './_config.js';
 
 /** A complete, valid environment. Individual tests remove keys to force failures. */
 function validEnv(): NodeJS.ProcessEnv {
@@ -13,8 +13,9 @@ function validEnv(): NodeJS.ProcessEnv {
     LOG_LEVEL: 'info',
     SERVICE_NAME: 'gcp-call-insights',
     PORT: '8080',
-    // Task 6.1 required-without-default review settings, so the base env validates.
-    ...REQUIRED_REVIEW_ENV,
+    // Required-without-default settings (Task 6.1 review + Task 8.1 retention), so the base
+    // env validates.
+    ...REQUIRED_ENV,
   };
 }
 
@@ -360,6 +361,138 @@ describe('review-queue / held-call retention config (Task 6.1)', () => {
     for (const key of ['REVIEW_SLA_MINUTES_BY_REASON', 'REVIEW_HELD_RAW_RETENTION_CAP_HOURS']) {
       expect(example).toContain(key);
     }
+  });
+});
+
+describe('retention windows config (Task 8.1)', () => {
+  const NUMERIC_GROUPS = [
+    ['RETENTION_RAW_SOFT_DELETE_DAYS', 'RETENTION_RAW_HARD_DELETE_DAYS'],
+    ['RETENTION_WEBHOOK_SOFT_DELETE_DAYS', 'RETENTION_WEBHOOK_HARD_DELETE_DAYS'],
+    ['RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS', 'RETENTION_MATCH_KEYS_HARD_DELETE_DAYS'],
+    ['RETENTION_EXTRACT_SOFT_DELETE_DAYS', 'RETENTION_EXTRACT_HARD_DELETE_DAYS'],
+    ['RETENTION_CLEAN_SOFT_DELETE_DAYS', 'RETENTION_CLEAN_HARD_DELETE_DAYS'],
+  ] as const;
+
+  it('parses the valid windowed configuration', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.RETENTION_RAW_SOFT_DELETE_DAYS).toBe(7);
+    expect(result.config.RETENTION_RAW_HARD_DELETE_DAYS).toBe(30);
+    expect(result.config.RETENTION_CLEAN_SOFT_DELETE_DAYS).toBe(30);
+    expect(result.config.RETENTION_CLEAN_HARD_DELETE_DAYS).toBe(365);
+    // Defaults for the two knobs.
+    expect(result.config.RETENTION_DRY_RUN).toBe(false);
+    expect(result.config.RETENTION_PURGE_BATCH_SIZE).toBe(1000);
+  });
+
+  it('rejects each missing required window var, naming it', () => {
+    for (const [soft, hard] of NUMERIC_GROUPS) {
+      for (const key of [soft, hard]) {
+        const env = validEnv();
+        delete env[key];
+        const result = validateEnv(env);
+        expect(result.ok, `missing ${key} should be rejected`).toBe(false);
+        if (result.ok) continue;
+        expect(result.error.invalid).toContain(key);
+      }
+    }
+  });
+
+  it('rejects a non-positive / non-int window value, naming the variable', () => {
+    for (const bad of ['0', '-1', '1.5', 'abc', '']) {
+      const result = validateEnv({ ...validEnv(), RETENTION_RAW_SOFT_DELETE_DAYS: bad });
+      expect(result.ok, `value ${JSON.stringify(bad)} should be rejected`).toBe(false);
+      if (result.ok) continue;
+      expect(result.error.invalid).toContain('RETENTION_RAW_SOFT_DELETE_DAYS');
+    }
+  });
+
+  it('rejects HARD <= SOFT for every group, naming the offending pair', () => {
+    for (const [soft, hard] of NUMERIC_GROUPS) {
+      // equal
+      const equal = validateEnv({ ...validEnv(), [soft]: '10', [hard]: '10' });
+      expect(equal.ok, `${hard} == ${soft} should be rejected`).toBe(false);
+      if (!equal.ok) expect(equal.error.invalid).toContain(hard);
+      // hard < soft
+      const less = validateEnv({ ...validEnv(), [soft]: '10', [hard]: '5' });
+      expect(less.ok, `${hard} < ${soft} should be rejected`).toBe(false);
+      if (!less.ok) expect(less.error.invalid).toContain(hard);
+    }
+  });
+
+  it('accepts the CLEAN indefinite mode (both never)', () => {
+    const result = validateEnv({
+      ...validEnv(),
+      RETENTION_CLEAN_SOFT_DELETE_DAYS: 'never',
+      RETENTION_CLEAN_HARD_DELETE_DAYS: 'never',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.RETENTION_CLEAN_SOFT_DELETE_DAYS).toBe('never');
+    expect(result.config.RETENTION_CLEAN_HARD_DELETE_DAYS).toBe('never');
+  });
+
+  it('rejects a mixed CLEAN pair (one never, one numeric)', () => {
+    const a = validateEnv({
+      ...validEnv(),
+      RETENTION_CLEAN_SOFT_DELETE_DAYS: 'never',
+      RETENTION_CLEAN_HARD_DELETE_DAYS: '365',
+    });
+    expect(a.ok).toBe(false);
+    if (!a.ok) expect(a.error.invalid).toContain('RETENTION_CLEAN_HARD_DELETE_DAYS');
+
+    const b = validateEnv({
+      ...validEnv(),
+      RETENTION_CLEAN_SOFT_DELETE_DAYS: '30',
+      RETENTION_CLEAN_HARD_DELETE_DAYS: 'never',
+    });
+    expect(b.ok).toBe(false);
+    if (!b.ok) expect(b.error.invalid).toContain('RETENTION_CLEAN_HARD_DELETE_DAYS');
+  });
+
+  it('only CLEAN accepts never — a non-CLEAN group rejects never', () => {
+    const result = validateEnv({ ...validEnv(), RETENTION_RAW_SOFT_DELETE_DAYS: 'never' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('RETENTION_RAW_SOFT_DELETE_DAYS');
+  });
+
+  it('coerces and validates RETENTION_DRY_RUN and RETENTION_PURGE_BATCH_SIZE', () => {
+    const on = validateEnv({
+      ...validEnv(),
+      RETENTION_DRY_RUN: 'true',
+      RETENTION_PURGE_BATCH_SIZE: '250',
+    });
+    expect(on.ok).toBe(true);
+    if (!on.ok) return;
+    expect(on.config.RETENTION_DRY_RUN).toBe(true);
+    expect(on.config.RETENTION_PURGE_BATCH_SIZE).toBe(250);
+
+    for (const bad of ['maybe', '2']) {
+      const result = validateEnv({ ...validEnv(), RETENTION_DRY_RUN: bad });
+      expect(result.ok, `dry-run ${bad} should be rejected`).toBe(false);
+      if (result.ok) continue;
+      expect(result.error.invalid).toContain('RETENTION_DRY_RUN');
+    }
+    for (const bad of ['0', '-1', '1.5']) {
+      const result = validateEnv({ ...validEnv(), RETENTION_PURGE_BATCH_SIZE: bad });
+      expect(result.ok, `batch ${bad} should be rejected`).toBe(false);
+      if (result.ok) continue;
+      expect(result.error.invalid).toContain('RETENTION_PURGE_BATCH_SIZE');
+    }
+  });
+
+  it('documents every retention key in .env.example (both CLEAN modes)', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    for (const [soft, hard] of NUMERIC_GROUPS) {
+      expect(example).toContain(soft);
+      expect(example).toContain(hard);
+    }
+    expect(example).toContain('RETENTION_DRY_RUN');
+    expect(example).toContain('RETENTION_PURGE_BATCH_SIZE');
+    // The indefinite CLEAN mode is documented alongside the windowed default.
+    expect(example).toContain('never');
   });
 });
 

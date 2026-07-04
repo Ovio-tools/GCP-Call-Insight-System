@@ -238,27 +238,68 @@ export async function setStatus(
 // still resolve/mark-unresolvable.
 
 /**
+ * The lean projection the held-cap purge needs from a review row (Task 8.1). Deliberately NOT
+ * the full {@link ReviewQueueRow}: the retention cron runs as `purge_role`, which is granted
+ * SELECT on ONLY these five columns (migration 013) — it must never read `assignee` /
+ * `held_reason` / `sla_due_at`. A `SELECT *` here would fail with 42501 under that role.
+ */
+export interface RawPurgeCandidate {
+  id: string;
+  call_id: string;
+  status: ReviewStatus;
+  created_at: Date;
+  raw_purged_at: Date | null;
+}
+
+/**
  * Review items whose held raw transcript + vault have exceeded the retention cap and must be
  * purged "regardless" of review status — INCLUDING `unresolvable` (the execution doc requires
  * an unresolvable item's raw to be purged on the cap). A `resolved` item is excluded: its raw
  * follows the normal retention window, not the held cap. Already-purged rows (`raw_purged_at`
  * set) are excluded so Task 8.1 never double-purges. Oldest first.
+ *
+ * Takes a {@link Queryable} so Task 8.1 runs it on the advisory-lock-holding client, and
+ * projects only the {@link RawPurgeCandidate} columns so the narrow `purge_role` grant suffices.
+ * An optional `limit` bounds the batch so the held-cap purge honors `RETENTION_PURGE_BATCH_SIZE`
+ * (each processed row leaves the eligible set — `raw_purged_at` is stamped — so re-fetching
+ * drains a backlog batch by batch).
  */
 export async function listRawPurgeEligible(
-  pool: Pool,
+  db: Queryable,
   capHours: number,
   now: Date,
-): Promise<ReviewQueueRow[]> {
-  const rows = await query<ReviewQueueRow>(
-    pool,
-    `SELECT * FROM review_queue
+  limit?: number,
+): Promise<RawPurgeCandidate[]> {
+  return query<RawPurgeCandidate>(
+    db,
+    `SELECT id, call_id, status, created_at, raw_purged_at FROM review_queue
       WHERE status IN ('open', 'in_review', 'unresolvable')
         AND raw_purged_at IS NULL
         AND created_at + ($1 * interval '1 hour') < $2
-      ORDER BY created_at`,
+      ORDER BY created_at
+      ${limit === undefined ? '' : 'LIMIT $3'}`,
+    limit === undefined ? [capHours, now] : [capHours, now, limit],
+  );
+}
+
+/**
+ * Count held-cap-eligible review items (same predicate as {@link listRawPurgeEligible}), for the
+ * retention dry-run report — so reporting is exact without loading every candidate row.
+ */
+export async function countRawPurgeEligible(
+  db: Queryable,
+  capHours: number,
+  now: Date,
+): Promise<number> {
+  const rows = await query<{ n: string }>(
+    db,
+    `SELECT count(*)::text AS n FROM review_queue
+      WHERE status IN ('open', 'in_review', 'unresolvable')
+        AND raw_purged_at IS NULL
+        AND created_at + ($1 * interval '1 hour') < $2`,
     [capHours, now],
   );
-  return rows.map((r) => parseOrThrow(TABLE, reviewQueueRowSchema, r));
+  return Number(rows[0]?.n ?? 0);
 }
 
 /**
@@ -275,6 +316,22 @@ export async function hasBlockingReviewForRawPurge(pool: Pool, callId: string): 
       WHERE call_id = $1 AND status IN ('open', 'in_review', 'unresolvable')
         AND raw_purged_at IS NULL
       LIMIT 1`,
+    [callId],
+  );
+  return rows.length > 0;
+}
+
+/**
+ * Whether a call has a review whose raw/vault were HELD-CAP PURGED (`raw_purged_at IS NOT
+ * NULL`), Task 8.1 §6. The held-cap purge PHYSICALLY deletes raw/vault (no tombstone), so this
+ * is the named predicate for "this call's raw is retention-final." The `putTranscript`/`putToken`
+ * writers enforce it inline via a `NOT EXISTS` guarded insert; the redact/fetch preflight uses
+ * this for an early, clear hold (defense-in-depth) before any partial write.
+ */
+export async function hasRawPurgedReview(pool: Pool, callId: string): Promise<boolean> {
+  const rows = await query<{ one: number }>(
+    pool,
+    `SELECT 1 AS one FROM review_queue WHERE call_id = $1 AND raw_purged_at IS NOT NULL LIMIT 1`,
     [callId],
   );
   return rows.length > 0;
@@ -307,18 +364,21 @@ export async function hasBlockingReviewForCleanTranscript(
  * Task 8.1 calls it inside the SAME transaction as the hard raw/vault removal — the stamp lands
  * only after that succeeds. Idempotent (`raw_purged_at IS NULL` guard). `review_queue` is NOT
  * purgeable and has no retention triplet, so the row itself survives the purge.
+ *
+ * `RETURNING id` (not `*`): the caller only needs to know whether the stamp landed (the purged
+ * id) or was a no-op (`undefined`, already purged), and `purge_role` may not read the full row.
  */
 export async function markRawPurged(
   db: Queryable,
   id: string,
   now: Date,
-): Promise<ReviewQueueRow | undefined> {
-  const rows = await query<ReviewQueueRow>(
+): Promise<string | undefined> {
+  const rows = await query<{ id: string }>(
     db,
     `UPDATE review_queue SET raw_purged_at = $2
       WHERE id = $1 AND raw_purged_at IS NULL
-      RETURNING *`,
+      RETURNING id`,
     [id, now],
   );
-  return rows[0] ? parseOrThrow(TABLE, reviewQueueRowSchema, rows[0]) : undefined;
+  return rows[0]?.id;
 }

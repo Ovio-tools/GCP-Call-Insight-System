@@ -32,6 +32,34 @@ export const REQUIRED_REVIEW_ENV: Record<string, string> = {
 };
 
 /**
+ * The Task 8.1 retention windows that are REQUIRED with no schema default (privacy policy — a
+ * purge window must be an explicit decision, mirroring {@link REQUIRED_REVIEW_ENV}). Same
+ * lockstep contract: a schema change touches only this fragment. CLEAN is windowed here
+ * (numeric/numeric); the indefinite `never`/`never` mode is exercised by dedicated tests.
+ */
+export const REQUIRED_RETENTION_ENV: Record<string, string> = {
+  RETENTION_RAW_SOFT_DELETE_DAYS: '7',
+  RETENTION_RAW_HARD_DELETE_DAYS: '30',
+  RETENTION_WEBHOOK_SOFT_DELETE_DAYS: '7',
+  RETENTION_WEBHOOK_HARD_DELETE_DAYS: '30',
+  RETENTION_CLEAN_SOFT_DELETE_DAYS: '30',
+  RETENTION_CLEAN_HARD_DELETE_DAYS: '365',
+  RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS: '7',
+  RETENTION_MATCH_KEYS_HARD_DELETE_DAYS: '30',
+  RETENTION_EXTRACT_SOFT_DELETE_DAYS: '30',
+  RETENTION_EXTRACT_HARD_DELETE_DAYS: '90',
+};
+
+/**
+ * The full required-without-default env fragment tests spread into a hand-built environment so
+ * `validateEnv` / `configSchema.parse` succeed: review-queue (Task 6.1) + retention (Task 8.1).
+ */
+export const REQUIRED_ENV: Record<string, string> = {
+  ...REQUIRED_REVIEW_ENV,
+  ...REQUIRED_RETENTION_ENV,
+};
+
+/**
  * A fully-defaulted `Config` for tests, with `overrides` applied on top.
  *
  * The base is produced by parsing the real schema with `NODE_ENV` plus the required-without-
@@ -42,7 +70,7 @@ export const REQUIRED_REVIEW_ENV: Record<string, string> = {
  * SESSION_SECRET, OIDC_*) stay absent unless a test overrides them.
  */
 export function makeTestConfig(overrides: Partial<Config> = {}): Config {
-  const base = configSchema.parse({ NODE_ENV: 'test', ...REQUIRED_REVIEW_ENV });
+  const base = configSchema.parse({ NODE_ENV: 'test', ...REQUIRED_ENV });
   return { ...base, ...overrides };
 }
 

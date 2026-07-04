@@ -19,5 +19,6 @@ npm-debug.log*
 .idea/
 *.tsbuildinfo
 
-# Vendored NER model weights (fetched by npm run model:fetch)
-models/
+# Vendored NER model weights (fetched by npm run model:fetch). No trailing slash so a local
+# `models` SYMLINK (common in worktrees) is ignored too, not just a real directory.
+models
