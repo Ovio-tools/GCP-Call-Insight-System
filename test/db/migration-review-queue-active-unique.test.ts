@@ -6,11 +6,12 @@ import { hasTestDb, makePool, migrate } from './_pg.js';
  * Migration 1782864000012 — the "exactly one active review row per call" DB guarantee plus
  * the "every active row carries an SLA" CHECK, and their two loud `up` preflights.
  *
- * 012 is the newest migration, so rolling back ONE exposes the pre-012 schema (review_queue
- * exists from migration 2, without the partial unique index / CHECK). Bump ABOVE when a later
- * migration is stacked on top.
+ * Rolling back down to just above migration 2 exposes the pre-012 schema (review_queue exists
+ * from migration 2, without the partial unique index / CHECK). ABOVE counts the migrations
+ * stacked on top of 012 — bump it when a later migration is added. Task 8.1 added migration 013,
+ * so ABOVE = 2 (roll back 013 + 012).
  */
-const ABOVE = 1;
+const ABOVE = 2;
 const PATTERN = 'test-rqau-%';
 
 describe.skipIf(!hasTestDb)('migration 012 review_queue active-row invariants', () => {

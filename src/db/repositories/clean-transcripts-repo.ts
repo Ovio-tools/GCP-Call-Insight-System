@@ -24,12 +24,17 @@ export async function upsertCleanTranscript(
   const v = parseOrThrow(TABLE, cleanTranscriptInsertSchema, input);
   const rows = await query<CleanTranscriptRow>(
     pool,
-    `INSERT INTO clean_transcripts (call_id, redacted_text, redaction_risk_score, redaction_reasons)
-     VALUES ($1, $2, $3, COALESCE($4::jsonb, '[]'::jsonb))
+    `INSERT INTO clean_transcripts (call_id, redacted_text, redaction_risk_score, redaction_reasons, retention_eligible_at)
+     VALUES ($1, $2, $3, COALESCE($4::jsonb, '[]'::jsonb), now())
      ON CONFLICT (call_id) DO UPDATE SET
        redacted_text = EXCLUDED.redacted_text,
        redaction_risk_score = EXCLUDED.redaction_risk_score,
        redaction_reasons = EXCLUDED.redaction_reasons,
+       -- Monotonic (Task 8.1 §2): the CLEAN retention clock starts at first creation and NEVER
+       -- resets on a re-redaction rerun. Stamping at CREATION (not the mark-retention-eligible
+       -- stage) is what makes a held call's redacted rows eventually purgeable — a held call may
+       -- never reach the final stage. The blocking-review predicate keeps them until resolution.
+       retention_eligible_at = COALESCE(clean_transcripts.retention_eligible_at, now()),
        soft_deleted_at = NULL
      WHERE clean_transcripts.hard_deleted_at IS NULL
      RETURNING *`,

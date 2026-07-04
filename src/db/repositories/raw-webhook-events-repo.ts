@@ -10,7 +10,9 @@ import {
 
 const TABLE = 'raw_webhook_events';
 
-/** Store a minimized webhook event (allowlisted metadata only). Append-only ingest row. */
+/** Store a minimized webhook event (allowlisted metadata only). Append-only ingest row.
+ * Stamps `retention_eligible_at` at receipt (Task 8.1 §2) so the webhook event has a retention
+ * clock from the moment it lands — there is no later stage that would stamp it otherwise. */
 export async function insertWebhookEvent(
   pool: Pool,
   input: RawWebhookEventInsert,
@@ -18,8 +20,8 @@ export async function insertWebhookEvent(
   const v = parseOrThrow(TABLE, rawWebhookEventInsertSchema, input);
   const rows = await query<RawWebhookEventRow>(
     pool,
-    `INSERT INTO raw_webhook_events (source, payload, signature_status)
-     VALUES ($1, COALESCE($2::jsonb, '{}'::jsonb), $3)
+    `INSERT INTO raw_webhook_events (source, payload, signature_status, retention_eligible_at)
+     VALUES ($1, COALESCE($2::jsonb, '{}'::jsonb), $3, now())
      RETURNING *`,
     [v.source, toJsonParam(v.payload), v.signatureStatus],
   );
