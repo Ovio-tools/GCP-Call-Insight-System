@@ -316,12 +316,18 @@ async function purgeCoupled(ctx: PurgeContext, spec: CoupledSpec): Promise<void>
     const childOrphanHard = await countWhere(client, child, 'c', orphanHardWhere, now);
     const childSoftTotal = childParentSoft + childOrphanSoft;
     const childHardTotal = childParentHard + childOrphanHard;
+    // Grouped call counts are DISTINCT calls, not child rows: a single orphan call can own several
+    // child rows (e.g. many vault tokens), so counting rows would overstate calls. Parent rows are
+    // one-per-call, and orphan calls are disjoint from parent-driven ones (orphan predicate is
+    // NOT EXISTS parent), so the two add without double-counting. Mirrors the real run below.
+    const orphanSoftCalls = await countDistinctCallWhere(client, child, 'c', orphanSoftWhere, now);
+    const orphanHardCalls = await countDistinctCallWhere(client, child, 'c', orphanHardWhere, now);
     pushAction(ctx, { table: parent, group, action: 'soft_delete', window, count: parentSoft });
     pushAction(ctx, { table: parent, group, action: 'hard_delete', window, count: parentHard });
     pushAction(ctx, { table: child, group, action: 'soft_delete', window, count: childSoftTotal });
     pushAction(ctx, { table: child, group, action: 'hard_delete', window, count: childHardTotal });
-    addGroupCalls(ctx, group, 'soft_delete', parentSoft + childOrphanSoft);
-    addGroupCalls(ctx, group, 'hard_delete', parentHard + childOrphanHard);
+    addGroupCalls(ctx, group, 'soft_delete', parentSoft + orphanSoftCalls);
+    addGroupCalls(ctx, group, 'hard_delete', parentHard + orphanHardCalls);
     return;
   }
 
@@ -355,22 +361,30 @@ async function purgeCoupled(ctx: PurgeContext, spec: CoupledSpec): Promise<void>
     );
     if (done) break;
   }
-  // Orphan-child soft.
+  // Orphan-child soft. Select the distinct call_ids first so we can add them to the grouped call
+  // count (a call can own several child rows); the UPDATE row count feeds the per-table action.
+  let orphanSoftCalls = 0;
   for (;;) {
-    const n = await step(
-      { group, table: child, action: 'soft_delete', dry_run: false },
-      async () => {
-        const res = await client.query(
+    const done = await step({ group, table: child, action: 'soft_delete', dry_run: false }, () =>
+      withClientTransaction(client, async (c) => {
+        const ids = (
+          await c.query<{ call_id: string }>(
+            `SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanSoftWhere} LIMIT ${batch}`,
+            [now],
+          )
+        ).rows.map((r) => r.call_id);
+        if (ids.length === 0) return true;
+        const res = await c.query(
           `UPDATE ${child} SET soft_deleted_at = $1
-          WHERE call_id IN (SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanSoftWhere} LIMIT ${batch})
-            AND soft_deleted_at IS NULL`,
-          [now],
+            WHERE call_id = ANY($2::text[]) AND soft_deleted_at IS NULL`,
+          [now, ids],
         );
-        return res.rowCount ?? 0;
-      },
+        childSoft += res.rowCount ?? 0;
+        orphanSoftCalls += ids.length;
+        return false;
+      }),
     );
-    childSoft += n;
-    if (n === 0) break;
+    if (done) break;
   }
 
   let parentHard = 0;
@@ -405,30 +419,39 @@ async function purgeCoupled(ctx: PurgeContext, spec: CoupledSpec): Promise<void>
     );
     if (done) break;
   }
-  // Orphan-child hard.
+  // Orphan-child hard (same distinct-call accounting as the soft pass).
+  let orphanHardCalls = 0;
   for (;;) {
-    const n = await step(
-      { group, table: child, action: 'hard_delete', dry_run: false },
-      async () => {
-        const res = await client.query(
+    const done = await step({ group, table: child, action: 'hard_delete', dry_run: false }, () =>
+      withClientTransaction(client, async (c) => {
+        const ids = (
+          await c.query<{ call_id: string }>(
+            `SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanHardWhere} LIMIT ${batch}`,
+            [now],
+          )
+        ).rows.map((r) => r.call_id);
+        if (ids.length === 0) return true;
+        const res = await c.query(
           `UPDATE ${child} SET hard_deleted_at = $1, ${SCRUB[child]}
-          WHERE call_id IN (SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanHardWhere} LIMIT ${batch})
-            AND hard_deleted_at IS NULL`,
-          [now],
+            WHERE call_id = ANY($2::text[]) AND hard_deleted_at IS NULL`,
+          [now, ids],
         );
-        return res.rowCount ?? 0;
-      },
+        childHard += res.rowCount ?? 0;
+        orphanHardCalls += ids.length;
+        return false;
+      }),
     );
-    childHard += n;
-    if (n === 0) break;
+    if (done) break;
   }
 
   pushAction(ctx, { table: parent, group, action: 'soft_delete', window, count: parentSoft });
   pushAction(ctx, { table: child, group, action: 'soft_delete', window, count: childSoft });
   pushAction(ctx, { table: parent, group, action: 'hard_delete', window, count: parentHard });
   pushAction(ctx, { table: child, group, action: 'hard_delete', window, count: childHard });
-  addGroupCalls(ctx, group, 'soft_delete', softCalls);
-  addGroupCalls(ctx, group, 'hard_delete', hardCalls);
+  // Distinct calls = parent-driven calls + orphan calls (disjoint; orphan predicate is NOT EXISTS
+  // parent), matching the dry-run computation exactly.
+  addGroupCalls(ctx, group, 'soft_delete', softCalls + orphanSoftCalls);
+  addGroupCalls(ctx, group, 'hard_delete', hardCalls + orphanHardCalls);
 }
 
 // --- Single-table groups (WEBHOOK, MATCH, EXTRACT) ------------------------------------------
@@ -559,6 +582,21 @@ async function countWhere(
 ): Promise<number> {
   const res = await client.query<{ n: string }>(
     `SELECT count(*)::text AS n FROM ${table} ${alias} WHERE ${where}`,
+    [now],
+  );
+  return Number(res.rows[0]?.n ?? 0);
+}
+
+/** Like {@link countWhere} but counts DISTINCT call_ids — the grouped call metric, not rows. */
+async function countDistinctCallWhere(
+  client: PoolClient,
+  table: string,
+  alias: string,
+  where: string,
+  now: Date,
+): Promise<number> {
+  const res = await client.query<{ n: string }>(
+    `SELECT count(DISTINCT ${alias}.call_id)::text AS n FROM ${table} ${alias} WHERE ${where}`,
     [now],
   );
   return Number(res.rows[0]?.n ?? 0);

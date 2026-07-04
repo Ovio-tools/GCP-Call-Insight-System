@@ -387,6 +387,36 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     expect(await col('redaction_findings', 'test-purge-pdc2', 'soft_deleted_at')).not.toBeNull();
   });
 
+  it('groupCounts.calls counts distinct orphan calls, not child rows (dry-run and real agree)', async () => {
+    // One call, TWO orphan vault rows (no raw parent), both past soft(10). The per-table action
+    // count is a ROW count (2), but the grouped call count must be DISTINCT calls (1) — and the
+    // dry-run and the real run must agree.
+    await ensureCall('test-purge-orphan-calls');
+    for (const token of ['[NAME_1]', '[NAME_2]']) {
+      await owner.query(
+        `INSERT INTO token_vault (call_id, token, ciphertext, key_version, retention_eligible_at)
+         VALUES ($1, $2, $3, 1, $4)`,
+        ['test-purge-orphan-calls', token, Buffer.from('cipher'), daysAgo(20)],
+      );
+    }
+
+    const dry = await run(purgeConfig({ RETENTION_DRY_RUN: true }));
+    const dryVault = dry.actions.find(
+      (a) => a.table === 'token_vault' && a.action === 'soft_delete',
+    );
+    const dryCalls = dry.groupCounts.find((g) => g.group === 'RAW' && g.action === 'soft_delete');
+    expect(dryVault?.count).toBe(2);
+    expect(dryCalls?.calls).toBe(1);
+
+    const real = await run();
+    const realVault = real.actions.find(
+      (a) => a.table === 'token_vault' && a.action === 'soft_delete',
+    );
+    const realCalls = real.groupCounts.find((g) => g.group === 'RAW' && g.action === 'soft_delete');
+    expect(realVault?.count).toBe(2);
+    expect(realCalls?.calls).toBe(1);
+  });
+
   it('held-cap purge honors the batch size across a backlog (batch=1, two candidates)', async () => {
     const id1 = await seedReview('test-purge-batch1', 'unresolvable', daysAgo(5));
     await seedRaw('test-purge-batch1', null);
