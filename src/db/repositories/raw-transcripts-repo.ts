@@ -1,6 +1,6 @@
 import type { Pool } from 'pg';
 import { type KeyProvider, decrypt, encrypt } from '../../crypto/index.js';
-import { parseOrThrow } from '../errors.js';
+import { DAL_QUERY_FAILED, DalError, parseOrThrow } from '../errors.js';
 import { query } from '../sql.js';
 import { type PutTranscriptInput, putTranscriptInputSchema } from '../schemas/raw-transcripts.js';
 
@@ -11,6 +11,16 @@ const TABLE = 'raw_transcripts';
  * rest but is an `app_role` table (not restricted-role-only). AAD binds the ciphertext
  * to its call_id. Idempotent upsert keyed on call_id — a re-fetch re-encrypts under the
  * current key_version.
+ *
+ * TWO retention-finality guards (Task 8.1 §6), both fail-closed at the writer (the physical
+ * held-cap delete leaves NO tombstone, so we cannot rely on callers remembering the preflight):
+ *   1. held-cap: a guarded `INSERT ... SELECT ... WHERE NOT EXISTS (a review with raw_purged_at
+ *      set)` inserts nothing for a cap-purged call — so a fresh insert after the physical delete
+ *      matches zero rows;
+ *   2. tombstone: the conflict update is gated `WHERE raw_transcripts.hard_deleted_at IS NULL`,
+ *      so a stamp-and-scrub tombstone is never overwritten.
+ * Either guard matching zero rows throws `retention conflict` rather than silently succeeding
+ * (mirrors `putToken`). `app_role` may read `review_queue`, so the subquery is in-role.
  */
 export async function putTranscript(
   pool: Pool,
@@ -20,16 +30,28 @@ export async function putTranscript(
   const v = parseOrThrow(TABLE, putTranscriptInputSchema, input);
   const aad = Buffer.from(v.callId, 'utf8');
   const enc = await encrypt(Buffer.from(v.transcript, 'utf8'), keyProvider, aad);
-  await query(
+  const rows = await query(
     pool,
     `INSERT INTO raw_transcripts (call_id, ciphertext, key_version)
-     VALUES ($1, $2, $3)
+     SELECT $1, $2, $3
+     WHERE NOT EXISTS (
+       SELECT 1 FROM review_queue WHERE call_id = $1 AND raw_purged_at IS NOT NULL
+     )
      ON CONFLICT (call_id) DO UPDATE SET
        ciphertext = EXCLUDED.ciphertext,
        key_version = EXCLUDED.key_version,
-       fetched_at = now()`,
+       fetched_at = now()
+     WHERE raw_transcripts.hard_deleted_at IS NULL
+     RETURNING 1 AS ok`,
     [v.callId, enc.ciphertext, enc.keyVersion],
   );
+  if (rows.length === 0) {
+    throw new DalError(
+      DAL_QUERY_FAILED,
+      `${DAL_QUERY_FAILED}: ${TABLE} is retention-final (hard-deleted or held-cap purged); fetch may not repopulate it (retention conflict)`,
+      { table: TABLE, call_id: v.callId },
+    );
+  }
 }
 
 /**

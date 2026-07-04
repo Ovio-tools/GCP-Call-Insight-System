@@ -297,6 +297,22 @@ export async function hasBlockingReviewForRawPurge(pool: Pool, callId: string): 
 }
 
 /**
+ * Whether a call has a review whose raw/vault were HELD-CAP PURGED (`raw_purged_at IS NOT
+ * NULL`), Task 8.1 §6. The held-cap purge PHYSICALLY deletes raw/vault (no tombstone), so this
+ * is the named predicate for "this call's raw is retention-final." The `putTranscript`/`putToken`
+ * writers enforce it inline via a `NOT EXISTS` guarded insert; the redact/fetch preflight uses
+ * this for an early, clear hold (defense-in-depth) before any partial write.
+ */
+export async function hasRawPurgedReview(pool: Pool, callId: string): Promise<boolean> {
+  const rows = await query<{ one: number }>(
+    pool,
+    `SELECT 1 AS one FROM review_queue WHERE call_id = $1 AND raw_purged_at IS NOT NULL LIMIT 1`,
+    [callId],
+  );
+  return rows.length > 0;
+}
+
+/**
  * Whether a call has a review that must BLOCK the normal clean-transcript purge (Task 8.1).
  * `clean_transcripts` IS purgeable, so its normal `retention_eligible_at` window could otherwise
  * delete redacted text a reviewer still needs. True while a review row is `open`/`in_review`/

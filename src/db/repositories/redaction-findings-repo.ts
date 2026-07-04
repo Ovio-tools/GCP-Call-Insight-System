@@ -1,5 +1,5 @@
 import type { Pool } from 'pg';
-import { parseOrThrow } from '../errors.js';
+import { DAL_QUERY_FAILED, DalError, parseOrThrow } from '../errors.js';
 import { query, toJsonParam, withTransaction } from '../sql.js';
 import {
   type RedactionFindingInsert,
@@ -30,6 +30,27 @@ export async function replaceFindings(
 ): Promise<void> {
   const validated = findings.map((f) => parseOrThrow(TABLE, redactionFindingInsertSchema, f));
   await withTransaction(pool, async (client) => {
+    // Retention-finality guard (Task 8.1 §6, MANDATORY): refuse to repopulate if EITHER the
+    // parent clean transcript is hard-deleted OR any findings tombstone exists for this call —
+    // enforced at the writer so a caller that bypasses the redact preflight still cannot recreate
+    // scrubbed findings. `replaceFindings` deletes + re-inserts (no per-row conflict to guard on),
+    // so the check is an explicit preflight inside the same transaction.
+    const blocked = await query<{ one: number }>(
+      client,
+      `SELECT 1 AS one FROM clean_transcripts WHERE call_id = $1 AND hard_deleted_at IS NOT NULL
+       UNION ALL
+       SELECT 1 AS one FROM redaction_findings WHERE call_id = $1 AND hard_deleted_at IS NOT NULL
+       LIMIT 1`,
+      [callId],
+    );
+    if (blocked.length > 0) {
+      throw new DalError(
+        DAL_QUERY_FAILED,
+        `${DAL_QUERY_FAILED}: ${TABLE} is retention-final (hard-deleted findings or clean transcript); redaction may not repopulate it (retention conflict)`,
+        { table: TABLE, call_id: callId },
+      );
+    }
+
     // Read the call's earliest existing stamp BEFORE soft-deleting (soft-delete leaves
     // retention_eligible_at untouched); NULL on the first-ever write for this call.
     const existing = await query<{ min_eligible: Date | null }>(
