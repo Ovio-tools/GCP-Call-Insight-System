@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { type Severity, severitySchema } from '../db/enums.js';
 import { isContentField } from '../logging/redaction.js';
-import { configSchema } from '../config/schema.js';
+import { configObjectSchema } from '../config/schema.js';
 import {
   type CallsState,
   type ErrorCode,
@@ -30,7 +30,7 @@ export const MAX_CONTEXT_VALUE_LENGTH = 256;
 export const CONTEXT_KEYS = ['call_id', 'job_id', 'environment', 'stage', 'component'] as const;
 
 /** The `environment` context value is validated against the config `NODE_ENV` enum. */
-const environmentSchema = configSchema.shape.NODE_ENV;
+const environmentSchema = configObjectSchema.shape.NODE_ENV;
 
 /**
  * Fail-closed context gate. Keeps only allowlisted keys; drops content-field keys, unknown

@@ -33,7 +33,37 @@ function isBase64OfAtLeast(v: string, minBytes: number): boolean {
  * This is the seed set for the scaffold. It grows as features land; no business
  * logic depends on it yet.
  */
-export const configSchema = z.object({
+/**
+ * A required retention window in DAYS: a positive integer, no default (privacy policy). Used
+ * for the four non-CLEAN purge groups (Task 8.1).
+ */
+function retentionDays(): z.ZodType<number> {
+  return z.coerce.number().int().positive();
+}
+
+/**
+ * The CLEAN group's two-mode window (Task 8.1): a positive integer number of days OR the
+ * literal `never` (indefinite/active). `z.coerce.number` would coerce the string `'never'` to
+ * NaN, so the numeric branch guards against that; the union then falls through to the literal.
+ * Mode agreement + `hard > soft` are enforced across the two sides by the wrapping superRefine.
+ */
+function cleanRetentionDays(): z.ZodType<number | 'never'> {
+  return z.union([
+    z.literal('never'),
+    z.coerce
+      .number()
+      .refine((n) => Number.isInteger(n) && n > 0, {
+        message: "must be a positive integer number of days or 'never'",
+      }),
+  ]);
+}
+
+/**
+ * The base configuration object. Kept as a plain `ZodObject` (exported) so `.shape`-based
+ * consumers (failure-model) keep compiling; the exported {@link configSchema} wraps it with the
+ * cross-field retention `superRefine`.
+ */
+export const configObjectSchema = z.object({
   /** Deployment environment. Drives environment separation (dev/staging/prod). */
   NODE_ENV: z.enum(['development', 'test', 'staging', 'production']),
 
@@ -459,7 +489,88 @@ export const configSchema = z.object({
    * before the retention cron (Task 8.1) purges them, regardless of review status. REQUIRED
    * with no default — a raw-PII retention cap must be an explicit decision. */
   REVIEW_HELD_RAW_RETENTION_CAP_HOURS: z.coerce.number().int().positive(),
+
+  // --- Scheduled retention / purge windows (Task 8.1) ---
+  //
+  // Soft- then hard-delete windows, in DAYS, for the five purge groups. REQUIRED with no
+  // default (privacy policy — a purge window must be an explicit decision, like
+  // REVIEW_HELD_RAW_RETENTION_CAP_HOURS). `HARD > SOFT` per group is enforced by the
+  // cross-field superRefine below, guaranteeing a real recoverable grace gap.
+
+  /** RAW group (`raw_transcripts` + `token_vault`), stamped post-store. */
+  RETENTION_RAW_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_RAW_HARD_DELETE_DAYS: retentionDays(),
+  /** WEBHOOK group (`raw_webhook_events`), clock starts at receipt. */
+  RETENTION_WEBHOOK_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_WEBHOOK_HARD_DELETE_DAYS: retentionDays(),
+  /** CLEAN group (`clean_transcripts` + `redaction_findings`). Special two-mode value: a
+   * positive int (windowed) OR the literal `never` (indefinite/active — kept until
+   * review-driven resolution). Both sides must agree on the mode (superRefine). */
+  RETENTION_CLEAN_SOFT_DELETE_DAYS: cleanRetentionDays(),
+  RETENTION_CLEAN_HARD_DELETE_DAYS: cleanRetentionDays(),
+  /** MATCH group (`match_keys`), own short window (writer is Task 12.0). */
+  RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_MATCH_KEYS_HARD_DELETE_DAYS: retentionDays(),
+  /** EXTRACT group (`extraction_candidates`), the staging row's own window. */
+  RETENTION_EXTRACT_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_EXTRACT_HARD_DELETE_DAYS: retentionDays(),
+
+  /** Dry-run switch: when `true`, the purge counts eligible rows/groups and writes NOTHING.
+   * `false` (default) performs the soft/hard/held-cap deletions. */
+  RETENTION_DRY_RUN: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((s) => s === 'true'),
+
+  /** Rows deleted per batched pass; the purge loops `LIMIT $batch` until a pass touches 0 rows. */
+  RETENTION_PURGE_BATCH_SIZE: z.coerce.number().int().positive().default(1000),
+});
+
+/**
+ * Cross-field validation for the retention windows: `HARD > SOFT` per numeric group, and the
+ * CLEAN group must be a whole mode (both numeric with `hard > soft`, OR both `never`) — never a
+ * half-state. Each issue is pinned to the offending HARD variable's path so `validateEnv`
+ * surfaces it as a named CONFIG_MISSING_OR_INVALID. Kept as a wrapping `superRefine` (not a
+ * per-field one) because these checks span two sibling variables; `configObjectSchema` above
+ * stays a plain `ZodObject` so `.shape` consumers (failure-model) keep working.
+ */
+export const configSchema = configObjectSchema.superRefine((cfg, ctx) => {
+  const numericGroups: ReadonlyArray<readonly [keyof Config, keyof Config]> = [
+    ['RETENTION_RAW_SOFT_DELETE_DAYS', 'RETENTION_RAW_HARD_DELETE_DAYS'],
+    ['RETENTION_WEBHOOK_SOFT_DELETE_DAYS', 'RETENTION_WEBHOOK_HARD_DELETE_DAYS'],
+    ['RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS', 'RETENTION_MATCH_KEYS_HARD_DELETE_DAYS'],
+    ['RETENTION_EXTRACT_SOFT_DELETE_DAYS', 'RETENTION_EXTRACT_HARD_DELETE_DAYS'],
+  ];
+  for (const [softKey, hardKey] of numericGroups) {
+    const soft = cfg[softKey] as number;
+    const hard = cfg[hardKey] as number;
+    if (hard <= soft) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [hardKey],
+        message: `${hardKey} (${hard}) must be greater than ${softKey} (${soft}) so a real recoverable grace window exists`,
+      });
+    }
+  }
+
+  const cleanSoft = cfg.RETENTION_CLEAN_SOFT_DELETE_DAYS;
+  const cleanHard = cfg.RETENTION_CLEAN_HARD_DELETE_DAYS;
+  const softNever = cleanSoft === 'never';
+  const hardNever = cleanHard === 'never';
+  if (softNever !== hardNever) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['RETENTION_CLEAN_HARD_DELETE_DAYS'],
+      message: `CLEAN retention must be a whole mode: set BOTH RETENTION_CLEAN_SOFT_DELETE_DAYS and RETENTION_CLEAN_HARD_DELETE_DAYS to 'never', or BOTH to numeric days — not a mix`,
+    });
+  } else if (!softNever && !hardNever && (cleanHard as number) <= (cleanSoft as number)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['RETENTION_CLEAN_HARD_DELETE_DAYS'],
+      message: `RETENTION_CLEAN_HARD_DELETE_DAYS (${cleanHard}) must be greater than RETENTION_CLEAN_SOFT_DELETE_DAYS (${cleanSoft})`,
+    });
+  }
 });
 
 /** Validated, typed configuration object. */
-export type Config = z.infer<typeof configSchema>;
+export type Config = z.infer<typeof configObjectSchema>;
