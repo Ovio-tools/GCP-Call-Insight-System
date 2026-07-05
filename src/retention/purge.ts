@@ -51,8 +51,11 @@ export interface PurgeDeps {
   now: Date;
 }
 
-/** Fixed session-level advisory lock key: only one retention run mutates at a time. */
-const LOCK_KEY = 8_100_001;
+/** Fixed session-level advisory lock key: only one retention run mutates at a time. Key rotation /
+ * revocation (Task 8.2) acquires the SAME key for its Phase-A critical section, so a purge and a
+ * re-encryption sweep are strictly mutually exclusive. */
+export const RETENTION_ADVISORY_LOCK_KEY = 8_100_001;
+const LOCK_KEY = RETENTION_ADVISORY_LOCK_KEY;
 
 /** Sanitized metadata a purge failure carries — PII-free, string/scalar only. */
 export interface PurgeErrorContext {

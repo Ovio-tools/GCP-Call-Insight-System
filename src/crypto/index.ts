@@ -5,7 +5,7 @@
  * {@link KeyProvider} that unwraps it via the external KEK. No key bytes ever live in
  * Postgres. See CLAUDE.md §5; the real KMS provider is Task 8.2.
  */
-export { encrypt, decrypt, type Encrypted } from './envelope.js';
+export { encrypt, encryptUnderVersion, decrypt, type Encrypted } from './envelope.js';
 export {
   DEK_BYTES,
   LocalKeyProvider,
