@@ -2,6 +2,7 @@ import type { Pool } from 'pg';
 import { type KeyProvider, decrypt, encrypt } from '../../crypto/index.js';
 import { DAL_QUERY_FAILED, DalError, parseOrThrow } from '../errors.js';
 import { query } from '../sql.js';
+import type { Queryable } from '../types.js';
 import { type PutTranscriptInput, putTranscriptInputSchema } from '../schemas/raw-transcripts.js';
 
 const TABLE = 'raw_transcripts';
@@ -59,7 +60,7 @@ export async function putTranscript(
  * The transcript-availability gate uses this to confirm fetch-transcript stored something
  * before redact, avoiding a needless decrypt of sensitive content just to check presence.
  */
-export async function transcriptExists(pool: Pool, callId: string): Promise<boolean> {
+export async function transcriptExists(pool: Queryable, callId: string): Promise<boolean> {
   const rows = await query<{ one: number }>(
     pool,
     `SELECT 1 AS one FROM raw_transcripts
@@ -90,7 +91,7 @@ export async function markTranscriptRetentionEligible(pool: Pool, callId: string
 
 /** Decrypt and return the transcript for a call, or undefined if absent/soft-deleted. */
 export async function getTranscript(
-  pool: Pool,
+  pool: Queryable,
   keyProvider: KeyProvider,
   callId: string,
 ): Promise<string | undefined> {

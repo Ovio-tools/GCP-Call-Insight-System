@@ -10,8 +10,10 @@ import {
   hasActiveReviewForCall,
   hasTerminalReviewForCall,
   markUnresolvable,
+  markUnresolvableByReviewId,
 } from '../../src/db/repositories/review-queue-repo.js';
 import { listByReview } from '../../src/db/repositories/operator-actions-repo.js';
+import { withTransaction } from '../../src/db/sql.js';
 import type { HeldReason } from '../../src/db/enums.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
 import { cleanupCalls, makeAppPool } from '../db/_dal.js';
@@ -142,6 +144,38 @@ describe.skipIf(!hasTestDb)('markUnresolvable (Task 6.1)', () => {
     expect(await hasActiveReviewForCall(app, callId)).toBe(true);
     expect((await getCallState(app, callId))?.status).toBe('processing');
     expect(await listByReview(app, reviewId)).toHaveLength(0);
+  });
+
+  describe('markUnresolvableByReviewId (Task 6.2 — transition only, no audit)', () => {
+    it('moves both rows and returns before/after WITHOUT writing an audit row', async () => {
+      const callId = 'test-unres-byid-basic';
+      const reviewId = await seedHeld(callId);
+
+      const transition = await withTransaction(app, (client) =>
+        markUnresolvableByReviewId(client, reviewId, 'carol'),
+      );
+
+      expect(transition.callId).toBe(callId);
+      expect(transition.before).toEqual({ review_status: 'open', call_state_status: 'held' });
+      expect(transition.after).toEqual({
+        review_status: 'unresolvable',
+        call_state_status: 'review_closed',
+      });
+      expect((await getReview(app, reviewId))?.status).toBe('unresolvable');
+      expect((await getCallState(app, callId))?.status).toBe('review_closed');
+      // The transition helper must NOT write the audit row (the handler owns that).
+      expect(await listByReview(app, reviewId)).toHaveLength(0);
+    });
+
+    it('throws on a stale review id whose review is already terminal (does not touch another call)', async () => {
+      const callId = 'test-unres-byid-stale';
+      const reviewId = await seedHeld(callId);
+      await markUnresolvable(app, callId, 'alice'); // review now terminal
+
+      await expect(
+        withTransaction(app, (client) => markUnresolvableByReviewId(client, reviewId, 'carol')),
+      ).rejects.toMatchObject({ code: 'DAL_REVIEW_INVARIANT' });
+    });
   });
 
   it('fails on duplicate active reviews without LIMIT-masking, and rolls back', async () => {

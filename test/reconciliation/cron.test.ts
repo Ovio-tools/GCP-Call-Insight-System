@@ -17,6 +17,7 @@ function makeDeps(
   opts: {
     sweep?: () => Promise<unknown>;
     scan?: () => Promise<ScanResult>;
+    drain?: () => Promise<{ failed: number }>;
     ping?: (url: string) => Promise<void>;
     checkUrl?: string | undefined;
   } = {},
@@ -27,13 +28,15 @@ function makeDeps(
   });
   const runSweep = vi.fn(opts.sweep ?? (() => Promise.resolve()));
   const runScan = vi.fn(opts.scan ?? (() => Promise.resolve(scanResult())));
+  const runDrain = vi.fn(opts.drain ?? (() => Promise.resolve({ failed: 0 })));
   const ping = vi.fn(opts.ping ?? ((_url: string) => Promise.resolve()));
   const onSweepError = vi.fn((_err: unknown) => Promise.resolve());
   return {
-    deps: { config, logger, runSweep, runScan, ping, onSweepError },
+    deps: { config, logger, runSweep, runScan, runDrain, ping, onSweepError },
     lines,
     runSweep,
     runScan,
+    runDrain,
     ping,
     onSweepError,
   };
@@ -98,6 +101,30 @@ describe('runReconciliationCron (Task 6.1 fold)', () => {
 
     await expect(runReconciliationCron(h.deps)).rejects.toThrow(/duty failed/);
     expect(h.onSweepError).not.toHaveBeenCalled(); // sweep was fine
+    expect(h.ping).not.toHaveBeenCalled();
+  });
+
+  it('runs the reprocess drain and pings when it is complete', async () => {
+    const h = makeDeps({ drain: () => Promise.resolve({ failed: 0 }) });
+
+    await runReconciliationCron(h.deps);
+
+    expect(h.runDrain).toHaveBeenCalledTimes(1);
+    expect(h.ping).toHaveBeenCalledTimes(1);
+  });
+
+  it('withholds the ping and throws when the reprocess drain is incomplete', async () => {
+    const h = makeDeps({ drain: () => Promise.resolve({ failed: 1 }) });
+
+    await expect(runReconciliationCron(h.deps)).rejects.toThrow(/duty failed/);
+    expect(h.runDrain).toHaveBeenCalledTimes(1);
+    expect(h.ping).not.toHaveBeenCalled();
+  });
+
+  it('withholds the ping and throws when the reprocess drain itself throws', async () => {
+    const h = makeDeps({ drain: () => Promise.reject(new Error('drain boom')) });
+
+    await expect(runReconciliationCron(h.deps)).rejects.toThrow(/duty failed/);
     expect(h.ping).not.toHaveBeenCalled();
   });
 

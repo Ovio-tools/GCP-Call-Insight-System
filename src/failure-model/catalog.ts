@@ -404,6 +404,18 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
     owner: PLATFORM,
     runbookRef: 'runbook#auth-required',
   },
+  AUTH_FORBIDDEN: {
+    rootCauseCategory: 'AUTH_FORBIDDEN',
+    impact:
+      'An authenticated request was refused because the session lacked the required elevated role; no protected data was exposed.',
+    remediationNow:
+      'Grant the reviewer the required elevated role, or confirm the action legitimately needs elevation; if valid elevated sessions are being rejected, check the role configuration.',
+    remediationFix: SAME_AS_IMMEDIATE,
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#auth-forbidden',
+  },
   CSRF_TOKEN_INVALID: {
     rootCauseCategory: 'CSRF_TOKEN_INVALID',
     impact:

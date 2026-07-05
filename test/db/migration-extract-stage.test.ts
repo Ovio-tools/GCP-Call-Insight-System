@@ -12,11 +12,11 @@ describe.skipIf(!hasTestDb)('migration 9 down-guard (extraction_candidates rows)
   let pool!: Pool;
   const callId = 'test-mig9-guard';
   // Migrations stacked ABOVE migration 9 (extract_stage) that must be rolled back first so
-  // down(1) targets migration 9 itself. Bump when a later migration is added: migration 10
-  // (component_heartbeats) and 11 (alert_events delivery cols) — both Task 7.3 — plus 12
-  // (review_queue active-row invariants, Task 6.1) and 13 (retention purge grants, Task 8.1)
-  // sit above 9.
-  const MIGRATIONS_ABOVE_9 = 4;
+  // down(1) targets migration 9 itself. Bump when a later migration is added: 10
+  // (component_heartbeats) + 11 (alert_events delivery cols, Task 7.3) + 12 (review_queue
+  // active-row invariants, Task 6.1) + 13 (retention purge grants, Task 8.1) + 14 (reveal_raw
+  // enum) + 15 (reprocess_requests, Task 6.2) sit above 9.
+  const MIGRATIONS_ABOVE_9 = 6;
 
   beforeAll(async () => {
     await migrate('up');

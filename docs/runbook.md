@@ -421,6 +421,19 @@ exposed.
 - **Do now:** Sign in through the configured identity provider; if valid sessions are being rejected, check the OIDC and session configuration.
 - **Longer-term fix:** Same as the immediate step.
 
+## Auth forbidden
+
+<!-- anchor: auth-forbidden — AUTH_FORBIDDEN -->
+
+**Code:** `AUTH_FORBIDDEN` · **Severity:** low · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+An authenticated request was refused because the session lacked the required elevated role
+(e.g. a base reviewer attempting an elevated raw/vault reveal on the review surface); no
+protected data was exposed.
+
+- **Do now:** Grant the reviewer the required elevated role, or confirm the action legitimately needs elevation; if valid elevated sessions are being rejected, check the role configuration (`REVIEW_ELEVATED_ROLE`).
+- **Longer-term fix:** Same as the immediate step.
+
 ## CSRF token invalid
 
 <!-- anchor: csrf-token-invalid — CSRF_TOKEN_INVALID -->

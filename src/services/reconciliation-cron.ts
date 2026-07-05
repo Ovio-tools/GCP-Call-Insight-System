@@ -21,13 +21,14 @@ import {
 } from '../alerting/index.js';
 import { httpPing } from '../heartbeat/index.js';
 import { createQueueConnectionFromConfig } from '../queue/connection.js';
-import { createPipelineQueue } from '../queue/pipeline-queue.js';
+import { createPipelineQueue, enqueueReprocess } from '../queue/pipeline-queue.js';
 import {
   createPgReconciliationIngest,
   requireReconciliationCheckUrl,
   runReconciliation,
   runReconciliationCron,
 } from '../reconciliation/run.js';
+import { drainPendingReprocessRequests } from '../reconciliation/reprocess-drain.js';
 import { scanStalledReviews } from '../review-queue/scan.js';
 
 /** Same mapping the fetch-transcript stage uses; `unavailable` stays a plain transient
@@ -125,6 +126,14 @@ async function main(): Promise<void> {
           ...createPgReconciliationIngest({ pool, queue, config }),
         }),
       runScan: () => scanStalledReviews(pool, config, logger, new Date()),
+      // Drain the reprocess-request outbox (Task 6.2): recover any reprocess stranded by a
+      // crash/Redis outage between the review-action commit and its optimistic enqueue. An
+      // incomplete drain withholds the ping (mirrors the scan's contract).
+      runDrain: () =>
+        drainPendingReprocessRequests(pool, {
+          logger,
+          enqueue: (row) => enqueueReprocess(queue, row.callId, config, row.reviewQueueId),
+        }),
       onSweepError: async (err) => {
         // Shared failure model: map a typed Dialpad failure to its stable code, emit the deduped
         // alert AND attempt immediate delivery (emitAlert is best-effort — the DB/webhook may

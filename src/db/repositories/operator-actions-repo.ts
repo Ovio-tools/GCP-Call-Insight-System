@@ -1,4 +1,3 @@
-import type { Pool } from 'pg';
 import { parseOrThrow } from '../errors.js';
 import { query, toJsonParam } from '../sql.js';
 import type { Queryable } from '../types.js';
@@ -33,12 +32,18 @@ export async function recordOperatorAction(
   return parseOrThrow(TABLE, operatorActionRowSchema, rows[0]);
 }
 
+/**
+ * Every audit row for a review, oldest first. Accepts a {@link Queryable} (widened from
+ * pool-only, Task 6.2) so the terminal-idempotency check runs on the SAME transaction client
+ * that locked the review row — a duplicate action must observe the prior audit row under the
+ * same lock, not a stale pre-lock snapshot.
+ */
 export async function listByReview(
-  pool: Pool,
+  db: Queryable,
   reviewQueueId: string,
 ): Promise<OperatorActionRow[]> {
   const rows = await query<OperatorActionRow>(
-    pool,
+    db,
     `SELECT * FROM operator_actions WHERE review_queue_id = $1 ORDER BY created_at`,
     [reviewQueueId],
   );

@@ -42,6 +42,8 @@ export const DEFAULT_SEVERITY: Record<ErrorCode, Severity> = {
   UNSUPPORTED_MEDIA_TYPE: 'low',
   RATE_LIMIT_EXCEEDED: 'low',
   AUTH_REQUIRED: 'low',
+  // Authenticated-but-forbidden (Task 6.2): a routine authorization rejection, like AUTH_REQUIRED.
+  AUTH_FORBIDDEN: 'low',
   CSRF_TOKEN_INVALID: 'low',
   WEBHOOK_TIMESTAMP_INVALID: 'low',
   INTERNAL_ERROR: 'high',

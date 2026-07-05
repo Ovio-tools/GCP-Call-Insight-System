@@ -522,6 +522,16 @@ export const configObjectSchema = z.object({
 
   /** Rows deleted per batched pass; the purge loops `LIMIT $batch` until a pass touches 0 rows. */
   RETENTION_PURGE_BATCH_SIZE: z.coerce.number().int().positive().default(1000),
+
+  // --- Review & admin surface (Task 6.2) ---
+
+  /** The role name (matched against `request.user.roles`) a session must carry to perform an
+   * elevated raw/vault reveal on the review surface. Optional and fail-closed: when unset, NO
+   * session is elevated and every reveal is refused with AUTH_FORBIDDEN — elevated reveal is an
+   * explicit per-deployment opt-in. Any authenticated session is still a BASE reviewer (list,
+   * detail, and the seven actions); only the raw/vault reveal requires this role. Never a
+   * secret. */
+  REVIEW_ELEVATED_ROLE: z.string().min(1).optional(),
 });
 
 /**
