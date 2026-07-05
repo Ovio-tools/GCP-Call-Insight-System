@@ -37,22 +37,19 @@ the tripwires that keep production blocked until this task flips them.
 - **Full restore drill end-to-end** against a production-like backup + the real KMS (see
   `docs/restore-drill.md`), proving a pre-destruction backup cannot decrypt rows whose DEK material
   was later destroyed in the KMS.
-- **Rotation concurrency/crash hardening** (deferred residuals from the dev/staging reference; the
-  swap is already deferred until after the sweep and committed with the destroy-request, so a crash
-  now leaves a resumable `rotating` state or a `confirm-destruction`-pending state rather than an
-  orphaned old version — but two narrow windows remain):
-  - **Cross-process active-version cache invalidation.** Each worker's `KeyStoreProvider` caches the
-    DB-sourced active version for a short TTL. Rotation invalidates only its own provider; a worker
-    resuming from the pause with a sub-TTL-stale cache could still write under the old version. The
-    queue now stays paused through the destroy-request (closing the zero-window case), but for a
-    nonzero window a stale-cache write during the window would be shredded at finalize. Fix: signal
-    active-version invalidation across processes (or make the worker re-read on maintenance clear /
-    set its active-version TTL to 0 during maintenance).
-  - **Crash between the swap/destroy-request commit and `destroyDek(old)`.** The DB marks the old
-    version destroy-requested but the store never received the request, so `confirm-destruction`'s
-    `recoverability` check keeps it pending forever. Fix: have `confirm-destruction` (idempotently)
-    re-issue `destroyDek` for any DB-destroy-requested version whose store material is not yet
-    pending, before checking recoverability. Also resume the maintenance pause after such a crash.
+- **Validate the rotation concurrency/crash safeguards against the real KMS.** Two windows are
+  already closed in the dev/staging reference and must be re-verified once the KMS timing/semantics
+  differ from `LocalFileKeyStore`:
+  - **Stale active-version cache on resume** — closed by a settle-wait
+    (`KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS`) that keeps the queue paused past the active-version
+    cache TTL. This is a _time-based_ guarantee that assumes a bounded, uniform TTL across all
+    encrypting services; confirm the deployed TTL and settle value hold, and consider an explicit
+    cross-process invalidation signal if a KMS-backed provider caches differently.
+  - **Crash between the destroy-request commit and the store destroy call** — self-healed by
+    `confirm-destruction` idempotently re-issuing `destroyDek`/`destroyKek` before the recoverability
+    check. Verify the production KMS's destroy call is likewise idempotent and that its
+    `recoverability` mapping reports pending correctly after a re-issue. (A maintenance pause left
+    set by such a crash is still cleared manually — automating that resume is optional hardening.)
 
 ## Acceptance criteria
 

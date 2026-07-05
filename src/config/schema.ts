@@ -137,6 +137,13 @@ export const configObjectSchema = z.object({
    * job it already fetched (moveToDelayed + DelayedError — never consumes a retry). */
   KEY_ROTATION_MAINTENANCE_REQUEUE_DELAY_MS: z.coerce.number().int().positive().default(5_000),
 
+  /** Time (ms) rotation waits AFTER the destroy-request, while the queue is still paused, before
+   * resuming — long enough for every worker's active-version cache (see KeyStoreProvider's TTL) to
+   * expire, so no worker resumes with a stale active version and writes fresh ciphertext under the
+   * just-retired/destroy-requested key. MUST be >= the deployed active-version cache TTL across all
+   * encrypting services (default TTL 5s). 0 disables the wait (single-node / no live workers). */
+  KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: z.coerce.number().int().nonnegative().default(6_000),
+
   /** BullMQ queue name for the per-call pipeline (Task 2.1). */
   WORKER_QUEUE_NAME: z.string().min(1).default('call-pipeline'),
 

@@ -41,6 +41,8 @@ export interface RotateKeyDeps {
   approvalRef?: string;
   reason?: string;
   now?: () => Date;
+  /** Injectable delay for the post-destroy settle-wait (real setTimeout by default; tests stub it). */
+  sleep?: (ms: number) => Promise<void>;
   logger?: Logger;
 }
 
@@ -64,10 +66,12 @@ export interface RotateKeyResult {
  * The active-swap is DEFERRED until after the sweep and committed atomically with the
  * destroy-request, so any crash mid-rotation leaves a resumable `rotating` state (re-run resumes) or,
  * after that commit, a `confirm-destruction`-pending state — never a retired-but-un-swept old version
- * whose rows a re-run would orphan. The queue stays paused through the destroy-request, so it never
- * resumes before the old key is being destroyed (which would let a worker with a stale
- * active-version cache write fresh ciphertext under the doomed key). Refuses to start while a prior
- * destruction is unfinished. (Residual crash windows + cross-process cache invalidation → Task 8.2b.)
+ * whose rows a re-run would orphan. (A crash in the tiny gap between that commit and `destroyDek` is
+ * self-healing: `confirm-destruction` idempotently re-issues `destroyDek` before checking
+ * recoverability.) The queue stays paused through the destroy-request AND a settle-wait
+ * (`KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS`, >= the active-version cache TTL), so no worker resumes
+ * with a stale active-version cache and writes fresh ciphertext under the doomed key. Refuses to
+ * start while a prior destruction is unfinished.
  */
 export async function rotateKey(deps: RotateKeyDeps): Promise<RotateKeyResult> {
   if (!deps.actor || deps.actor.trim() === '') {
@@ -80,6 +84,7 @@ export async function rotateKey(deps: RotateKeyDeps): Promise<RotateKeyResult> {
   const now = deps.now ?? (() => new Date());
   const batch = deps.config.RETENTION_PURGE_BATCH_SIZE;
   const windowDays = deps.config.KEY_STORE_RECOVERY_WINDOW_DAYS;
+  const settleMs = deps.config.KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS;
 
   const client = await deps.pool.connect();
   try {
@@ -95,7 +100,7 @@ export async function rotateKey(deps: RotateKeyDeps): Promise<RotateKeyResult> {
       );
     }
     try {
-      return await runRotation(client, deps, { now, batch, windowDays, justification });
+      return await runRotation(client, deps, { now, batch, windowDays, settleMs, justification });
     } catch (err) {
       // Sanitized audit of the abort; the CLI maps KeyLifecycleError → the §4 alert.
       await insertLifecycleEvent(client, { event: 'rotate_failed', actor: deps.actor }).catch(
@@ -115,7 +120,13 @@ export async function rotateKey(deps: RotateKeyDeps): Promise<RotateKeyResult> {
 async function runRotation(
   client: PoolClient,
   deps: RotateKeyDeps,
-  ctx: { now: () => Date; batch: number; windowDays: number; justification: string },
+  ctx: {
+    now: () => Date;
+    batch: number;
+    windowDays: number;
+    settleMs: number;
+    justification: string;
+  },
 ): Promise<RotateKeyResult> {
   // Refuse to start while a prior destruction is unfinished (would race the finalizer).
   const pending = await query<{ key_version: number }>(
@@ -247,6 +258,14 @@ async function runRotation(
         ...(deps.logger ? { logger: deps.logger } : {}),
       });
       finalizedInline = true;
+    }
+
+    // Settle-wait BEFORE resuming: stay paused long enough for every worker's active-version cache
+    // to expire, so none resumes with a stale active version and writes fresh ciphertext under the
+    // just-retired/destroy-requested key (which would be crypto-shredded when its window elapses).
+    if (ctx.settleMs > 0) {
+      const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
+      await sleep(ctx.settleMs);
     }
   } finally {
     await deps.maintenance.end();

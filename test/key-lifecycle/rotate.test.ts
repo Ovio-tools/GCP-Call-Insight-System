@@ -8,7 +8,10 @@ import { makeTestConfig } from '../_config.js';
 import { LocalFileKeyStore } from '../../src/crypto/key-store.js';
 import { KeyStoreProvider } from '../../src/crypto/key-store-provider.js';
 import { createRestrictedRunner } from '../../src/db/restricted/restricted-context.js';
-import { getActiveKeyVersion } from '../../src/db/repositories/key-versions-repo.js';
+import {
+  getActiveKeyVersion,
+  markDestroyRequested,
+} from '../../src/db/repositories/key-versions-repo.js';
 import { rotateKey } from '../../src/key-lifecycle/rotate.js';
 import { finalizeDestruction } from '../../src/key-lifecycle/finalize-destruction.js';
 import { noopMaintenance } from '../../src/key-lifecycle/maintenance-controller.js';
@@ -32,6 +35,9 @@ class FakeClock {
   }
   advanceDays(d: number): void {
     this.#ms += d * 86_400_000;
+  }
+  advanceMs(ms: number): void {
+    this.#ms += ms;
   }
 }
 
@@ -68,7 +74,10 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
         keyStore: store,
         keyProvider: provider,
         maintenance: noopMaintenance,
-        config: makeTestConfig({ KEY_STORE_RECOVERY_WINDOW_DAYS: 0 }),
+        config: makeTestConfig({
+          KEY_STORE_RECOVERY_WINDOW_DAYS: 0,
+          KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: 0,
+        }),
         actor: 'kl-actor',
         approvalRef: 'JIRA-1',
         now: () => new Date('2026-03-01T00:00:00Z'),
@@ -144,7 +153,10 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
         keyStore: store,
         keyProvider: provider,
         maintenance: noopMaintenance,
-        config: makeTestConfig({ KEY_STORE_RECOVERY_WINDOW_DAYS: 0 }),
+        config: makeTestConfig({
+          KEY_STORE_RECOVERY_WINDOW_DAYS: 0,
+          KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: 0,
+        }),
         actor: 'kl-actor',
         approvalRef: 'JIRA-2',
         now: () => new Date('2026-03-01T00:00:00Z'),
@@ -185,7 +197,10 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
         keyStore: store,
         keyProvider: provider,
         maintenance: spy,
-        config: makeTestConfig({ KEY_STORE_RECOVERY_WINDOW_DAYS: 0 }),
+        config: makeTestConfig({
+          KEY_STORE_RECOVERY_WINDOW_DAYS: 0,
+          KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: 0,
+        }),
         actor: 'kl-actor',
         approvalRef: 'JIRA-drain',
         now: () => new Date('2026-03-01T00:00:00Z'),
@@ -234,13 +249,110 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
         keyStore: store,
         keyProvider: provider,
         maintenance: spy,
-        config: makeTestConfig({ KEY_STORE_RECOVERY_WINDOW_DAYS: 0 }),
+        config: makeTestConfig({
+          KEY_STORE_RECOVERY_WINDOW_DAYS: 0,
+          KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: 0,
+        }),
         actor: 'kl-actor',
         approvalRef: 'JIRA-resume',
         now: () => new Date('2026-03-01T00:00:00Z'),
       });
 
       expect(destroyRequestedAtResume).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('confirm-destruction completes a rotation that crashed AFTER the DB commit but BEFORE destroyDek', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rot-'));
+    try {
+      seq += 1;
+      const kek = `${KL_KEK_PREFIX}${seq}`;
+      const { store } = makeStoreProvider(dir, owner);
+      const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
+
+      // Simulate the crash gap: the DB has committed the swap + destroy-request, but the store
+      // never received destroyDek — the old material is still ACTIVE/recoverable. Without a
+      // re-issue, the finalizer's recoverability check would report it pending forever.
+      await owner.query(`UPDATE key_versions SET status='retired' WHERE key_version=$1`, [
+        oldVersion,
+      ]);
+      await markDestroyRequested(owner, oldVersion, {
+        recoveryWindowUntil: new Date('2026-03-01T00:00:00Z'),
+        approvalRef: 'JIRA-crash',
+      });
+      expect(
+        (await store.recoverability({ type: 'dek', keyVersion: oldVersion })).recoverable,
+      ).toBe(true);
+
+      const done = await finalizeDestruction({ pool: owner, keyStore: store, actor: 'kl-actor' });
+
+      expect(done.finalizedDeks).toContain(oldVersion);
+      expect(
+        (await store.recoverability({ type: 'dek', keyVersion: oldVersion })).recoverable,
+      ).toBe(false);
+      const st = await owner.query<{ status: string }>(
+        `SELECT status FROM key_versions WHERE key_version=$1`,
+        [oldVersion],
+      );
+      expect(st.rows[0]!.status).toBe('destroyed');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('nonzero window: a worker with a stale active-version cache cannot write under the old version after resume', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rot-'));
+    try {
+      seq += 1;
+      const kek = `${KL_KEK_PREFIX}${seq}`;
+      const call = `${KL_CALL}${seq}`;
+      const clock = new FakeClock(Date.parse('2026-03-01T00:00:00Z'));
+      const store = new LocalFileKeyStore({ dir, recoveryWindowDays: 7, clock });
+      const rotationProvider = new KeyStoreProvider({
+        keyStore: store,
+        loadActiveKeyVersion: () => getActiveKeyVersion(owner),
+        activeVersionTtlMs: 0,
+      });
+      const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
+      await insertEncryptedRaw(owner, rotationProvider, call, oldVersion, 'body');
+
+      // A separate "worker" provider that caches the active version with a 5s TTL on the same clock.
+      const workerProvider = new KeyStoreProvider({
+        keyStore: store,
+        loadActiveKeyVersion: () => getActiveKeyVersion(owner),
+        clock,
+        activeVersionTtlMs: 5_000,
+      });
+      // Prime its cache while the OLD version is still active.
+      expect(await workerProvider.currentKeyVersion()).toBe(oldVersion);
+
+      await rotateKey({
+        pool: owner,
+        restrictedRunner: createRestrictedRunner(owner),
+        keyStore: store,
+        keyProvider: rotationProvider,
+        maintenance: noopMaintenance,
+        config: makeTestConfig({
+          KEY_STORE_RECOVERY_WINDOW_DAYS: 7,
+          KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: 5_000,
+        }),
+        actor: 'kl-actor',
+        approvalRef: 'JIRA-stale',
+        now: () => clock.now(),
+        // The settle-wait must let real time pass; advancing the shared clock expires the cache.
+        sleep: (ms: number) => {
+          clock.advanceMs(ms);
+          return Promise.resolve();
+        },
+      });
+
+      const newVersion = await getActiveKeyVersion(owner);
+      expect(newVersion).toBeGreaterThan(oldVersion);
+      // After the settle-wait + resume, the stale worker cache has expired → it sees the NEW version
+      // and can never write under the old, about-to-be-shredded one.
+      expect(await workerProvider.currentKeyVersion()).toBe(newVersion);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -268,7 +380,10 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
         keyStore: store,
         keyProvider: provider,
         maintenance: noopMaintenance,
-        config: makeTestConfig({ KEY_STORE_RECOVERY_WINDOW_DAYS: 7 }),
+        config: makeTestConfig({
+          KEY_STORE_RECOVERY_WINDOW_DAYS: 7,
+          KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: 0,
+        }),
         actor: 'kl-actor',
         approvalRef: 'JIRA-3',
         now: () => clock.now(),

@@ -26,8 +26,11 @@ export interface FinalizeResult {
 /**
  * Phase B (Task 8.2): confirm every requested-but-not-finalized destruction is truly unrecoverable
  * in the STORE (the second verification of the crypto-shred — `store.recoverability`, never the DB
- * flag), then flip `destroyed`. Resumable and idempotent — it picks up any `destroy_requested_at`-set
- * / `destroyed_at`-null DEK or KEK. A version still inside its recovery window
+ * flag), then flip `destroyed`. For each DB-destroy-requested version it first idempotently
+ * (re)issues `destroyDek`/`destroyKek` — so a rotation/revocation that crashed after the DB
+ * destroy-request commit but before the store request self-heals here instead of reporting pending
+ * forever. Resumable and idempotent — it picks up any `destroy_requested_at`-set / `destroyed_at`-null
+ * DEK or KEK. A version still inside its recovery window
  * (`recoverability.recoverable === true`) is SKIPPED, not marked; the operator re-runs after the
  * window. (The "old version is empty" completeness check is rotation-specific and runs in `rotate.ts`
  * before the destroy request — it must NOT run here, since a REVOCATION deliberately leaves the
@@ -52,6 +55,12 @@ export async function finalizeUnderLock(
       ORDER BY key_version`,
   );
   for (const { key_version: v } of dekRows) {
+    // Idempotently (re)issue the store destroy request before checking recoverability. A rotation
+    // that crashed AFTER the DB destroy-request commit but BEFORE `destroyDek` would otherwise
+    // leave the material active and recoverable forever — the finalizer would report it pending on
+    // every run and never complete. `destroyDek` is a no-op when the material is already pending or
+    // purged, and these rows are DB-destroy-requested (retired), never the active key.
+    await deps.keyStore.destroyDek(v);
     const rec = await deps.keyStore.recoverability({ type: 'dek', keyVersion: v });
     if (rec.recoverable) {
       out.pendingDeks.push(v);
@@ -73,6 +82,8 @@ export async function finalizeUnderLock(
       ORDER BY kek_version`,
   );
   for (const { kek_version: k } of kekRows) {
+    // Same crash-gap guard as DEKs: (re)issue destroyKek before the recoverability check.
+    await deps.keyStore.destroyKek(k);
     const rec = await deps.keyStore.recoverability({ type: 'kek', kekVersion: k });
     if (rec.recoverable) {
       out.pendingKeks.push(k);
