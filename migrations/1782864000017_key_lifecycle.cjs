@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Migration 16 — Task 8.2 key lifecycle: recovery-window bookkeeping, single-active
+ * Migration 17 — Task 8.2 key lifecycle: recovery-window bookkeeping, single-active
  * enforcement, the durable KEK-metadata table, the append-only lifecycle audit log, and a
  * column-scoped key-admin role.
  *
@@ -89,7 +89,7 @@ BEGIN
   SELECT count(*) INTO active_count FROM key_versions WHERE status = 'active';
   IF active_count > 1 THEN
     RAISE EXCEPTION
-      'migration 016 preflight: % active key_versions rows found; exactly one active key is allowed. Resolve the duplicate-active state before migrating.',
+      'migration 017 preflight: % active key_versions rows found; exactly one active key is allowed. Resolve the duplicate-active state before migrating.',
       active_count;
   END IF;
   IF active_count = 0 THEN
@@ -97,7 +97,7 @@ BEGIN
       INTO encrypted_count;
     IF encrypted_count > 0 THEN
       RAISE EXCEPTION
-        'migration 016 preflight: zero active key_versions but % encrypted raw/vault rows exist; bootstrap an active key before migrating.',
+        'migration 017 preflight: zero active key_versions but % encrypted raw/vault rows exist; bootstrap an active key before migrating.',
         encrypted_count;
     END IF;
   END IF;

@@ -5,17 +5,17 @@ import { createAppPool } from '../../src/db/pool.js';
 import { TEST_DATABASE_URL } from './_pg.js';
 
 /**
- * Migration 1782864000016 — Task 8.2 key lifecycle: `key_versions` recovery-window columns +
+ * Migration 1782864000017 — Task 8.2 key lifecycle: `key_versions` recovery-window columns +
  * a single-active partial unique index (with a loud preflight), the durable `kek_versions`
  * table, the append-only `key_lifecycle_events` audit log, and the column-scoped `key_admin_role`
  * (metadata + audit ONLY — never raw/vault ciphertext).
  *
- * 016 is the topmost migration, so ABOVE = 1: `down(1)` exposes the pre-016 schema, `up(1)`
- * re-applies 016 (re-running its preflight).
+ * 017 is the topmost migration, so ABOVE = 1: `down(1)` exposes the pre-017 schema, `up(1)`
+ * re-applies 017 (re-running its preflight).
  */
 const ABOVE = 1;
 
-describe.skipIf(!hasTestDb)('migration 016 — key lifecycle', () => {
+describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
   let owner!: Pool;
   let keyAdmin!: Pool;
 
