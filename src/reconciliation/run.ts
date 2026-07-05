@@ -237,6 +237,12 @@ export interface ReconciliationCronDeps {
    * incompleteness exactly like the scan, so an incomplete drain withholds the ping. Runs AFTER
    * the scan and independently of the sweep. */
   runDrain?: () => Promise<{ failed: number }>;
+  /** Mine resolved review decisions into the labeled corpus (Task 6.3). Optional health-gated duty:
+   * `clean_transcripts` is purgeable, so label capture must beat its retention window — running it
+   * here (every 15 min) captures a correction within minutes. Its `failed` tally (an operational
+   * failure) or a throw marks incompleteness, so BROKEN label capture withholds the ping; the
+   * expected per-candidate outcomes do not. Runs AFTER the drain, independently of the sweep. */
+  runLabelSync?: () => Promise<{ failed: number }>;
   /** External dead-man's-switch ping. */
   ping: HeartbeatPinger;
   /** Handle a sweep failure (map a typed Dialpad failure → deduped alert, log). Best-effort —
@@ -319,7 +325,31 @@ export async function runReconciliationCron(deps: ReconciliationCronDeps): Promi
     }
   }
 
-  if (sweepOk && !scanIncomplete && !drainIncomplete) {
+  // The label-sync duty (Task 6.3): mines resolved review decisions into the labeled corpus. An
+  // operational failure (nonzero `failed`) or a throw withholds the ping so broken label capture
+  // alerts — but the expected per-candidate outcomes (accepted/pii/schema/missing_clean/already-
+  // present) do NOT. Runs after the drain, independently of the sweep. Absent in older callers.
+  let labelSyncIncomplete = false;
+  if (deps.runLabelSync) {
+    try {
+      const { failed } = await deps.runLabelSync();
+      labelSyncIncomplete = failed > 0;
+      if (labelSyncIncomplete) {
+        logger.warn(
+          { component: 'reconciliation-cron', failed },
+          'label sync incomplete — withholding heartbeat',
+        );
+      }
+    } catch (err) {
+      labelSyncIncomplete = true;
+      logger.error(
+        { component: 'reconciliation-cron' },
+        `label sync failed: ${err instanceof Error ? err.name : typeof err}`,
+      );
+    }
+  }
+
+  if (sweepOk && !scanIncomplete && !drainIncomplete && !labelSyncIncomplete) {
     // The combined ping: this cron's OWN check, only after ALL duties succeeded. A ping failure
     // is logged (sanitized, no URL) but does not fail the run — the missed check is the alarm.
     await pingSuccess({

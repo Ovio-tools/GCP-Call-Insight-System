@@ -1,0 +1,17 @@
+{
+  "name": "reviewed-synthetic-water-heater",
+  "redactedTranscript": "Caller: my water heater is leaking in the garage and I need someone out today, it is getting worse.",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"emergency\",\"service_category\":\"water_heater\",\"problem_statement\":\"Human-reviewed extraction correction\",\"symptoms\":[],\"customer_language\":[],\"competitor_mentions\":[],\"concerns\":[],\"location_in_home\":null,\"access_or_scheduling_notes\":null,\"prior_attempts\":null,\"acquisition_source\":null,\"urgency\":\"emergency\",\"sentiment\":\"frustrated\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "call_intent": "emergency",
+      "service_category": "water_heater",
+      "urgency": "emergency",
+      "sentiment": "frustrated"
+    }
+  }
+}

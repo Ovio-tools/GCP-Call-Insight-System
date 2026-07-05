@@ -1,0 +1,8 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "startCommand": "node dist/services/evaluation-run.js",
+    "cronSchedule": "0 6 * * 1",
+    "restartPolicyType": "NEVER"
+  }
+}

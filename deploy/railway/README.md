@@ -11,6 +11,7 @@ One config file per service. In the Railway dashboard, set each service's
 | worker              | `worker.json`              | **no**          | —                  |
 | reconciliation-cron | `reconciliation-cron.json` | no              | `*/15 * * * *` UTC |
 | retention-cron      | `retention-cron.json`      | no              | `0 4 * * *` UTC    |
+| evaluation-cron     | `evaluation-cron.json`     | no              | `0 6 * * 1` UTC    |
 
 ## By-hand dashboard steps (build plan Task 0.3)
 
@@ -23,6 +24,11 @@ One config file per service. In the Railway dashboard, set each service's
   looking for those store-specific codes.
 - Private networking only: neither Postgres nor Redis has a public endpoint.
 - The worker has no public domain.
+- The **evaluation-cron** (Task 6.3) runs the weekly accuracy check. Point a service at
+  `evaluation-cron.json`. It requires `EVALUATION_CHECK_URL` (its own dead-man's switch),
+  `EVALUATION_RUN_ENABLED=true`, and `EVALUATION_LIVE_MODE=true` in staging/production — an enabled
+  non-live config fails fast with `CONFIG_MISSING_OR_INVALID`. It records `model_invocations` and
+  honors the daily cost cap / kill switches like the worker's model stages.
 - Migrations run pre-deploy on the **worker service only** (`npm run db:migrate`).
   node-pg-migrate 8.0.4 has no wait-lock mode (its advisory lock is non-blocking), so
   running migrations from a single service avoids concurrent pre-deploy runs that would

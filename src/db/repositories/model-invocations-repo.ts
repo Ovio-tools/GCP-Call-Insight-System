@@ -35,3 +35,26 @@ export async function listByCall(pool: Pool, callId: string): Promise<ModelInvoc
   );
   return rows.map((r) => parseOrThrow(TABLE, modelInvocationRowSchema, r));
 }
+
+/**
+ * The latest model invocation for a call at a given stage BEFORE a cutoff instant (Task 6.3
+ * provenance). Used by the label-sync to attribute a mined label to the model invocation that
+ * actually produced the reviewed output: classify labels look up `stage='classify'`, extract labels
+ * `stage='extract'`, with `before = operator_action.created_at`. Returns `undefined` when no such
+ * invocation exists — the caller then falls back to the current prompt-version constant and records
+ * `model_id=NULL` / `model_id_source='none'` (never a fabricated id).
+ */
+export async function getLatestModelInvocationForCallStageBefore(
+  pool: Pool,
+  opts: { callId: string; stage: string; before: Date },
+): Promise<ModelInvocationRow | undefined> {
+  const rows = await query<ModelInvocationRow>(
+    pool,
+    `SELECT * FROM model_invocations
+      WHERE call_id = $1 AND stage = $2 AND created_at < $3
+      ORDER BY created_at DESC
+      LIMIT 1`,
+    [opts.callId, opts.stage, opts.before],
+  );
+  return rows[0] ? parseOrThrow(TABLE, modelInvocationRowSchema, rows[0]) : undefined;
+}

@@ -106,6 +106,9 @@ export const COMPONENT = [
   'review-surface',
   'status-surface',
   'knowledge-base-surface',
+  // Evaluation cron (Task 6.3): the label-sync duty + the weekly accuracy check. Its sanitized
+  // `component` context key on evaluation logs/alerts.
+  'evaluation-cron',
 ] as const;
 export const componentSchema = z.enum(COMPONENT);
 export type Component = z.infer<typeof componentSchema>;

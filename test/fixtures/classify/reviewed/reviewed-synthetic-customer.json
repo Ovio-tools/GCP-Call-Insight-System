@@ -1,0 +1,10 @@
+{
+  "name": "reviewed-synthetic-customer",
+  "redactedTranscript": "Caller: hi, I need to schedule a water heater replacement for my house. Agent: sure, what day works for you?",
+  "modelResponse": {
+    "text": "{\"bucket\":\"customer\",\"reason\":\"reviewer-labeled\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "bucket": "customer" }
+}

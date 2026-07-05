@@ -1,0 +1,17 @@
+{
+  "name": "reviewed-synthetic-drain",
+  "redactedTranscript": "Caller: the kitchen sink drain is completely blocked, can someone come out sometime this week?",
+  "modelResponse": {
+    "text": "{\"call_intent\":\"new_booking\",\"service_category\":\"drain_blockage\",\"problem_statement\":\"Human-reviewed extraction correction\",\"symptoms\":[],\"customer_language\":[],\"competitor_mentions\":[],\"concerns\":[],\"location_in_home\":null,\"access_or_scheduling_notes\":null,\"prior_attempts\":null,\"acquisition_source\":null,\"urgency\":\"routine\",\"sentiment\":\"neutral\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "call_intent": "new_booking",
+      "service_category": "drain_blockage",
+      "urgency": "routine",
+      "sentiment": "neutral"
+    }
+  }
+}

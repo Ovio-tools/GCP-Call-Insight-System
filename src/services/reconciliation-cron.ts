@@ -30,6 +30,8 @@ import {
 } from '../reconciliation/run.js';
 import { drainPendingReprocessRequests } from '../reconciliation/reprocess-drain.js';
 import { scanStalledReviews } from '../review-queue/scan.js';
+import { syncLabeledExamples } from '../evaluation/sync.js';
+import { loadDenyList } from '../redaction/deny-list.js';
 
 /** Same mapping the fetch-transcript stage uses; `unavailable` stays a plain transient
  * failure — the missed check ping (dead-man's switch) is its alert channel. */
@@ -99,6 +101,10 @@ async function main(): Promise<void> {
   });
   const client = createDialpadClient({ config, limiter, logger });
 
+  // Load the client deny-list ONCE (a set-but-unreadable path fails loud at boot, before the sweep);
+  // reused by the label-sync duty's residual-PII gate. Absent path ⇒ empty deny list.
+  const denyTerms = loadDenyList(config.REDACTION_DENY_LIST_PATH);
+
   // Alert maintenance runs FIRST, gated only on Postgres and wrapped to never throw — so
   // stale-critical escalation and owed deliveries are attempted whether the Dialpad sweep
   // below succeeds or fails. It must precede the sweep because the sweep rethrows Dialpad
@@ -134,6 +140,13 @@ async function main(): Promise<void> {
           logger,
           enqueue: (row) => enqueueReprocess(queue, row.callId, config, row.reviewQueueId),
         }),
+      // Health-gated label capture (Task 6.3): mine resolved review decisions into the labeled
+      // corpus every 15 min so a correction is captured well inside the shortest CLEAN purge window.
+      // A nonzero `SyncSummary.failed` (operational failure) or a throw withholds the ping.
+      runLabelSync: async () => {
+        const summary = await syncLabeledExamples(pool, { denyTerms, logger });
+        return { failed: summary.failed };
+      },
       onSweepError: async (err) => {
         // Shared failure model: map a typed Dialpad failure to its stable code, emit the deduped
         // alert AND attempt immediate delivery (emitAlert is best-effort — the DB/webhook may

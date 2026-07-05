@@ -1,5 +1,3 @@
-import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
@@ -8,6 +6,7 @@ import {
   type ParseFailureKind,
 } from '../../../src/pipeline/classify/parse.js';
 import { CLASSIFY_BUCKETS } from '../../../src/anthropic/client.js';
+import { loadFixtures } from '../../support/fixture-loader.js';
 
 const FIXTURES_DIR = fileURLToPath(new URL('../../fixtures/classify/', import.meta.url));
 
@@ -18,14 +17,9 @@ interface ClassifyFixture {
   expected: { bucket: string } | { failure: ParseFailureKind; usageMissing?: true };
 }
 
-function loadFixtures(): ClassifyFixture[] {
-  return readdirSync(FIXTURES_DIR)
-    .filter((f) => f.endsWith('.json'))
-    .sort()
-    .map((f) => JSON.parse(readFileSync(join(FIXTURES_DIR, f), 'utf8')) as ClassifyFixture);
-}
-
-const fixtures = loadFixtures();
+// The shared loader reads the curated dir AND its `reviewed/` subdir (committed synthetic samples),
+// so the parse suite additionally exercises the reviewed-fixture format (Task 6.3).
+const fixtures = loadFixtures<ClassifyFixture>(FIXTURES_DIR);
 
 describe('classify fixture corpus', () => {
   it('loads a non-empty corpus', () => {

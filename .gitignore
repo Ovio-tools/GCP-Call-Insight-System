@@ -22,3 +22,8 @@ npm-debug.log*
 # Vendored NER model weights (fetched by npm run model:fetch). No trailing slash so a local
 # `models` SYMLINK (common in worktrees) is ignored too, not just a real directory.
 models
+
+# Real reviewed-fixture exports (Task 6.3) — never commit real redacted transcripts. Only the
+# synthetic samples under test/fixtures/**/reviewed/ are committed; `npm run eval:export` writes
+# real projections here.
+var/evaluation/
