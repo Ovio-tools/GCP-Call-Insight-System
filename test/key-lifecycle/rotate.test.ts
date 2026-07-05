@@ -157,6 +157,95 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
     }
   });
 
+  it('keeps the OLD version active during the sweep — the swap is deferred until after re-encryption (crash-after-swap safety)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rot-'));
+    try {
+      seq += 1;
+      const kek = `${KL_KEK_PREFIX}${seq}`;
+      const call = `${KL_CALL}${seq}`;
+      const { store, provider } = makeStoreProvider(dir, owner);
+      const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
+      await insertEncryptedRaw(owner, provider, call, oldVersion, 'body');
+
+      // The drain runs after the pause but before the sweep. Capturing the active version here
+      // proves the swap has NOT yet happened: if it had, a crash now would strand the old rows
+      // (retired + un-swept) and re-running would rotate the NEW key instead of finishing the old.
+      let activeAtDrain: number | undefined;
+      const spy = {
+        ...noopMaintenance,
+        waitForDrain: async (): Promise<boolean> => {
+          activeAtDrain = await getActiveKeyVersion(owner);
+          return true;
+        },
+      };
+
+      const result = await rotateKey({
+        pool: owner,
+        restrictedRunner: createRestrictedRunner(owner),
+        keyStore: store,
+        keyProvider: provider,
+        maintenance: spy,
+        config: makeTestConfig({ KEY_STORE_RECOVERY_WINDOW_DAYS: 0 }),
+        actor: 'kl-actor',
+        approvalRef: 'JIRA-drain',
+        now: () => new Date('2026-03-01T00:00:00Z'),
+      });
+
+      expect(activeAtDrain).toBe(oldVersion);
+      expect(result.newVersion).toBeGreaterThan(oldVersion);
+      // And the sweep still completed: new version active, old crypto-shredded.
+      expect(await getActiveKeyVersion(owner)).toBe(result.newVersion);
+      expect(
+        (await store.recoverability({ type: 'dek', keyVersion: oldVersion })).recoverable,
+      ).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('resumes the queue only AFTER the old key destruction is requested (no stale-cache write window)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rot-'));
+    try {
+      seq += 1;
+      const kek = `${KL_KEK_PREFIX}${seq}`;
+      const call = `${KL_CALL}${seq}`;
+      const { store, provider } = makeStoreProvider(dir, owner);
+      const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
+      await insertEncryptedRaw(owner, provider, call, oldVersion, 'body');
+
+      // `end()` resumes the queue. At that instant the old key's destruction MUST already be
+      // requested; otherwise a worker resuming with a stale active-version cache could write fresh
+      // ciphertext under the about-to-be-shredded key.
+      let destroyRequestedAtResume: number | undefined;
+      const spy = {
+        ...noopMaintenance,
+        end: async (): Promise<void> => {
+          destroyRequestedAtResume = (
+            await owner.query<{ n: number }>(
+              `SELECT count(*)::int AS n FROM key_versions WHERE destroy_requested_at IS NOT NULL`,
+            )
+          ).rows[0]!.n;
+        },
+      };
+
+      await rotateKey({
+        pool: owner,
+        restrictedRunner: createRestrictedRunner(owner),
+        keyStore: store,
+        keyProvider: provider,
+        maintenance: spy,
+        config: makeTestConfig({ KEY_STORE_RECOVERY_WINDOW_DAYS: 0 }),
+        actor: 'kl-actor',
+        approvalRef: 'JIRA-resume',
+        now: () => new Date('2026-03-01T00:00:00Z'),
+      });
+
+      expect(destroyRequestedAtResume).toBeGreaterThanOrEqual(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('nonzero window: Phase A does not destroy; finalizer destroys after the window elapses', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rot-'));
     try {

@@ -29,7 +29,14 @@ export function createMaintenanceController(deps: {
   return {
     async begin() {
       await setMaintenance(deps.redis);
-      await pauseQueue(deps.queue);
+      try {
+        await pauseQueue(deps.queue);
+      } catch (err) {
+        // Never leave the flag set if the pause failed — a stuck flag stalls the pipeline
+        // (every worker backstop re-delays forever) with no rotation actually running.
+        await clearMaintenance(deps.redis).catch(() => undefined);
+        throw err;
+      }
     },
     waitForDrain() {
       return waitForDrain(deps.queue, { timeoutMs: deps.config.KEY_ROTATION_DRAIN_TIMEOUT_MS });

@@ -37,6 +37,22 @@ the tripwires that keep production blocked until this task flips them.
 - **Full restore drill end-to-end** against a production-like backup + the real KMS (see
   `docs/restore-drill.md`), proving a pre-destruction backup cannot decrypt rows whose DEK material
   was later destroyed in the KMS.
+- **Rotation concurrency/crash hardening** (deferred residuals from the dev/staging reference; the
+  swap is already deferred until after the sweep and committed with the destroy-request, so a crash
+  now leaves a resumable `rotating` state or a `confirm-destruction`-pending state rather than an
+  orphaned old version — but two narrow windows remain):
+  - **Cross-process active-version cache invalidation.** Each worker's `KeyStoreProvider` caches the
+    DB-sourced active version for a short TTL. Rotation invalidates only its own provider; a worker
+    resuming from the pause with a sub-TTL-stale cache could still write under the old version. The
+    queue now stays paused through the destroy-request (closing the zero-window case), but for a
+    nonzero window a stale-cache write during the window would be shredded at finalize. Fix: signal
+    active-version invalidation across processes (or make the worker re-read on maintenance clear /
+    set its active-version TTL to 0 during maintenance).
+  - **Crash between the swap/destroy-request commit and `destroyDek(old)`.** The DB marks the old
+    version destroy-requested but the store never received the request, so `confirm-destruction`'s
+    `recoverability` check keeps it pending forever. Fix: have `confirm-destruction` (idempotently)
+    re-issue `destroyDek` for any DB-destroy-requested version whose store material is not yet
+    pending, before checking recoverability. Also resume the maintenance pause after such a crash.
 
 ## Acceptance criteria
 

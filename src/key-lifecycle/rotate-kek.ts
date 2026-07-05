@@ -40,19 +40,25 @@ export async function rotateKek(args: RotateKekArgs): Promise<RotateKekResult> {
 
   const { kekRef } = await args.keyStore.createKek({ kekVersion: args.newKekVersion });
 
-  // Retire the old FIRST so the partial unique index never sees two actives.
-  await updateKekStatus(args.db, oldKekVersion, { from: 'active', to: 'retired' });
-  await insertKek(args.db, {
-    kekVersion: args.newKekVersion,
-    externalKekRef: kekRef,
-    status: 'active',
-  });
-  await insertLifecycleEvent(args.db, {
-    event: 'kek_rotated',
-    kekVersion: args.newKekVersion,
-    actor: args.actor,
-    approvalRef: justification,
-  });
+  try {
+    // Retire the old FIRST so the partial unique index never sees two actives.
+    await updateKekStatus(args.db, oldKekVersion, { from: 'active', to: 'retired' });
+    await insertKek(args.db, {
+      kekVersion: args.newKekVersion,
+      externalKekRef: kekRef,
+      status: 'active',
+    });
+    await insertLifecycleEvent(args.db, {
+      event: 'kek_rotated',
+      kekVersion: args.newKekVersion,
+      actor: args.actor,
+      approvalRef: justification,
+    });
 
-  return { oldKekVersion, newKekVersion: args.newKekVersion };
+    return { oldKekVersion, newKekVersion: args.newKekVersion };
+  } catch (err) {
+    // A failed metadata write (the caller's tx rolls back the DB) must not strand the new KEK.
+    await args.keyStore.destroyKek(args.newKekVersion).catch(() => undefined);
+    throw err;
+  }
 }

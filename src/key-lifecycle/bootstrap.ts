@@ -53,31 +53,39 @@ export async function bootstrapKey(args: BootstrapKeyArgs): Promise<BootstrapKey
 
   const keyVersion = args.keyVersion ?? (await allocateNextKeyVersion(args.db));
 
-  // External material first (KEK, then DEK wrapped by it), then durable metadata.
+  // External material first (KEK, then DEK wrapped by it), then durable metadata. If the DEK
+  // creation or any metadata write fails, destroy the just-created external material so a failed
+  // bootstrap never strands a KEK/DEK with no DB lifecycle record.
   const { kekRef } = await args.keyStore.createKek({ kekVersion: args.kekVersion });
-  const { wrappedRef } = await args.keyStore.createDek({
-    keyVersion,
-    kekVersion: args.kekVersion,
-  });
+  try {
+    const { wrappedRef } = await args.keyStore.createDek({
+      keyVersion,
+      kekVersion: args.kekVersion,
+    });
 
-  await insertKek(args.db, {
-    kekVersion: args.kekVersion,
-    externalKekRef: kekRef,
-    status: 'active',
-  });
-  await insertKeyVersion(args.db, {
-    keyVersion,
-    status: 'active',
-    wrappedDekRef: wrappedRef,
-    kekVersion: args.kekVersion,
-  });
-  await insertLifecycleEvent(args.db, {
-    event: 'key_bootstrapped',
-    keyVersion,
-    kekVersion: args.kekVersion,
-    actor: args.actor,
-    approvalRef: justification,
-  });
+    await insertKek(args.db, {
+      kekVersion: args.kekVersion,
+      externalKekRef: kekRef,
+      status: 'active',
+    });
+    await insertKeyVersion(args.db, {
+      keyVersion,
+      status: 'active',
+      wrappedDekRef: wrappedRef,
+      kekVersion: args.kekVersion,
+    });
+    await insertLifecycleEvent(args.db, {
+      event: 'key_bootstrapped',
+      keyVersion,
+      kekVersion: args.kekVersion,
+      actor: args.actor,
+      approvalRef: justification,
+    });
 
-  return { kekVersion: args.kekVersion, keyVersion };
+    return { kekVersion: args.kekVersion, keyVersion };
+  } catch (err) {
+    await args.keyStore.destroyDek(keyVersion).catch(() => undefined);
+    await args.keyStore.destroyKek(args.kekVersion).catch(() => undefined);
+    throw err;
+  }
 }
