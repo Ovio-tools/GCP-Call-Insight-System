@@ -59,7 +59,20 @@ physical delete, dry-run, and fail-loud `RETENTION_PURGE_FAILED`. **NORMAL hard 
 stamp-and-scrub** (an UPDATE that sets `hard_deleted_at` and overwrites content, keeping the
 tombstone so the recreate finality guards stay meaningful); **the held-cap purge is a physical
 `DELETE`** of `raw_transcripts` + `token_vault` (no tombstone — finality there is a `raw_purged_at`
-write-guard). exist; the remaining surfaces (knowledge-base surface, ServiceTitan, backfill) and
+write-guard). The reviewed-decisions labeled corpus + weekly accuracy check now exists (Task 6.3,
+`src/evaluation/` + `src/services/evaluation-run.ts`, migration 016; see `docs/evaluation.md` +
+`docs/adr/0005-reviewed-decisions-to-labeled-examples.md`): `syncLabeledExamples` mines
+`operator_actions` (async, NEVER editing `src/review/actions.ts`) into `labeled_examples` (accepted)
+/ `labeled_example_rejections` (content-free pii/schema/missing_clean) — both version-scoped on
+`(operator_action_id, task_type, pii_gate_version, eval_set_version)` — gated by a schema + residual-
+PII check over redacted-input-only; wired as a health-gated `runLabelSync` duty on the reconciliation
+cron (its `SyncSummary.failed` withholds the ping); `runEvaluation` scores injected predictors (live
+ones record `model_invocations` + honor the cost cap/kill switch) into PII-free `evaluation_reports`
+(`mode` live|test_stub, status×skip_reason CHECK; `dry_run` is a CLI-only non-persisting preview);
+the `evaluation-cron` heartbeat pings `EVALUATION_CHECK_URL` only on a complete live run, and
+staging/prod `EVALUATION_RUN_ENABLED && !EVALUATION_LIVE_MODE` is fail-fast `CONFIG_MISSING_OR_INVALID`;
+real reviewed exports are gitignored, only synthetic reviewed fixtures are committed. exist; the
+remaining surfaces (knowledge-base surface, ServiceTitan, backfill) and
 Task 8.2 crypto/restore do not yet. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY
 `clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).

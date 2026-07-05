@@ -18,6 +18,7 @@ function makeDeps(
     sweep?: () => Promise<unknown>;
     scan?: () => Promise<ScanResult>;
     drain?: () => Promise<{ failed: number }>;
+    labelSync?: () => Promise<{ failed: number }>;
     ping?: (url: string) => Promise<void>;
     checkUrl?: string | undefined;
   } = {},
@@ -29,14 +30,16 @@ function makeDeps(
   const runSweep = vi.fn(opts.sweep ?? (() => Promise.resolve()));
   const runScan = vi.fn(opts.scan ?? (() => Promise.resolve(scanResult())));
   const runDrain = vi.fn(opts.drain ?? (() => Promise.resolve({ failed: 0 })));
+  const runLabelSync = vi.fn(opts.labelSync ?? (() => Promise.resolve({ failed: 0 })));
   const ping = vi.fn(opts.ping ?? ((_url: string) => Promise.resolve()));
   const onSweepError = vi.fn((_err: unknown) => Promise.resolve());
   return {
-    deps: { config, logger, runSweep, runScan, runDrain, ping, onSweepError },
+    deps: { config, logger, runSweep, runScan, runDrain, runLabelSync, ping, onSweepError },
     lines,
     runSweep,
     runScan,
     runDrain,
+    runLabelSync,
     ping,
     onSweepError,
   };
@@ -123,6 +126,30 @@ describe('runReconciliationCron (Task 6.1 fold)', () => {
 
   it('withholds the ping and throws when the reprocess drain itself throws', async () => {
     const h = makeDeps({ drain: () => Promise.reject(new Error('drain boom')) });
+
+    await expect(runReconciliationCron(h.deps)).rejects.toThrow(/duty failed/);
+    expect(h.ping).not.toHaveBeenCalled();
+  });
+
+  it('runs the label-sync duty and pings when it is healthy', async () => {
+    const h = makeDeps({ labelSync: () => Promise.resolve({ failed: 0 }) });
+
+    await runReconciliationCron(h.deps);
+
+    expect(h.runLabelSync).toHaveBeenCalledTimes(1);
+    expect(h.ping).toHaveBeenCalledTimes(1);
+  });
+
+  it('withholds the ping and throws when label-sync reports an operational failure', async () => {
+    const h = makeDeps({ labelSync: () => Promise.resolve({ failed: 2 }) });
+
+    await expect(runReconciliationCron(h.deps)).rejects.toThrow(/duty failed/);
+    expect(h.runLabelSync).toHaveBeenCalledTimes(1);
+    expect(h.ping).not.toHaveBeenCalled();
+  });
+
+  it('withholds the ping and throws when label-sync itself throws', async () => {
+    const h = makeDeps({ labelSync: () => Promise.reject(new Error('sync boom')) });
 
     await expect(runReconciliationCron(h.deps)).rejects.toThrow(/duty failed/);
     expect(h.ping).not.toHaveBeenCalled();

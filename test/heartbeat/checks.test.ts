@@ -12,18 +12,21 @@ const URLS = {
   worker: 'https://checks.example.com/ping/worker',
   'reconciliation-cron': 'https://checks.example.com/ping/recon',
   'retention-cron': 'https://checks.example.com/ping/retention',
+  'evaluation-cron': 'https://checks.example.com/ping/evaluation',
 } as const;
 
 const VARS = {
   worker: 'WORKER_CHECK_URL',
   'reconciliation-cron': 'RECONCILIATION_CHECK_URL',
   'retention-cron': 'RETENTION_CHECK_URL',
+  'evaluation-cron': 'EVALUATION_CHECK_URL',
 } as const;
 
 const COMPONENTS: readonly HeartbeatComponent[] = [
   'worker',
   'reconciliation-cron',
   'retention-cron',
+  'evaluation-cron',
 ];
 
 describe('checkUrlFor / checkUrlVar', () => {

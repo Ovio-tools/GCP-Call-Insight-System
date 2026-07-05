@@ -470,3 +470,32 @@ complete. The error detail is in the logs, never in the response.
 
 - **Do now:** Check the service logs for the correlated request id and address the underlying error.
 - **Longer-term fix:** Same as the immediate step.
+
+## Evaluation & labeled-examples corpus (Task 6.3)
+
+**Owner:** OVIO · **Data safe:** yes (evaluation data only — never raw stores, vault, or customer
+output)
+
+Reviewed decisions are mined into a PII-free labeled corpus and a weekly accuracy check runs over
+it. See `docs/evaluation.md` for the full design.
+
+- **Label capture** runs as a health-gated `runLabelSync` duty on the reconciliation cron (every 15
+  min UTC). It is the dependable capture path — a correction is mined into `labeled_examples` within
+  minutes, well inside the shortest CLEAN soft-purge window. **Invariant:** the label-sync cadence
+  must stay shorter than the CLEAN soft-purge window. A nonzero `SyncSummary.failed` or a throw
+  withholds the reconciliation heartbeat (see `## Reconciliation heartbeat missed`-style handling);
+  the missed check is the alert that label capture is broken.
+- **The weekly accuracy check** — cadence: **weekly, Mon 06:00 UTC** (Railway `evaluation-cron.json`,
+  `node dist/services/evaluation-run.js`). Command locally: `npm run eval:run`.
+  - **Evidence of a healthy run:** an `evaluation_reports` row with `mode='live'` and
+    `status='complete'`, a `model_invocations` row per evaluated example (stage
+    `evaluation-classify` / `evaluation-extract`), and the `evaluation run complete` structured log
+    line. A complete live run pings `EVALUATION_CHECK_URL`.
+  - **A missed `EVALUATION_CHECK_URL` ping** means the weekly run did not complete a live pass
+    (disabled, non-live misconfig, cost-capped/killed partial, or a crash). **Do now:** check the
+    latest `evaluation_reports` row's `status`/`skip_reason` and the structured log; a fail-fast
+    `CONFIG_MISSING_OR_INVALID` naming `EVALUATION_LIVE_MODE` means staging/production is enabled but
+    not live — set `EVALUATION_LIVE_MODE=true`. A `cost_capped`/`killed` partial means the daily cost
+    cap or a model kill switch tripped; resolve that, then re-run. **Longer-term fix:** confirm
+    `EVALUATION_RUN_ENABLED=true`, `EVALUATION_LIVE_MODE=true`, and `EVALUATION_CHECK_URL` are set on
+    the evaluation service.

@@ -44,6 +44,7 @@ describe('categories', () => {
         'review-surface',
         'status-surface',
         'knowledge-base-surface',
+        'evaluation-cron',
       ]);
     });
 

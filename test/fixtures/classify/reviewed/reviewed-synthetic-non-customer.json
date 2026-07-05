@@ -1,0 +1,10 @@
+{
+  "name": "reviewed-synthetic-non-customer",
+  "redactedTranscript": "Caller: hi, this is a supplier calling about a parts delivery invoice, not a service request.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"non-customer\",\"reason\":\"reviewer-labeled\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "bucket": "non-customer" }
+}

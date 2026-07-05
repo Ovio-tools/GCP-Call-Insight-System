@@ -21,6 +21,9 @@
     "db:migrate:down": "node dist/scripts/migrate.js down",
     "requeue:classify": "node dist/scripts/requeue-parked-classify.js",
     "requeue:extract": "node dist/scripts/requeue-parked-extract.js",
+    "eval:sync": "node dist/scripts/sync-labeled-examples.js",
+    "eval:export": "node dist/scripts/export-reviewed-fixtures.js",
+    "eval:run": "node dist/scripts/run-evaluation.js",
     "prepare": "husky",
     "model:fetch": "node dist/scripts/fetch-ner-model.js"
   },

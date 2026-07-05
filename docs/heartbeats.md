@@ -20,23 +20,39 @@ no single "system healthy" URL.
 
 ## The three checks
 
-| Component           | Config variable            | Cadence                              | Pings when                                                                                        |
-| ------------------- | -------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| worker              | `WORKER_CHECK_URL`         | every `WORKER_HEARTBEAT_INTERVAL_MS` | it is booted, readiness passed, its run loop is running, and its own consuming connection answers |
-| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | BOTH the sweep AND the SLA-breach scan complete fully successfully (Task 6.1)                     |
-| retention-cron      | `RETENTION_CHECK_URL`      | once per run                         | the run completes without throwing                                                                |
+| Component           | Config variable            | Cadence                              | Pings when                                                                                         |
+| ------------------- | -------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| worker              | `WORKER_CHECK_URL`         | every `WORKER_HEARTBEAT_INTERVAL_MS` | it is booted, readiness passed, its run loop is running, and its own consuming connection answers  |
+| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | the sweep, the SLA-breach scan, the reprocess drain, AND label-sync all complete successfully      |
+| retention-cron      | `RETENTION_CHECK_URL`      | once per run                         | the run completes without throwing                                                                 |
+| evaluation-cron     | `EVALUATION_CHECK_URL`     | weekly                               | a **live** accuracy run completes fully (`status='complete'`) with ≥1 example evaluated (Task 6.3) |
 
 `WORKER_HEARTBEAT_INTERVAL_MS` (default 60s) and `HEARTBEAT_PING_TIMEOUT_MS` (default 5s) tune
 the worker cadence and the per-ping timeout. Set each component's check period/grace on the
 monitor **longer** than the component's cadence so a single slow beat does not false-alarm.
 
-**Reconciliation cron runs two independent duties (Task 6.1).** Its entrypoint attempts the
-Dialpad metadata sweep AND the review-SLA-breach scan, and the ping now covers **both**: it fires
-only when both succeed. The two are attempted independently — the scan runs even if the sweep
-failed, so overdue held calls still escalate/alert when reconciliation is broken — and **either
-duty failing withholds the ping** (a non-zero scan `failed` or `lockedSkipped` count also counts
-as incomplete). The `pingSuccess` call was moved out of `runReconciliation` into the entrypoint
-(`runReconciliationCron`) so it is a combined-health signal, not coupled to the sweep alone.
+**Reconciliation cron is a combined-health cron (Tasks 6.1 / 6.2 / 6.3).** Its entrypoint attempts
+FOUR independent duties — the Dialpad metadata sweep, the review-SLA-breach scan, the reprocess-
+outbox drain, and **label-sync** (Task 6.3) — and the ping covers **all four**: it fires only when
+every duty succeeds. The duties are attempted independently — the scan runs even if the sweep
+failed, so overdue held calls still escalate/alert when reconciliation is broken — and **any duty
+failing withholds the ping** (a non-zero scan `failed`/`lockedSkipped`, a non-zero drain `failed`,
+or a non-zero label-sync `SyncSummary.failed` also counts as incomplete). The `pingSuccess` call
+lives in the entrypoint (`runReconciliationCron`) so it is a combined-health signal, not coupled to
+the sweep alone.
+
+**Label-sync outcomes and the ping (Task 6.3).** Label-sync mines resolved review decisions into
+the labeled corpus. Only an **operational failure** — a nonzero `SyncSummary.failed` (a repository
+insert / gate crash) or a throw — withholds the ping, because that is the signal that label capture
+is broken. The **expected** per-candidate outcomes (accepted, pii-rejected, schema-rejected,
+`missing_clean`, already-present) do NOT fail the cron. Running label-sync here (every 15 min) keeps
+capture well inside the shortest CLEAN soft-purge window — **the label-sync cadence must be shorter
+than the CLEAN soft-purge window.**
+
+**Evaluation cron (Task 6.3).** The weekly accuracy check pings `EVALUATION_CHECK_URL` only on a
+`mode='live'`, `status='complete'` run with ≥1 example evaluated. A partial (mid-run cost cap /
+kill), skipped, stub, disabled, or failed run does **not** ping — the missed check is the alert. It
+uses its external check only; there is no status-surface mirror for it.
 
 ## Rules
 

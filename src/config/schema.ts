@@ -532,6 +532,31 @@ export const configObjectSchema = z.object({
    * detail, and the seven actions); only the raw/vault reveal requires this role. Never a
    * secret. */
   REVIEW_ELEVATED_ROLE: z.string().min(1).optional(),
+
+  // --- Evaluation runner / labeled-examples corpus (Task 6.3) ---
+
+  /** Kill switch for the periodic accuracy check (explicit string enum, never truthy-coerced — the
+   * EXACT WORKER_KILL_SWITCH pattern). Defaults false: the weekly eval cron gates on it. Label-sync
+   * (the reconciliation-cron duty) runs regardless — capture must beat the CLEAN purge window. */
+  EVALUATION_RUN_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** When true the accuracy check calls the real models (records model_invocations + honors the
+   * cost cap / kill switch). In staging/production, `EVALUATION_RUN_ENABLED=true` + this `false`
+   * is a fail-fast CONFIG_MISSING_OR_INVALID — the periodic check must never write a non-live
+   * `test_stub` report or ping green without calling the models. The stub path is test/local-only. */
+  EVALUATION_LIVE_MODE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** The evaluation cron's OWN dead-man's-switch URL, pinged only after a COMPLETE live run.
+   * Optional in the schema (dev/test skip the ping); the eval-run entrypoint REQUIRES it in
+   * staging/production via requireCheckUrl(config, 'evaluation-cron'). Kept separate from the other
+   * cron URLs on purpose — a shared check would stay green while one component is dead. */
+  EVALUATION_CHECK_URL: z.string().url().optional(),
 });
 
 /**
