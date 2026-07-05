@@ -50,6 +50,10 @@ export const DEFAULT_SEVERITY: Record<ErrorCode, Severity> = {
   // Extract stage (Task 5.2). High, not medium: unlike the pre-egress redaction holds, a
   // post-extraction hit means residual PII may already have crossed the privacy boundary.
   VERBATIM_PII_DETECTED: 'high',
+  // Key lifecycle (Task 8.2). Critical: a failed rotation/revocation can leave the crypto-shred
+  // promise unmet (old material still recoverable) — the launch gate and operator must act.
+  KEY_ROTATION_FAILED: 'critical',
+  KEY_REVOCATION_FAILED: 'critical',
 };
 
 /** The default severity for a code. Throws on an unknown code (no fallback). */

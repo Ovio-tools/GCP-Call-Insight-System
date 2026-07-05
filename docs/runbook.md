@@ -499,3 +499,41 @@ it. See `docs/evaluation.md` for the full design.
     cap or a model kill switch tripped; resolve that, then re-run. **Longer-term fix:** confirm
     `EVALUATION_RUN_ENABLED=true`, `EVALUATION_LIVE_MODE=true`, and `EVALUATION_CHECK_URL` are set on
     the evaluation service.
+
+## Key rotation failed
+
+<!-- anchor: key-rotation-failed — KEY_ROTATION_FAILED -->
+
+**Code:** `KEY_ROTATION_FAILED` · **Severity:** critical · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+A key rotation (Task 8.2) aborted before it finished re-encrypting `raw_transcripts` + `token_vault`
+onto the new `key_version` and destroying the old external DEK. Causes: in-flight jobs did not drain
+within `KEY_ROTATION_DRAIN_TIMEOUT_MS`, a metadata insert failed (the orphan external DEK is
+compensated with `destroyDek`), or the verify predicate still found recoverable old-version
+ciphertext. **Data is safe and fully readable — the old DEK is NOT destroyed on this path.**
+
+- **Do now:** Read `key_lifecycle_events` for the failed run's `rotate_failed` row. Confirm the queue
+  resumed (`queue.resume()` ran; no lingering maintenance flag) and the worker is consuming again.
+  Re-run rotation once the cause is fixed; rotation is crash-resumable and refuses to start while a
+  prior run is unfinished. Do NOT run `confirm-destruction` for the old key until re-encryption +
+  verify succeed.
+- **Longer-term fix:** Alert on any `rotating` version, or a `destroy_requested_at`-set/`destroyed_at`-null
+  version past its recovery window (the launch gate's stalled-destruction check).
+
+## Key revocation failed
+
+<!-- anchor: key-revocation-failed — KEY_REVOCATION_FAILED -->
+
+**Code:** `KEY_REVOCATION_FAILED` · **Severity:** critical · **Calls:** none · **Owner:** platform · **Data safe:** yes
+
+An emergency DEK or KEK revocation (Task 8.2) aborted before the external key material was confirmed
+unrecoverable (`store.recoverability(...)` still true, or the second verify found recoverable
+ciphertext). Rows under the target key may still be readable in the live DB **and in restored
+backups** until the shred completes.
+
+- **Do now:** Investigate the `revoke_failed` / `destroy_finalize_failed` event. Re-run
+  `confirm-destruction` after the recovery window; verify `recoverability` is `false` for every
+  affected DEK (and, for a KEK revocation, every `key_version` under that `kek_version`) before
+  declaring the shred complete. Restart every DEK-caching service (worker, review surface) so no
+  process still holds a cached unwrapped DEK.
+- **Longer-term fix:** Monitor revocation completion off `store.recoverability`, never the DB flag.

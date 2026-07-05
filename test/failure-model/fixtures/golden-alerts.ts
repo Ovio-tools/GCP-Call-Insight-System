@@ -597,4 +597,40 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     environment: 'staging',
     affectedScope: ['call_id', 'environment'],
   },
+  KEY_ROTATION_FAILED: {
+    errorCode: 'KEY_ROTATION_FAILED',
+    severity: 'critical',
+    whatBroke: 'KEY_ROTATION_FAILED',
+    likelyRootCause: 'KEY_ROTATION_FAILED',
+    impact:
+      'A key rotation aborted before old ciphertext was re-encrypted and the old key destroyed. Data is safe and readable; the crypto-shred promise for the old key is not yet met.',
+    immediateRemediation:
+      'Check key_lifecycle_events for the failed run, confirm the queue resumed, and re-run rotation (dry-run/verify first). Do NOT destroy the old key until re-encryption + verify succeed.',
+    longerTermFix:
+      'Add rotation-success monitoring and alert on any rotating/pending-destroy version older than its expected window.',
+    dataSafe: true,
+    callsState: 'none',
+    runbookRef: 'runbook#key-rotation-failed',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    environment: 'staging',
+    affectedScope: ['component', 'environment'],
+  },
+  KEY_REVOCATION_FAILED: {
+    errorCode: 'KEY_REVOCATION_FAILED',
+    severity: 'critical',
+    whatBroke: 'KEY_REVOCATION_FAILED',
+    likelyRootCause: 'KEY_REVOCATION_FAILED',
+    impact:
+      'An emergency DEK/KEK revocation aborted before the external material was confirmed unrecoverable. Rows under the target key may still be readable in the live DB and in backups.',
+    immediateRemediation:
+      'Investigate the revocation failure, re-run the finalizer (confirm-destruction), and verify recoverability is false for every affected version before declaring the shred complete.',
+    longerTermFix:
+      'Add revocation-completion monitoring keyed off store.recoverability, not the DB flag.',
+    dataSafe: true,
+    callsState: 'none',
+    runbookRef: 'runbook#key-revocation-failed',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    environment: 'staging',
+    affectedScope: ['component', 'environment'],
+  },
 };
