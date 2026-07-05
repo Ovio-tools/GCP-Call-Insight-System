@@ -282,6 +282,32 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
     owner: PLATFORM,
     runbookRef: 'runbook#retention-purge-failed',
   },
+  KEY_ROTATION_FAILED: {
+    rootCauseCategory: 'KEY_ROTATION_FAILED',
+    impact:
+      'A key rotation aborted before old ciphertext was re-encrypted and the old key destroyed. Data is safe and readable; the crypto-shred promise for the old key is not yet met.',
+    remediationNow:
+      'Check key_lifecycle_events for the failed run, confirm the queue resumed, and re-run rotation (dry-run/verify first). Do NOT destroy the old key until re-encryption + verify succeed.',
+    remediationFix:
+      'Add rotation-success monitoring and alert on any rotating/pending-destroy version older than its expected window.',
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#key-rotation-failed',
+  },
+  KEY_REVOCATION_FAILED: {
+    rootCauseCategory: 'KEY_REVOCATION_FAILED',
+    impact:
+      'An emergency DEK/KEK revocation aborted before the external material was confirmed unrecoverable. Rows under the target key may still be readable in the live DB and in backups.',
+    remediationNow:
+      'Investigate the revocation failure, re-run the finalizer (confirm-destruction), and verify recoverability is false for every affected version before declaring the shred complete.',
+    remediationFix:
+      'Add revocation-completion monitoring keyed off store.recoverability, not the DB flag.',
+    dataSafe: true,
+    callsState: 'none',
+    owner: PLATFORM,
+    runbookRef: 'runbook#key-revocation-failed',
+  },
   BACKFILL_CHECKPOINT_FAILED: {
     rootCauseCategory: 'BACKFILL_CHECKPOINT_FAILED',
     impact:

@@ -65,6 +65,13 @@ export const ROOT_CAUSE_CATEGORIES = [
   // model-extracted verbatim marketing phrase — a POST-extraction hit, distinct from the
   // pre-egress redaction holds: the redacted transcript already crossed to Anthropic.
   'VERBATIM_PII_DETECTED',
+  // Key lifecycle (Task 8.2). A key rotation aborted (drain timeout, orphaned external DEK on a
+  // failed insert, a re-encryption sweep that left recoverable old-version ciphertext, or a
+  // finalizer that still saw recoverable material). Data is safe; the old DEK is NOT destroyed.
+  'KEY_ROTATION_FAILED',
+  // Key lifecycle (Task 8.2). An emergency DEK/KEK revocation aborted before the material was
+  // confirmed unrecoverable. Affected rows may still be readable; re-run the finalizer / investigate.
+  'KEY_REVOCATION_FAILED',
 ] as const;
 
 export const rootCauseCategorySchema = z.enum(ROOT_CAUSE_CATEGORIES);

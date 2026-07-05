@@ -551,3 +551,52 @@ describe('per-component heartbeat config (Task 7.1)', () => {
     }
   });
 });
+
+describe('key-store config (Task 8.2)', () => {
+  it('defaults are sane and keystore is an accepted provider', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.KEY_STORE_RECOVERY_WINDOW_DAYS).toBe(0);
+    expect(result.config.CRYPTO_KEY_DESTROY_COMMANDS_ENABLED).toBe(false);
+    expect(result.config.KEY_ROTATION_DRAIN_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(result.config.KEY_ROTATION_MAINTENANCE_REQUEUE_DELAY_MS).toBeGreaterThan(0);
+  });
+
+  it('accepts CRYPTO_KEY_PROVIDER=keystore and parses the destroy kill switch + window', () => {
+    const result = validateEnv({
+      ...validEnv(),
+      CRYPTO_KEY_PROVIDER: 'keystore',
+      CRYPTO_KEY_STORE_DIR: '/tmp/ks',
+      CRYPTO_KEK_VERSION: 'kek-1',
+      KEY_STORE_RECOVERY_WINDOW_DAYS: '7',
+      CRYPTO_KEY_DESTROY_COMMANDS_ENABLED: 'true',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.CRYPTO_KEY_PROVIDER).toBe('keystore');
+    expect(result.config.KEY_STORE_RECOVERY_WINDOW_DAYS).toBe(7);
+    expect(result.config.CRYPTO_KEY_DESTROY_COMMANDS_ENABLED).toBe(true);
+  });
+
+  it('rejects a negative KEY_STORE_RECOVERY_WINDOW_DAYS, naming the variable', () => {
+    const result = validateEnv({ ...validEnv(), KEY_STORE_RECOVERY_WINDOW_DAYS: '-1' });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('KEY_STORE_RECOVERY_WINDOW_DAYS');
+  });
+
+  it('documents the key-store keys in .env.example', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    for (const key of [
+      'CRYPTO_KEY_STORE_DIR',
+      'CRYPTO_KEK_VERSION',
+      'KEY_STORE_RECOVERY_WINDOW_DAYS',
+      'CRYPTO_KEY_DESTROY_COMMANDS_ENABLED',
+      'KEY_ROTATION_DRAIN_TIMEOUT_MS',
+      'KEY_ROTATION_MAINTENANCE_REQUEUE_DELAY_MS',
+    ]) {
+      expect(example).toContain(key);
+    }
+  });
+});

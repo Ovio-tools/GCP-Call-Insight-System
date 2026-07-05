@@ -24,6 +24,11 @@
     "eval:sync": "node dist/scripts/sync-labeled-examples.js",
     "eval:export": "node dist/scripts/export-reviewed-fixtures.js",
     "eval:run": "node dist/scripts/run-evaluation.js",
+    "key:bootstrap": "node dist/scripts/bootstrap-key.js",
+    "key:rotate-kek": "node dist/scripts/rotate-kek.js",
+    "key:rotate": "node dist/scripts/rotate-key.js",
+    "key:revoke": "node dist/scripts/revoke-key.js",
+    "key:confirm-destruction": "node dist/scripts/confirm-destruction.js",
     "prepare": "husky",
     "model:fetch": "node dist/scripts/fetch-ner-model.js"
   },

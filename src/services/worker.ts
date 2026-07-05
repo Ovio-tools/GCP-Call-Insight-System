@@ -11,7 +11,8 @@ import {
 } from '../heartbeat/index.js';
 import { createAppPool } from '../db/index.js';
 import { recordHeartbeat } from '../db/repositories/component-heartbeats-repo.js';
-import { keyProviderFromConfig } from '../crypto/index.js';
+import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
+import { isMaintenanceActive } from '../key-lifecycle/maintenance-lock.js';
 import { createDialpadClient, RedisDualWindowLimiter } from '../dialpad/client/index.js';
 import { buildProductionStageHandlers } from '../pipeline/handlers.js';
 import { requireRedactionConfig } from '../redaction/config.js';
@@ -49,7 +50,9 @@ async function main(): Promise<void> {
 
   // Real stage handlers: the Dialpad transcript client (Task 3.3) fetches through a shared
   // Redis limiter so the company-wide + per-endpoint caps hold across every worker instance.
-  const keyProvider = keyProviderFromConfig(config);
+  // In `keystore` mode this fails fast unless bootstrap-key has seeded exactly one active KEK + DEK
+  // (Task 8.2); in `local` mode it is the config-only provider.
+  const keyProvider = await buildServiceKeyProvider({ config, pool });
   const limiter = new RedisDualWindowLimiter(limiterConnection, {
     perSecond: config.DIALPAD_RATE_PER_SECOND,
     perMinute: config.DIALPAD_RATE_PER_MINUTE,
@@ -61,7 +64,13 @@ async function main(): Promise<void> {
     queue,
     config,
   });
-  const worker = createPipelineWorker(config, pool, workerConnection, { handlers, logger });
+  const worker = createPipelineWorker(config, pool, workerConnection, {
+    handlers,
+    logger,
+    // Defensive backstop for the key-rotation pause (Task 8.2): a cheap Redis EXISTS on the
+    // (non-blocking) producer connection re-delays an already-fetched job without burning a retry.
+    isMaintenanceActive: () => isMaintenanceActive(queueConnection),
+  });
 
   const shouldConsume = !config.WORKER_KILL_SWITCH;
 

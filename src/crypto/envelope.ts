@@ -43,6 +43,27 @@ export async function encrypt(
 }
 
 /**
+ * Encrypt under a SPECIFIC key_version rather than the provider's current one. Used by key
+ * rotation (Task 8.2) to re-encrypt an old row onto the new version: the active version may already
+ * have flipped, but the sweep must target the exact `keyVersion` it allocated. AAD is bound to that
+ * version identically to {@link encrypt}, so the row round-trips through {@link decrypt}.
+ */
+export async function encryptUnderVersion(
+  plaintext: Buffer,
+  keyProvider: KeyProvider,
+  keyVersion: number,
+  aad?: Buffer,
+): Promise<Encrypted> {
+  const dek = await keyProvider.getDek(keyVersion);
+  const iv = randomBytes(IV_BYTES);
+  const cipher = createCipheriv(ALGORITHM, dek, iv);
+  cipher.setAAD(buildAad(keyVersion, aad));
+  const body = Buffer.concat([cipher.update(plaintext), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+  return { ciphertext: Buffer.concat([iv, authTag, body]), keyVersion };
+}
+
+/**
  * Decrypt a payload produced by {@link encrypt}. Verifies the GCM auth tag — a tampered
  * ciphertext, wrong `keyVersion`, or mismatched `aad` throws rather than returning
  * corrupt plaintext.
