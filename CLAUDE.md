@@ -71,9 +71,9 @@ ones record `model_invocations` + honor the cost cap/kill switch) into PII-free 
 (`mode` live|test_stub, status×skip_reason CHECK; `dry_run` is a CLI-only non-persisting preview);
 the `evaluation-cron` heartbeat pings `EVALUATION_CHECK_URL` only on a complete live run, and
 staging/prod `EVALUATION_RUN_ENABLED && !EVALUATION_LIVE_MODE` is fail-fast `CONFIG_MISSING_OR_INVALID`;
-real reviewed exports are gitignored, only synthetic reviewed fixtures are committed. exist; the
+real reviewed exports are gitignored, only synthetic reviewed fixtures are committed. The
 remaining surfaces (knowledge-base surface, ServiceTitan, backfill) and
-Task 8.2 crypto/restore do not yet. The NER model is vendored by
+Task 8.2 crypto/restore do not yet exist. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY
 `clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
