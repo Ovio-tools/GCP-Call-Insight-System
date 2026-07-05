@@ -88,11 +88,16 @@ exports.up = (pgm) => {
   // The `? 'bucket'` / `?&` key-existence guards are load-bearing: without them a missing key makes
   // `expected_output->>'key'` NULL and the whole expression evaluate to NULL, which a CHECK treats
   // as SATISFIED (only FALSE violates). Requiring the keys first forces a real TRUE/FALSE verdict.
+  // The `(expected_output - array[...]) = '{}'::jsonb` clause forbids EXTRA keys (an exact key set),
+  // so a raw-SQL writer cannot smuggle free text like `{"bucket":"spam","note":"..."}` past the DB
+  // (Postgres has no `jsonb_object_length`; subtracting the allowed keys and asserting the remainder
+  // is empty is the portable equivalent, and it keeps `labeledExampleRowSchema`'s strict read valid).
   pgm.addConstraint(EXAMPLES, `${EXAMPLES}_expected_output_shape_chk`, {
     check: `
       (task_type = 'classify'
         AND expected_output ? 'bucket'
-        AND expected_output->>'bucket' IN ('customer', 'non-customer', 'spam'))
+        AND expected_output->>'bucket' IN ('customer', 'non-customer', 'spam')
+        AND (expected_output - ARRAY['bucket']) = '{}'::jsonb)
       OR
       (task_type = 'extract'
         AND expected_output ?& array['call_intent', 'service_category', 'urgency', 'sentiment']
@@ -104,7 +109,9 @@ exports.up = (pgm) => {
           'sump_pump_or_drainage', 'water_quality_or_treatment', 'repipe_or_pipe_repair',
           'appliance_install_or_hookup', 'inspection_or_maintenance', 'other'])
         AND (expected_output->>'sentiment') = ANY(ARRAY[
-          'positive', 'neutral', 'negative', 'frustrated']))`,
+          'positive', 'neutral', 'negative', 'frustrated'])
+        AND (expected_output - ARRAY['call_intent', 'service_category', 'urgency', 'sentiment'])
+              = '{}'::jsonb)`,
   });
   pgm.addConstraint(EXAMPLES, `${EXAMPLES}_prompt_version_source_chk`, {
     check: "prompt_version_source IN ('model_invocations', 'current_constant', 'none')",

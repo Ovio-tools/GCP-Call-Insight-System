@@ -225,6 +225,17 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
     ).rejects.toThrow();
     // classify with an out-of-vocabulary bucket → rejected.
     await expect(insert('classify', '{"bucket":"held"}', 7)).rejects.toThrow();
+    // EXTRA keys beyond the exact set → rejected, so no free text can ride alongside the label.
+    await expect(
+      insert('classify', '{"bucket":"spam","note":"caller said x"}', 8),
+    ).rejects.toThrow();
+    await expect(
+      insert(
+        'extract',
+        '{"call_intent":"general","service_category":"other","urgency":"routine","sentiment":"neutral","raw":"x"}',
+        9,
+      ),
+    ).rejects.toThrow();
     await cleanup();
   });
 
