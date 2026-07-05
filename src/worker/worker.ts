@@ -1,4 +1,4 @@
-import { Worker, type Job } from 'bullmq';
+import { DelayedError, Worker, type Job } from 'bullmq';
 import type { Redis } from 'ioredis';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
@@ -19,6 +19,14 @@ export interface PipelineWorkerOptions {
   handlers?: StageHandlers;
   /** Parent logger; per-call child loggers are derived from it. */
   logger?: Logger;
+  /**
+   * Defensive maintenance backstop (Task 8.2). When present and it resolves `true`, a job the
+   * worker had ALREADY fetched before a key-rotation pause landed is re-delayed via
+   * `moveToDelayed` + `DelayedError` — so BullMQ neither completes nor fails it and, critically,
+   * does NOT increment `attemptsMade`. The primary pause is the global `queue.pause()`; this only
+   * covers the fetched-but-not-yet-run window.
+   */
+  isMaintenanceActive?: () => Promise<boolean>;
 }
 
 /**
@@ -82,10 +90,19 @@ export function createPipelineWorker(
 ): Worker<PipelineJobData> {
   const handlers = options.handlers ?? productionStageHandlers;
   const parentLogger = options.logger;
+  const isMaintenanceActive = options.isMaintenanceActive;
+  const requeueDelayMs = config.KEY_ROTATION_MAINTENANCE_REQUEUE_DELAY_MS;
 
   const worker = new Worker<PipelineJobData>(
     config.WORKER_QUEUE_NAME,
-    async (job) => {
+    async (job, token) => {
+      // Maintenance backstop: a key rotation paused the queue, but this job was already fetched.
+      // Re-delay it WITHOUT consuming a retry (moveToDelayed + DelayedError) so rotation can
+      // re-encrypt raw/vault rows uncontended; the job resumes after `requeueDelayMs`.
+      if (isMaintenanceActive && (await isMaintenanceActive())) {
+        await job.moveToDelayed(Date.now() + requeueDelayMs, token);
+        throw new DelayedError();
+      }
       const callId = job.data.callId;
       const callLogger = createCallLogger(callId, parentLogger);
       await runPipeline(pool, callId, callLogger, {
