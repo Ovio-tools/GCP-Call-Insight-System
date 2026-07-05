@@ -26,11 +26,16 @@ describe.skipIf(!hasTestDb)('key-versions-repo lifecycle', () => {
     await owner.end();
   });
 
-  /** Run body in a rolled-back tx with the single-active state controlled from scratch. */
+  /**
+   * Run body in a rolled-back tx with the single-active state controlled from scratch: retire any
+   * pre-existing active row (e.g. the shared seed's key_version=1) so a test that activates its own
+   * high-numbered version never trips the single-active partial unique index. All changes roll back.
+   */
   async function inTx(body: (c: PoolClient) => Promise<void>): Promise<void> {
     const c = await owner.connect();
     try {
       await c.query('BEGIN');
+      await c.query(`UPDATE key_versions SET status='retired' WHERE status='active'`);
       await body(c);
     } finally {
       await c.query('ROLLBACK');
