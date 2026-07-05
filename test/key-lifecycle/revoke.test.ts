@@ -17,7 +17,6 @@ import {
   seedIsolatedActiveKey,
 } from './_helpers.js';
 import type { LocalFileKeyStore } from '../../src/crypto/key-store.js';
-import type { KeyProvider } from '../../src/crypto/index.js';
 
 let seq = 0;
 
@@ -65,7 +64,7 @@ describe.skipIf(!hasTestDb)('revoke', () => {
       const { store, provider } = makeStoreProvider(dir, owner);
       await seedIsolatedActiveKey(owner, store, kek);
       const target = await seedRetiredKey(owner, store, kek);
-      await insertEncryptedRaw(owner, provider as KeyProvider, call, target, 'secret body');
+      await insertEncryptedRaw(owner, provider, call, target, 'secret body');
 
       const result = await revokeDek(
         {
@@ -163,8 +162,8 @@ describe.skipIf(!hasTestDb)('revoke', () => {
       );
       const vB1 = await seedRetiredKey(owner, store, kekTarget);
       const vB2 = await seedRetiredKey(owner, store, kekTarget);
-      await insertEncryptedRaw(owner, provider as KeyProvider, call1, vB1, 'body1');
-      await insertEncryptedRaw(owner, provider as KeyProvider, call2, vB2, 'body2');
+      await insertEncryptedRaw(owner, provider, call1, vB1, 'body1');
+      await insertEncryptedRaw(owner, provider, call2, vB2, 'body2');
 
       const result = await revokeKek(
         {

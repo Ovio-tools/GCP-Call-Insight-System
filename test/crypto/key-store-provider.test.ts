@@ -32,7 +32,7 @@ describe('KeyStoreProvider', () => {
     const store = new LocalFileKeyStore({ dir, recoveryWindowDays: 0 });
     await store.createKek({ kekVersion: 'kek-1' });
     await store.createDek({ keyVersion: 1, kekVersion: 'kek-1' });
-    const provider = new KeyStoreProvider({ keyStore: store, loadActiveKeyVersion: async () => 1 });
+    const provider = new KeyStoreProvider({ keyStore: store, loadActiveKeyVersion: () => Promise.resolve(1) });
     expect(await provider.getDek(1)).toHaveLength(DEK_BYTES);
   });
 
@@ -43,9 +43,9 @@ describe('KeyStoreProvider', () => {
     let active = 3;
     const provider = new KeyStoreProvider({
       keyStore: store,
-      loadActiveKeyVersion: async () => {
+      loadActiveKeyVersion: () => {
         calls += 1;
-        return active;
+        return Promise.resolve(active);
       },
       clock,
       activeVersionTtlMs: 5000,
@@ -70,9 +70,9 @@ describe('KeyStoreProvider', () => {
     let calls = 0;
     const provider = new KeyStoreProvider({
       keyStore: store,
-      loadActiveKeyVersion: async () => {
+      loadActiveKeyVersion: () => {
         calls += 1;
-        return active;
+        return Promise.resolve(active);
       },
     });
     expect(await provider.currentKeyVersion()).toBe(1);

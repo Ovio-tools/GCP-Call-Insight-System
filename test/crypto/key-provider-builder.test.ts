@@ -23,7 +23,7 @@ function cfg(overrides: Partial<Config> = {}): Config {
 
 /** A pool stub that resolves the single active key_version. */
 const activePool = {
-  query: async () => ({ rows: [{ key_version: 1 }] }),
+  query: () => Promise.resolve({ rows: [{ key_version: 1 }] }),
 } as unknown as Pool;
 
 describe('buildKeyProvider', () => {

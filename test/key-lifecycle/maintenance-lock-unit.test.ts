@@ -7,7 +7,7 @@ describe('waitForDrain', () => {
   it('returns true once the active count reaches zero', async () => {
     let calls = 0;
     const queue = {
-      getActiveCount: async () => (calls++ < 2 ? 1 : 0),
+      getActiveCount: () => Promise.resolve(calls++ < 2 ? 1 : 0),
     } as unknown as Queue;
     const drained = await waitForDrain(queue, {
       timeoutMs: 10_000,
@@ -19,7 +19,7 @@ describe('waitForDrain', () => {
 
   it('returns false on timeout when jobs never drain', async () => {
     let t = 0;
-    const queue = { getActiveCount: async () => 1 } as unknown as Queue;
+    const queue = { getActiveCount: () => Promise.resolve(1) } as unknown as Queue;
     const drained = await waitForDrain(queue, {
       timeoutMs: 100,
       pollMs: 10,

@@ -128,14 +128,14 @@ export class LocalFileKeyStore implements KeyStore {
   }
 
   // --- KEK ---
-  async createKek({ kekVersion }: { kekVersion: string }): Promise<CreateKekResult> {
+  createKek({ kekVersion }: { kekVersion: string }): Promise<CreateKekResult> {
     const path = this.#kekPath(kekVersion);
     if (existsSync(path)) {
-      throw new Error(`key store: KEK ${kekVersion} already exists`);
+      return Promise.reject(new Error(`key store: KEK ${kekVersion} already exists`));
     }
     writeFileSync(path, randomBytes(KEK_BYTES), { mode: 0o600 });
     chmodSync(path, 0o600);
-    return { kekRef: `kek:${kekVersion}` };
+    return Promise.resolve({ kekRef: `kek:${kekVersion}` });
   }
 
   getKek(kekVersion: string): Promise<Buffer> {

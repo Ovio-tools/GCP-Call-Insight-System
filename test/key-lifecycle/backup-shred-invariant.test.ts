@@ -30,7 +30,7 @@ describe('backup-shred invariant', () => {
     // A version-1 provider (only needs to resolve v1 and v2 via the store).
     const provider = new KeyStoreProvider({
       keyStore: store,
-      loadActiveKeyVersion: async () => 1,
+      loadActiveKeyVersion: () => Promise.resolve(1),
     });
 
     const aad = Buffer.from('call-x', 'utf8');
