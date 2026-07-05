@@ -35,14 +35,15 @@ export async function getActiveKeyVersion(db: Queryable): Promise<number> {
   return rows[0]!.key_version;
 }
 
-/** Insert DEK metadata (reference only — never key bytes). key_version is the PK. */
+/** Insert DEK metadata (reference only — never key bytes). key_version is the PK. Accepts a pool
+ * or a client so callers can enlist it in a bootstrap/rotation transaction. */
 export async function insertKeyVersion(
-  pool: Pool,
+  db: Queryable,
   input: KeyVersionInsert,
 ): Promise<KeyVersionRow> {
   const v = parseOrThrow(TABLE, keyVersionInsertSchema, input);
   const rows = await query<KeyVersionRow>(
-    pool,
+    db,
     `INSERT INTO key_versions (key_version, status, wrapped_dek_ref, kek_version)
      VALUES ($1, $2, $3, $4)
      RETURNING *`,
