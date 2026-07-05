@@ -10,6 +10,18 @@ export {
   DEK_BYTES,
   LocalKeyProvider,
   keyProviderFromConfig,
+  keyStoreFromConfig,
+  buildKeyProvider,
   type KeyProvider,
   type LocalKeyProviderOptions,
 } from './key-provider.js';
+export {
+  LocalFileKeyStore,
+  type KeyStore,
+  type Clock,
+  type Recoverability,
+  type RecoverabilityQuery,
+  type CreateKekResult,
+  type CreateDekResult,
+} from './key-store.js';
+export { KeyStoreProvider, type KeyStoreProviderOptions } from './key-store-provider.js';

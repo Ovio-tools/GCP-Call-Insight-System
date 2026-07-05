@@ -1,5 +1,9 @@
 import { hkdfSync } from 'node:crypto';
+import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
+import { getActiveKeyVersion } from '../db/repositories/key-versions-repo.js';
+import { KeyStoreProvider } from './key-store-provider.js';
+import { LocalFileKeyStore, type KeyStore } from './key-store.js';
 
 /** Length of an AES-256 data-encryption key (DEK), in bytes. */
 export const DEK_BYTES = 32;
@@ -94,4 +98,51 @@ export function keyProviderFromConfig(config: Config): KeyProvider {
     throw new Error(`CRYPTO_LOCAL_MASTER_KEY must decode to at least ${DEK_BYTES} bytes of base64`);
   }
   return new LocalKeyProvider({ masterKey, activeKeyVersion: config.CRYPTO_ACTIVE_KEY_VERSION });
+}
+
+/**
+ * Build the reference {@link KeyStore} (`LocalFileKeyStore`) from config. Dev/staging ONLY — the
+ * directory IS the external secret store (KEK bytes + wrapped DEK files). Production is refused
+ * here (no override): the production external KMS is the blocking follow-up Task 8.2b.
+ */
+export function keyStoreFromConfig(config: Config): KeyStore {
+  if (config.NODE_ENV === 'production') {
+    throw new Error(
+      'CRYPTO_KEY_PROVIDER=keystore uses LocalFileKeyStore, forbidden in production; the production KMS is Task 8.2b',
+    );
+  }
+  if (!config.CRYPTO_KEY_STORE_DIR) {
+    throw new Error('CRYPTO_KEY_STORE_DIR is required when CRYPTO_KEY_PROVIDER=keystore');
+  }
+  return new LocalFileKeyStore({
+    dir: config.CRYPTO_KEY_STORE_DIR,
+    recoveryWindowDays: config.KEY_STORE_RECOVERY_WINDOW_DAYS,
+  });
+}
+
+/**
+ * Dependency-aware {@link KeyProvider} builder. Unlike {@link keyProviderFromConfig} (config-only,
+ * local/dev), the `keystore` provider is DB-sourced (single `status='active'` row) so it needs a
+ * pool. `keystore` is refused in production (no override — Task 8.2b); `kms` still throws (8.2b).
+ * The `keyStore` may be injected (tests / a shared instance) or is built from config.
+ */
+export function buildKeyProvider(deps: {
+  config: Config;
+  pool: Pool;
+  keyStore?: KeyStore;
+}): KeyProvider {
+  const { config, pool } = deps;
+  if (config.CRYPTO_KEY_PROVIDER === 'kms') {
+    throw new Error(
+      'CRYPTO_KEY_PROVIDER=kms is not implemented yet (Task 8.2b: production KMS provider)',
+    );
+  }
+  if (config.CRYPTO_KEY_PROVIDER === 'keystore') {
+    const keyStore = deps.keyStore ?? keyStoreFromConfig(config);
+    return new KeyStoreProvider({
+      keyStore,
+      loadActiveKeyVersion: () => getActiveKeyVersion(pool),
+    });
+  }
+  return keyProviderFromConfig(config);
 }

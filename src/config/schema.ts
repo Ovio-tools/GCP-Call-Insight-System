@@ -90,8 +90,10 @@ export const configObjectSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
 
   /** Envelope-encryption key source. `local` derives DEKs from CRYPTO_LOCAL_MASTER_KEY
-   * (dev/test only); `kms` is the external key service (Task 8.2). */
-  CRYPTO_KEY_PROVIDER: z.enum(['local', 'kms']).default('local'),
+   * (dev/test only); `keystore` is the DB-sourced external {@link KeyStore} (Task 8.2,
+   * dev/staging via `LocalFileKeyStore`; refused in production pending Task 8.2b); `kms`
+   * is the production external key service (Task 8.2b — still throws). */
+  CRYPTO_KEY_PROVIDER: z.enum(['local', 'keystore', 'kms']).default('local'),
 
   /** Base64-encoded master secret for the local key provider (>= 32 bytes decoded).
    * Optional here — like DATABASE_URL, the consumer validates it: keyProviderFromConfig
@@ -99,8 +101,41 @@ export const configObjectSchema = z.object({
    * real value in the repo. */
   CRYPTO_LOCAL_MASTER_KEY: z.string().min(44).optional(),
 
-  /** key_version new writes encrypt under. */
+  /** key_version new writes encrypt under (LOCAL provider only; the keystore provider is
+   * DB-sourced via the single `status='active'` row). Bootstrap/seed for local. */
   CRYPTO_ACTIVE_KEY_VERSION: z.coerce.number().int().positive().default(1),
+
+  // --- External key store (Task 8.2, `keystore` provider) ---
+
+  /** Directory that IS the external secret store for `LocalFileKeyStore` (KEK bytes + wrapped
+   * DEK files). Validated by `buildKeyProvider` when the keystore provider is actually built,
+   * not here — services that never encrypt boot without it. */
+  CRYPTO_KEY_STORE_DIR: z.string().min(1).optional(),
+
+  /** Active KEK version — BOOTSTRAP/SEED ONLY. The live active KEK is DB-sourced via
+   * `getActiveKek()` (single `status='active'` row in `kek_versions`); this seeds the first one. */
+  CRYPTO_KEK_VERSION: z.string().min(1).optional(),
+
+  /** Mandatory recovery window (days, >= 0) before destroyed key material is truly purged. 0 =
+   * immediate (dev). Staging should use a nonzero window; the finalizer confirms unrecoverability
+   * only after it elapses. */
+  KEY_STORE_RECOVERY_WINDOW_DAYS: z.coerce.number().int().nonnegative().default(0),
+
+  /** Enables/disables the destructive key-lifecycle CLIs (rotate/revoke). This is a KILL SWITCH
+   * ONLY — never the approval: every destructive run still requires `--actor`/`--approval-ref`
+   * and a typed confirmation phrase at runtime. */
+  CRYPTO_KEY_DESTROY_COMMANDS_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((s) => s === 'true'),
+
+  /** Max time (ms) rotation waits for in-flight jobs to drain after pausing the queue before it
+   * aborts safely (releases locks, resumes the queue, emits KEY_ROTATION_FAILED). */
+  KEY_ROTATION_DRAIN_TIMEOUT_MS: z.coerce.number().int().positive().default(300_000),
+
+  /** Delay (ms) the processor backstop re-delays a job by when it sees the maintenance flag for a
+   * job it already fetched (moveToDelayed + DelayedError — never consumes a retry). */
+  KEY_ROTATION_MAINTENANCE_REQUEUE_DELAY_MS: z.coerce.number().int().positive().default(5_000),
 
   /** BullMQ queue name for the per-call pipeline (Task 2.1). */
   WORKER_QUEUE_NAME: z.string().min(1).default('call-pipeline'),
