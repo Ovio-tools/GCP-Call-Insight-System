@@ -1,4 +1,18 @@
 import { z } from 'zod';
+import { HELD_REASON, heldReasonSchema } from '../db/enums.js';
+
+/**
+ * The reconciliation-cron cadence (minutes) the SLA-breach scan piggybacks on (Task 6.1).
+ * A documented policy constant consumed by config validation (below), the ADR, docs, and
+ * tests. It bounds the maximum SLA-breach detection latency to one cadence, so config
+ * validation floors every per-reason SLA at this value — no SLA may be shorter than the
+ * interval at which breaches are detected.
+ *
+ * ⚠️ DRIFT GUARD: this MUST equal the Railway reconciliation-cron schedule. If that schedule
+ * ever changes, update this constant IN THE SAME PR (or promote it to a config value if the
+ * cadence must vary by environment).
+ */
+export const REVIEW_SLA_SCAN_CADENCE_MINUTES = 15;
 
 /** True iff `v` is canonical base64 that decodes to at least `minBytes` bytes.
  * Node's base64 decoder is lenient (silently drops invalid chars), so validity is
@@ -19,7 +33,35 @@ function isBase64OfAtLeast(v: string, minBytes: number): boolean {
  * This is the seed set for the scaffold. It grows as features land; no business
  * logic depends on it yet.
  */
-export const configSchema = z.object({
+/**
+ * A required retention window in DAYS: a positive integer, no default (privacy policy). Used
+ * for the four non-CLEAN purge groups (Task 8.1).
+ */
+function retentionDays(): z.ZodType<number> {
+  return z.coerce.number().int().positive();
+}
+
+/**
+ * The CLEAN group's two-mode window (Task 8.1): a positive integer number of days OR the
+ * literal `never` (indefinite/active). `z.coerce.number` would coerce the string `'never'` to
+ * NaN, so the numeric branch guards against that; the union then falls through to the literal.
+ * Mode agreement + `hard > soft` are enforced across the two sides by the wrapping superRefine.
+ */
+function cleanRetentionDays(): z.ZodType<number | 'never'> {
+  return z.union([
+    z.literal('never'),
+    z.coerce.number().refine((n) => Number.isInteger(n) && n > 0, {
+      message: "must be a positive integer number of days or 'never'",
+    }),
+  ]);
+}
+
+/**
+ * The base configuration object. Kept as a plain `ZodObject` (exported) so `.shape`-based
+ * consumers (failure-model) keep compiling; the exported {@link configSchema} wraps it with the
+ * cross-field retention `superRefine`.
+ */
+export const configObjectSchema = z.object({
   /** Deployment environment. Drives environment separation (dev/staging/prod). */
   NODE_ENV: z.enum(['development', 'test', 'staging', 'production']),
 
@@ -281,6 +323,12 @@ export const configSchema = z.object({
    * classify. */
   DAILY_MODEL_COST_CAP_USD: z.coerce.number().positive().default(25),
 
+  /** Fraction of `DAILY_MODEL_COST_CAP_USD` at which an advisory warning alert
+   * (`MODEL_COST_WARNING_THRESHOLD_EXCEEDED`) is emitted — at most once per UTC day, without
+   * ever blocking the pipeline (Task 7.2). A strict fraction in (0, 1): 0 would alert on every
+   * call and 1 (or above) would collapse the warning onto the hard cap. */
+  DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: z.coerce.number().gt(0).lt(1).default(0.8),
+
   /** Haiku 4.5 list price per million input/output tokens (USD). Deliberately
    * classify-scoped, not shared: Task 5.2 adds its own EXTRACT_* rates for Sonnet, and the
    * shared cost helper takes explicit rates with no defaults so a different model can never
@@ -362,7 +410,228 @@ export const configSchema = z.object({
    * model can never silently inherit the wrong pricing. */
   EXTRACT_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(3),
   EXTRACT_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(15),
+
+  // --- Status surface + alert delivery (Task 7.3) ---
+
+  /** Auto-refresh cadence (seconds) for the server-rendered `/status` page via a plain
+   * `<meta http-equiv=refresh>` — load/refresh only, no streaming or per-call animation.
+   * `0` disables auto-refresh (a manual refresh link is always present). */
+  STATUS_PAGE_REFRESH_SECONDS: z.coerce.number().int().nonnegative().default(30),
+
+  /** Staleness thresholds (ms) for the in-DB component heartbeat mirror: a component whose
+   * `component_heartbeats.last_run_at` is older than its threshold renders `broken`. Applied
+   * ONLY to the periodic-liveness components (worker + crons); the webhook receiver is
+   * liveness-vs-activity split and never goes `broken` from inbound-traffic idleness. Sized
+   * per cadence: worker beats each WORKER_HEARTBEAT_INTERVAL_MS (minutes), reconciliation runs
+   * every ~15 min, retention runs daily (~26h). Defaults leave slack for one missed tick. */
+  WORKER_HEARTBEAT_STALE_MS: z.coerce.number().int().positive().default(180_000),
+  RECONCILIATION_HEARTBEAT_STALE_MS: z.coerce.number().int().positive().default(2_700_000),
+  RETENTION_HEARTBEAT_STALE_MS: z.coerce.number().int().positive().default(93_600_000),
+
+  /** Outbound Slack-compatible alert webhook (`{text}` POST). Optional locally and in the
+   * schema; delivery no-ops (rows stay `pending`, the sweep retries) when unset. The alerting
+   * entrypoint fail-fast-requires it in staging/production so critical alerts are never
+   * silently undeliverable. Never a real value in the repo. */
+  ALERT_WEBHOOK_URL: z.string().url().optional(),
+
+  /** Per-request timeout (ms) for the outbound alert-webhook POST. Fail fast, never hang. */
+  ALERT_WEBHOOK_TIMEOUT_MS: z.coerce.number().int().positive().default(5_000),
+
+  /** Max delivery attempts per alert row before the retry sweep stops trying (the row stays
+   * `failed`, visible for manual follow-up). Includes the immediate attempt. */
+  ALERT_DELIVERY_MAX_ATTEMPTS: z.coerce.number().int().positive().default(6),
+
+  /** Base delay (ms) for the alert-delivery exponential backoff between retries. The sweep
+   * schedules `next_attempt_at = now + base * 2^(attempts-1)`. */
+  ALERT_DELIVERY_BACKOFF_MS: z.coerce.number().int().positive().default(60_000),
+
+  // --- Review queue / held-call retention (Task 6.1) ---
+
+  /**
+   * Per-`held_reason` review SLA, in minutes, as a JSON object (e.g.
+   * `{"emergency_review":15,"redaction_failed":60,...}`). REQUIRED with no default — the
+   * pipeline must not run without an explicit SLA policy (fail-closed). Validated in three
+   * layers so a bad value becomes a named CONFIG_MISSING_OR_INVALID rather than a crash:
+   *   1. parse JSON inside a transform that reports a Zod issue (malformed JSON ⇒ named
+   *      config error, never an uncaught SyntaxError escaping safeParse);
+   *   2. every value is a positive integer number of minutes;
+   *   3. superRefine asserts (a) every HELD_REASON is present (totality — the completeness
+   *      oracle is the enum), (b) `emergency_review` is the STRICT minimum, and (c) every
+   *      value is at least {@link REVIEW_SLA_SCAN_CADENCE_MINUTES} so no SLA is shorter than
+   *      the breach-detection interval.
+   */
+  REVIEW_SLA_MINUTES_BY_REASON: z
+    .string()
+    .transform((s, ctx) => {
+      try {
+        return JSON.parse(s) as unknown;
+      } catch {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: 'must be valid JSON' });
+        return z.NEVER;
+      }
+    })
+    .pipe(z.record(heldReasonSchema, z.coerce.number().int().positive()))
+    .superRefine((map, ctx) => {
+      // (a) Totality: fail closed on any missing reason, naming it.
+      for (const reason of HELD_REASON) {
+        if (map[reason] === undefined) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `missing SLA for held_reason '${reason}'`,
+          });
+        }
+      }
+      // (b) emergency_review is the strict minimum: every other present reason must be > it.
+      const emergency = map.emergency_review;
+      if (emergency !== undefined) {
+        for (const reason of HELD_REASON) {
+          if (reason === 'emergency_review') continue;
+          const value = map[reason];
+          if (value !== undefined && value <= emergency) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              message: `emergency_review (${emergency}) must be the strict minimum SLA; '${reason}' (${value}) is not greater`,
+            });
+          }
+        }
+      }
+      // (c) No SLA shorter than the breach-detection cadence.
+      for (const reason of HELD_REASON) {
+        const value = map[reason];
+        if (value !== undefined && value < REVIEW_SLA_SCAN_CADENCE_MINUTES) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `SLA for '${reason}' (${value}) is below the scan cadence (${REVIEW_SLA_SCAN_CADENCE_MINUTES} min)`,
+          });
+        }
+      }
+    }),
+
+  /** Max age (hours) an unresolved held call's raw transcript + token vault may be retained
+   * before the retention cron (Task 8.1) purges them, regardless of review status. REQUIRED
+   * with no default — a raw-PII retention cap must be an explicit decision. */
+  REVIEW_HELD_RAW_RETENTION_CAP_HOURS: z.coerce.number().int().positive(),
+
+  // --- Scheduled retention / purge windows (Task 8.1) ---
+  //
+  // Soft- then hard-delete windows, in DAYS, for the five purge groups. REQUIRED with no
+  // default (privacy policy — a purge window must be an explicit decision, like
+  // REVIEW_HELD_RAW_RETENTION_CAP_HOURS). `HARD > SOFT` per group is enforced by the
+  // cross-field superRefine below, guaranteeing a real recoverable grace gap.
+
+  /** RAW group (`raw_transcripts` + `token_vault`), stamped post-store. */
+  RETENTION_RAW_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_RAW_HARD_DELETE_DAYS: retentionDays(),
+  /** WEBHOOK group (`raw_webhook_events`), clock starts at receipt. */
+  RETENTION_WEBHOOK_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_WEBHOOK_HARD_DELETE_DAYS: retentionDays(),
+  /** CLEAN group (`clean_transcripts` + `redaction_findings`). Special two-mode value: a
+   * positive int (windowed) OR the literal `never` (indefinite/active — kept until
+   * review-driven resolution). Both sides must agree on the mode (superRefine). */
+  RETENTION_CLEAN_SOFT_DELETE_DAYS: cleanRetentionDays(),
+  RETENTION_CLEAN_HARD_DELETE_DAYS: cleanRetentionDays(),
+  /** MATCH group (`match_keys`), own short window (writer is Task 12.0). */
+  RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_MATCH_KEYS_HARD_DELETE_DAYS: retentionDays(),
+  /** EXTRACT group (`extraction_candidates`), the staging row's own window. */
+  RETENTION_EXTRACT_SOFT_DELETE_DAYS: retentionDays(),
+  RETENTION_EXTRACT_HARD_DELETE_DAYS: retentionDays(),
+
+  /** Dry-run switch: when `true`, the purge counts eligible rows/groups and writes NOTHING.
+   * `false` (default) performs the soft/hard/held-cap deletions. */
+  RETENTION_DRY_RUN: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((s) => s === 'true'),
+
+  /** Rows deleted per batched pass; the purge loops `LIMIT $batch` until a pass touches 0 rows. */
+  RETENTION_PURGE_BATCH_SIZE: z.coerce.number().int().positive().default(1000),
+
+  // --- Review & admin surface (Task 6.2) ---
+
+  /** The role name (matched against `request.user.roles`) a session must carry to perform an
+   * elevated raw/vault reveal on the review surface. Optional and fail-closed: when unset, NO
+   * session is elevated and every reveal is refused with AUTH_FORBIDDEN — elevated reveal is an
+   * explicit per-deployment opt-in. Any authenticated session is still a BASE reviewer (list,
+   * detail, and the seven actions); only the raw/vault reveal requires this role. Never a
+   * secret. */
+  REVIEW_ELEVATED_ROLE: z.string().min(1).optional(),
+
+  // --- Evaluation runner / labeled-examples corpus (Task 6.3) ---
+
+  /** Kill switch for the periodic accuracy check (explicit string enum, never truthy-coerced — the
+   * EXACT WORKER_KILL_SWITCH pattern). Defaults false: the weekly eval cron gates on it. Label-sync
+   * (the reconciliation-cron duty) runs regardless — capture must beat the CLEAN purge window. */
+  EVALUATION_RUN_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** When true the accuracy check calls the real models (records model_invocations + honors the
+   * cost cap / kill switch). In staging/production, `EVALUATION_RUN_ENABLED=true` + this `false`
+   * is a fail-fast CONFIG_MISSING_OR_INVALID — the periodic check must never write a non-live
+   * `test_stub` report or ping green without calling the models. The stub path is test/local-only. */
+  EVALUATION_LIVE_MODE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** The evaluation cron's OWN dead-man's-switch URL, pinged only after a COMPLETE live run.
+   * Optional in the schema (dev/test skip the ping); the eval-run entrypoint REQUIRES it in
+   * staging/production via requireCheckUrl(config, 'evaluation-cron'). Kept separate from the other
+   * cron URLs on purpose — a shared check would stay green while one component is dead. */
+  EVALUATION_CHECK_URL: z.string().url().optional(),
+});
+
+/**
+ * Cross-field validation for the retention windows: `HARD > SOFT` per numeric group, and the
+ * CLEAN group must be a whole mode (both numeric with `hard > soft`, OR both `never`) — never a
+ * half-state. Each issue is pinned to the offending HARD variable's path so `validateEnv`
+ * surfaces it as a named CONFIG_MISSING_OR_INVALID. Kept as a wrapping `superRefine` (not a
+ * per-field one) because these checks span two sibling variables; `configObjectSchema` above
+ * stays a plain `ZodObject` so `.shape` consumers (failure-model) keep working.
+ */
+export const configSchema = configObjectSchema.superRefine((cfg, ctx) => {
+  const numericGroups: ReadonlyArray<readonly [keyof Config, keyof Config]> = [
+    ['RETENTION_RAW_SOFT_DELETE_DAYS', 'RETENTION_RAW_HARD_DELETE_DAYS'],
+    ['RETENTION_WEBHOOK_SOFT_DELETE_DAYS', 'RETENTION_WEBHOOK_HARD_DELETE_DAYS'],
+    ['RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS', 'RETENTION_MATCH_KEYS_HARD_DELETE_DAYS'],
+    ['RETENTION_EXTRACT_SOFT_DELETE_DAYS', 'RETENTION_EXTRACT_HARD_DELETE_DAYS'],
+  ];
+  for (const [softKey, hardKey] of numericGroups) {
+    const soft = cfg[softKey] as number;
+    const hard = cfg[hardKey] as number;
+    if (hard <= soft) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [hardKey],
+        message: `${hardKey} (${hard}) must be greater than ${softKey} (${soft}) so a real recoverable grace window exists`,
+      });
+    }
+  }
+
+  const cleanSoft = cfg.RETENTION_CLEAN_SOFT_DELETE_DAYS;
+  const cleanHard = cfg.RETENTION_CLEAN_HARD_DELETE_DAYS;
+  const softNever = cleanSoft === 'never';
+  const hardNever = cleanHard === 'never';
+  if (softNever !== hardNever) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['RETENTION_CLEAN_HARD_DELETE_DAYS'],
+      message: `CLEAN retention must be a whole mode: set BOTH RETENTION_CLEAN_SOFT_DELETE_DAYS and RETENTION_CLEAN_HARD_DELETE_DAYS to 'never', or BOTH to numeric days — not a mix`,
+    });
+  } else if (
+    typeof cleanSoft === 'number' &&
+    typeof cleanHard === 'number' &&
+    cleanHard <= cleanSoft
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['RETENTION_CLEAN_HARD_DELETE_DAYS'],
+      message: `RETENTION_CLEAN_HARD_DELETE_DAYS (${cleanHard}) must be greater than RETENTION_CLEAN_SOFT_DELETE_DAYS (${cleanSoft})`,
+    });
+  }
 });
 
 /** Validated, typed configuration object. */
-export type Config = z.infer<typeof configSchema>;
+export type Config = z.infer<typeof configObjectSchema>;

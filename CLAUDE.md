@@ -9,12 +9,19 @@ plan (`gcp-call-insight-execution-plan-v8.md`, §2 and §3); this is its working
 summary.
 
 Several conventions reference modules not yet built (Task 2.3 hardening/auth
-middleware, Task 8.2 crypto/restore procedures, §6.1 held-call retention). When you
-implement those, wire them in here rather than rolling your own. The Task 2.2 failure
+middleware, Task 8.2 crypto/restore procedures). When you implement those, wire them
+in here rather than rolling your own. The §6.1 held-call retention POLICY + review-queue
+wiring now exists (Task 6.1, `src/review-queue/`): per-`held_reason` SLA, the
+unresolved-held raw-retention cap, SLA-breach escalation folded into the reconciliation
+cron, and the `markUnresolvable`/`review_closed` transition. The actual raw/vault PURGE now
+exists (Task 8.1, `src/retention/purge.ts` — deletion never runs in the per-call path, only in
+the retention cron): it consumes the Task 6.1 `listRawPurgeEligible` / `hasBlockingReviewFor*` /
+`markRawPurged` hooks (see `docs/adr/0004-held-call-retention-and-review-sla.md`). The Task 2.2 failure
 model now exists under `src/failure-model/` — the canonical home the forerunner error
-modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) and the
-`SEAM(Task 2.2)` worker shims (`src/worker/errors.ts`, `src/worker/dead-letter.ts`)
-fold into when their code paths are next edited. The Task 2.3 shared hardening/auth
+modules (`src/config`, `src/boot/codes.ts`, `src/db/errors.ts`) fold into when their
+code paths are next edited. The worker dead-letter path (`src/worker/dead-letter.ts`,
+`onJobFailed`) now routes through the failure model (Task 7.4); `src/worker/errors.ts`
+remains only for the sanitized diagnostic (`detail` / `last_error`), not the snapshot. The Task 2.3 shared hardening/auth
 middleware now exists under `src/http/` — every HTTP surface builds on its
 `createInternalApp` / `createWebhookApp` factories (see `docs/http-middleware.md`); no
 surface rolls its own body limit, rate limiting, auth/session, CSRF, webhook signature/
@@ -32,10 +39,41 @@ boundary; see `docs/adr/0002-redaction-tokens-and-fail-closed.md`), the classify
 stage (Task 5.2, `src/pipeline/extract/` — Sonnet, schema-gate + deterministic urgency;
 see `docs/adr/0003-extract-schema-gate-deterministic-urgency-no-scores.md`), the
 parked-call requeue scripts (`src/scripts/requeue-parked-classify.ts`,
-`src/scripts/requeue-parked-extract.ts`), and the per-component heartbeats (Task 7.1,
-`src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron) exist;
-the remaining surfaces and the retention cron's purge logic (Task 8.1 — the entrypoint
-exists but only runs the heartbeat contract) do not yet. The NER model is vendored by
+`src/scripts/requeue-parked-extract.ts`), the per-component heartbeats (Task 7.1,
+`src/heartbeat/` — wired into the worker, reconciliation cron, and retention cron), and
+the authenticated status surface + alert delivery (Task 7.3, `src/status/` +
+`src/alerting/` + `src/services/status-surface.ts`, see `docs/status-surface.md`), the
+review-queue wiring + held-call retention policy (Task 6.1, `src/review-queue/` — per-reason
+SLA, stalled-review scan folded into the reconciliation cron, `markUnresolvable`, and the
+Task 8.1 purge hooks; see `docs/adr/0004-held-call-retention-and-review-sla.md`), the
+logging/audit/metrics finalization (Task 7.4 — the canonical `failureSnapshot()` serializer
+`src/failure-model/snapshot.ts` writes the full §4 snapshot identically to `alert_events`,
+`processing_log` failure/hold rows, and `dead_letter`; uniform per-stage structured logging
+`src/logging/stage-log.ts`; DB-derived counters `src/metrics/counters.ts`; the resolvable
+`docs/runbook.md` + the `docs/failure-paths.md` matrix), and the scheduled retention/purge
+cron (Task 8.1, `src/retention/purge.ts` + `src/services/retention-cron.ts`, migration 013):
+required per-group soft/hard windows in config (CLEAN is a two-mode `never`/numeric), creation-time
+`retention_eligible_at` stamping on clean/findings/webhook/match_keys, a dedicated-client advisory
+lock, parent-driven coupled RAW/CLEAN purge, single-table WEBHOOK/MATCH/EXTRACT purge, the held-cap
+physical delete, dry-run, and fail-loud `RETENTION_PURGE_FAILED`. **NORMAL hard delete is
+stamp-and-scrub** (an UPDATE that sets `hard_deleted_at` and overwrites content, keeping the
+tombstone so the recreate finality guards stay meaningful); **the held-cap purge is a physical
+`DELETE`** of `raw_transcripts` + `token_vault` (no tombstone — finality there is a `raw_purged_at`
+write-guard). The reviewed-decisions labeled corpus + weekly accuracy check now exists (Task 6.3,
+`src/evaluation/` + `src/services/evaluation-run.ts`, migration 016; see `docs/evaluation.md` +
+`docs/adr/0005-reviewed-decisions-to-labeled-examples.md`): `syncLabeledExamples` mines
+`operator_actions` (async, NEVER editing `src/review/actions.ts`) into `labeled_examples` (accepted)
+/ `labeled_example_rejections` (content-free pii/schema/missing_clean) — both version-scoped on
+`(operator_action_id, task_type, pii_gate_version, eval_set_version)` — gated by a schema + residual-
+PII check over redacted-input-only; wired as a health-gated `runLabelSync` duty on the reconciliation
+cron (its `SyncSummary.failed` withholds the ping); `runEvaluation` scores injected predictors (live
+ones record `model_invocations` + honor the cost cap/kill switch) into PII-free `evaluation_reports`
+(`mode` live|test_stub, status×skip_reason CHECK; `dry_run` is a CLI-only non-persisting preview);
+the `evaluation-cron` heartbeat pings `EVALUATION_CHECK_URL` only on a complete live run, and
+staging/prod `EVALUATION_RUN_ENABLED && !EVALUATION_LIVE_MODE` is fail-fast `CONFIG_MISSING_OR_INVALID`;
+real reviewed exports are gitignored, only synthetic reviewed fixtures are committed. The
+remaining surfaces (knowledge-base surface, ServiceTitan, backfill) and
+Task 8.2 crypto/restore do not yet exist. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY
 `clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
@@ -176,7 +214,11 @@ fields:
 `RATE_LIMIT_EXCEEDED`, `AUTH_REQUIRED`, `CSRF_TOKEN_INVALID`, `WEBHOOK_TIMESTAMP_INVALID`,
 `INTERNAL_ERROR` (the eight before this added by the Task 2.3 shared hardening/auth
 middleware), `VERBATIM_PII_DETECTED` (Task 5.2: the second PII scan found possible
-residual PII in a model-extracted verbatim phrase — a post-egress hit).
+residual PII in a model-extracted verbatim phrase — a post-egress hit),
+`MODEL_COST_WARNING_THRESHOLD_EXCEEDED` (Task 7.2: an advisory, non-blocking alert emitted at
+most once per UTC day when estimated daily model spend crosses
+`DAILY_MODEL_COST_CAP_USD * DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO` — distinct from the
+hard-cap `MODEL_COST_CAP_EXCEEDED`).
 
 > The config loader in this scaffold already emits `CONFIG_MISSING_OR_INVALID` and
 > names the offending variable; it is the first member of this taxonomy.

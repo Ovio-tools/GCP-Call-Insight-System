@@ -26,9 +26,11 @@ import {
  *   kept reservations for maybe-billed calls — NOT settled invoice cost.
  * - The token columns are actual received-response tokens only (reservations add 0).
  *
- * Task 7.2 scope boundary: this module is per-call hard-cap enforcement only. Warning-
- * threshold alerts, any persisted model-kill-switch state, and dashboard cost semantics
- * belong to Task 7.2, not here.
+ * Task 7.2 scope boundary: this module detects the warning-threshold LEVEL (returning a pure
+ * boolean flag on each admitted reservation), but does NO alerting and takes no `call_id`. The
+ * advisory alert emission, its once-per-UTC-day dedup, and dashboard cost semantics live in the
+ * pipeline layer (`src/pipeline/model-stage-shared.ts`). Any persisted model-kill-switch state
+ * is deliberately absent — the hard cap is the atomic reservation-denial gate below.
  *
  * No transcript content and no call_id enter this module — only day keys and totals.
  */
@@ -85,6 +87,15 @@ export function utcDay(now: Date): string {
 export interface BudgetReservation {
   day: string;
   reservedUsd: number;
+  /**
+   * Task 7.2: whether this admitted reservation lands the day's estimated spend AT OR ABOVE the
+   * warning threshold (`DAILY_MODEL_COST_CAP_USD * DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO`). A
+   * LEVEL check, not a low→high transition: it is `true` for EVERY admitted reservation at or
+   * above the threshold, so a crash/swallowed-emit after one reservation cannot permanently miss
+   * the warning. The pipeline layer collapses the repeated `true`s to at most one alert per UTC
+   * day. `settle`/`release` ignore this field.
+   */
+  warningThresholdReached: boolean;
 }
 
 /**
@@ -116,7 +127,13 @@ export async function reserveModelBudget(
       outputTokens: 0,
       estimatedCost: input.requestCostUsd,
     });
-    return { day, reservedUsd: input.requestCostUsd };
+    // Warning-threshold LEVEL (Task 7.2), computed on the same conservative estimated-spend basis
+    // as the hard cap and status surface. Returned on every admitted reservation at/above the
+    // threshold; the pipeline layer dedups the emits to one alert per UTC day. No alerting here.
+    const warningUsd =
+      input.config.DAILY_MODEL_COST_CAP_USD * input.config.DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO;
+    const warningThresholdReached = spentUsd + input.requestCostUsd >= warningUsd;
+    return { day, reservedUsd: input.requestCostUsd, warningThresholdReached };
   });
 }
 

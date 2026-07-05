@@ -276,6 +276,23 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     environment: 'staging',
     affectedScope: ['call_id', 'environment'],
   },
+  MODEL_COST_WARNING_THRESHOLD_EXCEEDED: {
+    errorCode: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+    severity: 'medium',
+    whatBroke: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+    likelyRootCause: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+    impact:
+      'Daily model spend crossed the warning threshold; processing continues, but the daily hard cap is approaching and will start holding calls if spend reaches it.',
+    immediateRemediation:
+      'Review daily cost usage against the cap, then raise the cap deliberately or reduce model volume before the hard cap is reached.',
+    longerTermFix: 'Add cost forecasting and volume controls so spend is managed before the cap.',
+    dataSafe: true,
+    callsState: 'none',
+    runbookRef: 'runbook#model-cost-warning-threshold-exceeded',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    environment: 'staging',
+    affectedScope: ['component', 'environment'],
+  },
   QUEUE_RETRY_EXHAUSTED: {
     errorCode: 'QUEUE_RETRY_EXHAUSTED',
     severity: 'high',
@@ -489,6 +506,23 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     dataSafe: true,
     callsState: 'none',
     runbookRef: 'runbook#auth-required',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    environment: 'staging',
+    affectedScope: ['component', 'environment'],
+  },
+  AUTH_FORBIDDEN: {
+    errorCode: 'AUTH_FORBIDDEN',
+    severity: 'low',
+    whatBroke: 'AUTH_FORBIDDEN',
+    likelyRootCause: 'AUTH_FORBIDDEN',
+    impact:
+      'An authenticated request was refused because the session lacked the required elevated role; no protected data was exposed.',
+    immediateRemediation:
+      'Grant the reviewer the required elevated role, or confirm the action legitimately needs elevation; if valid elevated sessions are being rejected, check the role configuration.',
+    longerTermFix: 'Same as the immediate step.',
+    dataSafe: true,
+    callsState: 'none',
+    runbookRef: 'runbook#auth-forbidden',
     timestamp: '2026-01-01T00:00:00.000Z',
     environment: 'staging',
     affectedScope: ['component', 'environment'],

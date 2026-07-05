@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { JsonValue } from '../db/types.js';
-import type { DropReason, HeldReason } from '../db/enums.js';
+import type { CallStateStatus, DropReason, HeldReason } from '../db/enums.js';
 import type { ErrorCode } from '../failure-model/categories.js';
 
 /**
@@ -65,10 +65,40 @@ export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set(['metadata-pre-fi
  */
 export const STATUS_HELD = 'held';
 
+/**
+ * `review_closed` — the TERMINAL call-state a `markUnresolvable` review action moves a held call
+ * to (Task 6.1). Paired with a `review_queue.status='unresolvable'` row. A re-enqueued job hits
+ * the runner's `review_closed` terminal guard (a logged no-op) instead of throwing "inconsistent".
+ * Named distinctly from `unresolvable` to keep the call-state and review-status vocabularies apart.
+ */
+export const STATUS_REVIEW_CLOSED = 'review_closed';
+
+/**
+ * Compile-time guard: every pipeline-facing `STATUS_*` alias must be a member of the DB-layer
+ * vocabulary `CALL_STATE_STATUSES` (the single source of truth). A typo or a status added here
+ * but not there fails to compile. The vocabulary itself is NOT defined in this module.
+ */
+const _statusAliases: readonly CallStateStatus[] = [
+  STATUS_PROCESSING,
+  STATUS_COMPLETED,
+  STATUS_SKIPPED,
+  STATUS_HELD,
+  STATUS_REVIEW_CLOSED,
+];
+void _statusAliases;
+
 /** True for a stage name that is a real member of the pipeline. */
 export function isPipelineStage(stage: string): stage is PipelineStage {
   return (PIPELINE_STAGES as readonly string[]).includes(stage);
 }
+
+/**
+ * Resolves the review SLA (minutes) for a held call's reason (Task 6.1). The worker builds
+ * the production resolver from config (`(reason) => slaMinutesFor(config, reason)`); tests
+ * supply a fixed resolver. Required by {@link runPipeline} with NO default — the pipeline must
+ * never seed a hold without an explicit SLA policy.
+ */
+export type SlaResolver = (reason: HeldReason) => number;
 
 /**
  * What a stage handler asks the runner to do next:
@@ -94,6 +124,10 @@ export type StageResult =
       reason: HeldReason;
       errorCode?: ErrorCode;
       detail?: Record<string, JsonValue>;
+      /** The full sanitized failure_snapshot (Task 2.2 §4 fields) for this hold, built via
+       *  `failureSnapshot(failure)`. The runner persists it on the held processing_log row so
+       *  a hold stays explainable after its alert is gone (Task 7.4). */
+      failureSnapshot?: JsonValue;
     };
 
 /** Context handed to each stage handler. `pool` lets a real stage read/write the DB. */

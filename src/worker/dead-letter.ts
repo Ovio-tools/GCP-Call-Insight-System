@@ -1,21 +1,23 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
+import { createFailure, dedupKey, failureSnapshot } from '../failure-model/index.js';
 import { recordAlert } from '../db/repositories/alert-events-repo.js';
 import { recordDeadLetter } from '../db/repositories/dead-letter-repo.js';
 import {
   DEAD_LETTER_CREATED,
   QUEUE_RETRY_EXHAUSTED,
+  failureContext,
   sanitizeFailure,
   type FailedJobLike,
 } from './errors.js';
 
-// SEAM(Task 2.2): dead-letter + alert emission go directly through the DAL for now. Swap the
-// severity/dedup/format decisions below for Task 2.2's shared failure-model modules once built.
-
 /**
- * A job exhausted its capped retries. Persist a `dead_letter` row with sanitized root-cause
- * metadata and emit exactly one actionable `DEAD_LETTER_CREATED` alert (the dedup key
- * guarantees one per call). Called from the worker's `failed` handler on the final attempt.
+ * A job exhausted its capped retries. Persist a `dead_letter` row and emit exactly one
+ * actionable `DEAD_LETTER_CREATED` alert (the shared dedup key guarantees one per call).
+ * Both the dead-letter row and the alert carry the full §4 `failure_snapshot` from the shared
+ * failure-model catalog, so the failure stays explainable after the alert is gone (Task 7.4);
+ * the sanitized diagnostic (failed stage, error class) rides in `dead_letter.last_error`.
+ * Called from the worker's `failed` handler on the final attempt.
  */
 export async function handleExhaustedJob(
   pool: Pool,
@@ -23,28 +25,37 @@ export async function handleExhaustedJob(
   err: unknown,
   logger: Logger,
 ): Promise<void> {
-  const { shortMessage, snapshot } = sanitizeFailure(job, err);
+  const { shortMessage, snapshot: diagnostic, failedStage } = sanitizeFailure(job, err);
   const callId = typeof job.data.callId === 'string' ? job.data.callId : null;
+  const context = failureContext(callId, job.id, failedStage);
 
+  const deadLetterFailure = createFailure(QUEUE_RETRY_EXHAUSTED, {
+    processingState: 'continuing', // the pipeline keeps processing other calls; this one is parked
+    context,
+  });
   await recordDeadLetter(pool, {
     callId,
     jobPayload: { callId },
     errorCode: QUEUE_RETRY_EXHAUSTED,
     rootCauseCategory: QUEUE_RETRY_EXHAUSTED,
     lastError: shortMessage,
-    failureSnapshot: snapshot,
+    failureSnapshot: failureSnapshot(deadLetterFailure),
   });
 
+  const alertFailure = createFailure(DEAD_LETTER_CREATED, {
+    processingState: 'continuing',
+    context,
+  });
   await recordAlert(pool, {
-    errorCode: DEAD_LETTER_CREATED,
-    rootCauseCategory: DEAD_LETTER_CREATED,
-    severity: 'high',
-    dedupKey: `dead_letter:${callId ?? job.id ?? 'unknown'}`,
-    failureSnapshot: snapshot,
+    errorCode: alertFailure.error_code,
+    rootCauseCategory: alertFailure.root_cause_category,
+    severity: alertFailure.severity,
+    dedupKey: dedupKey(alertFailure),
+    failureSnapshot: failureSnapshot(alertFailure),
   });
 
   logger.error(
-    { error_code: QUEUE_RETRY_EXHAUSTED, ...snapshot },
+    { error_code: QUEUE_RETRY_EXHAUSTED, ...diagnostic },
     'job exhausted retries — moved to dead_letter',
   );
 }

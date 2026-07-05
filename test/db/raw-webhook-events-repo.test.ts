@@ -37,13 +37,17 @@ describe.skipIf(!hasTestDb)('raw_webhook_events insert', () => {
     expect(row.signature_status).toBe('valid');
   });
 
-  it('falls back to DB now() for received_at and NULL retention when omitted', async () => {
+  it('falls back to DB now() for both received_at and retention_eligible_at when omitted', async () => {
+    // Task 8.1 §2: a webhook event has no later stage to stamp it, so an omitted
+    // retention_eligible_at is stamped at receipt (now()) — never left NULL, which would make a
+    // purgeable row un-purgeable. (In production the route always supplies the value; this is the
+    // direct-caller/reconciliation path.)
     const row = await repositories.rawWebhookEvents.insertWebhookEvent(app, {
       source: SOURCE,
       payload: { event_id: 'evt-2' },
       signatureStatus: 'valid',
     });
     expect(row.received_at).toBeInstanceOf(Date);
-    expect(row.retention_eligible_at).toBeNull();
+    expect(row.retention_eligible_at).toBeInstanceOf(Date);
   });
 });

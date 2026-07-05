@@ -14,6 +14,7 @@ export * as backfillRuns from './backfill-runs-repo.js';
 export * as consentGates from './consent-gates-repo.js';
 export * as processingLog from './processing-log-repo.js';
 export * as deadLetter from './dead-letter-repo.js';
+export * as componentHeartbeats from './component-heartbeats-repo.js';
 export * as rawWebhookEvents from './raw-webhook-events-repo.js';
 export * as keyVersions from './key-versions-repo.js';
 export * as rawTranscripts from './raw-transcripts-repo.js';

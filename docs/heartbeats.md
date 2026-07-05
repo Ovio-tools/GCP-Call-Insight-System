@@ -20,15 +20,39 @@ no single "system healthy" URL.
 
 ## The three checks
 
-| Component           | Config variable            | Cadence                              | Pings when                                                                                        |
-| ------------------- | -------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------- |
-| worker              | `WORKER_CHECK_URL`         | every `WORKER_HEARTBEAT_INTERVAL_MS` | it is booted, readiness passed, its run loop is running, and its own consuming connection answers |
-| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | the sweep completes fully successfully                                                            |
-| retention-cron      | `RETENTION_CHECK_URL`      | once per run                         | the run completes without throwing                                                                |
+| Component           | Config variable            | Cadence                              | Pings when                                                                                         |
+| ------------------- | -------------------------- | ------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| worker              | `WORKER_CHECK_URL`         | every `WORKER_HEARTBEAT_INTERVAL_MS` | it is booted, readiness passed, its run loop is running, and its own consuming connection answers  |
+| reconciliation-cron | `RECONCILIATION_CHECK_URL` | once per run                         | the sweep, the SLA-breach scan, the reprocess drain, AND label-sync all complete successfully      |
+| retention-cron      | `RETENTION_CHECK_URL`      | once per run                         | the run completes without throwing                                                                 |
+| evaluation-cron     | `EVALUATION_CHECK_URL`     | weekly                               | a **live** accuracy run completes fully (`status='complete'`) with ≥1 example evaluated (Task 6.3) |
 
 `WORKER_HEARTBEAT_INTERVAL_MS` (default 60s) and `HEARTBEAT_PING_TIMEOUT_MS` (default 5s) tune
 the worker cadence and the per-ping timeout. Set each component's check period/grace on the
 monitor **longer** than the component's cadence so a single slow beat does not false-alarm.
+
+**Reconciliation cron is a combined-health cron (Tasks 6.1 / 6.2 / 6.3).** Its entrypoint attempts
+FOUR independent duties — the Dialpad metadata sweep, the review-SLA-breach scan, the reprocess-
+outbox drain, and **label-sync** (Task 6.3) — and the ping covers **all four**: it fires only when
+every duty succeeds. The duties are attempted independently — the scan runs even if the sweep
+failed, so overdue held calls still escalate/alert when reconciliation is broken — and **any duty
+failing withholds the ping** (a non-zero scan `failed`/`lockedSkipped`, a non-zero drain `failed`,
+or a non-zero label-sync `SyncSummary.failed` also counts as incomplete). The `pingSuccess` call
+lives in the entrypoint (`runReconciliationCron`) so it is a combined-health signal, not coupled to
+the sweep alone.
+
+**Label-sync outcomes and the ping (Task 6.3).** Label-sync mines resolved review decisions into
+the labeled corpus. Only an **operational failure** — a nonzero `SyncSummary.failed` (a repository
+insert / gate crash) or a throw — withholds the ping, because that is the signal that label capture
+is broken. The **expected** per-candidate outcomes (accepted, pii-rejected, schema-rejected,
+`missing_clean`, already-present) do NOT fail the cron. Running label-sync here (every 15 min) keeps
+capture well inside the shortest CLEAN soft-purge window — **the label-sync cadence must be shorter
+than the CLEAN soft-purge window.**
+
+**Evaluation cron (Task 6.3).** The weekly accuracy check pings `EVALUATION_CHECK_URL` only on a
+`mode='live'`, `status='complete'` run with ≥1 example evaluated. A partial (mid-run cost cap /
+kill), skipped, stub, disabled, or failed run does **not** ping — the missed check is the alert. It
+uses its external check only; there is no status-surface mirror for it.
 
 ## Rules
 
@@ -104,10 +128,18 @@ Log check (both scenarios): confirm no ping log line contains a check URL, a sec
 content, `customer_language`, a phone number, or a name — only the component name and a coarse
 reason.
 
-## Follow-up for Task 7.3 (status surface)
+## Task 7.3 (status surface) — the in-DB heartbeat mirror
 
-The status surface may **display** component health and last-run/last-ping for each component
-(read from the DB or, read-only, from the monitor's status API). It must **not** become the
-alerting source: the external per-component monitor stays authoritative for raising alerts. The
-status surface is a convenience view, not a dead-man's switch — if the surface itself is down it
-must not silence the external alarm.
+Task 7.3 added `component_heartbeats`, a **best-effort in-DB mirror** of these pings so the status
+surface can render component health without reaching the external monitor. It does **not** change
+this contract: the external per-component monitor stays authoritative for raising alerts, and a DB
+mirror-write failure is sanitized-logged and **never** blocks a ping or fails a run — the ping and
+the DB write are independent, ordered so the ping is never gated on the write (worker: after the
+ping on each healthy beat; reconciliation cron: before the ping on a successful sweep). The status
+surface is a convenience view, not a dead-man's switch — if it is down it must not silence the
+external alarm.
+
+**Liveness vs. activity** carries over to the mirror: only the periodic-liveness components
+(`worker`, `reconciliation-cron`, `retention-cron`) get stale-threshold → `broken` logic. The
+webhook receiver is never marked `broken` from inbound-traffic idleness — its rendered state comes
+from a boot/periodic liveness heartbeat if one exists, else `unknown`. See `docs/status-surface.md`.

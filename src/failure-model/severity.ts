@@ -24,6 +24,9 @@ export const DEFAULT_SEVERITY: Record<ErrorCode, Severity> = {
   MODEL_RATE_LIMITED: 'medium',
   MODEL_MALFORMED_RESPONSE: 'medium',
   MODEL_COST_CAP_EXCEEDED: 'high',
+  // Advisory, non-blocking (Task 7.2): medium — lower than the hard cap's high, since nothing
+  // is held or dropped.
+  MODEL_COST_WARNING_THRESHOLD_EXCEEDED: 'medium',
   QUEUE_RETRY_EXHAUSTED: 'high',
   DEAD_LETTER_CREATED: 'high',
   RETENTION_PURGE_FAILED: 'high',
@@ -39,6 +42,8 @@ export const DEFAULT_SEVERITY: Record<ErrorCode, Severity> = {
   UNSUPPORTED_MEDIA_TYPE: 'low',
   RATE_LIMIT_EXCEEDED: 'low',
   AUTH_REQUIRED: 'low',
+  // Authenticated-but-forbidden (Task 6.2): a routine authorization rejection, like AUTH_REQUIRED.
+  AUTH_FORBIDDEN: 'low',
   CSRF_TOKEN_INVALID: 'low',
   WEBHOOK_TIMESTAMP_INVALID: 'low',
   INTERNAL_ERROR: 'high',

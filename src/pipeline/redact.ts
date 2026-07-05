@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
 import { DAL_QUERY_FAILED, DalError } from '../db/errors.js';
-import { createFailure, dedupKey } from '../failure-model/index.js';
+import { createFailure, dedupKey, failureSnapshot } from '../failure-model/index.js';
 import { recordAlert } from '../db/repositories/alert-events-repo.js';
 import {
   hasHardDeletedCleanTranscript,
@@ -11,6 +11,7 @@ import {
 } from '../db/repositories/clean-transcripts-repo.js';
 import { replaceFindings } from '../db/repositories/redaction-findings-repo.js';
 import { getTranscript } from '../db/repositories/raw-transcripts-repo.js';
+import { hasRawPurgedReview } from '../db/repositories/review-queue-repo.js';
 import type { RedactionFindingInsert } from '../db/schemas/redaction-findings.js';
 import {
   type RestrictedRunner,
@@ -87,6 +88,7 @@ async function recordRedactionHoldAlert(
     severity: failure.severity,
     dedupKey: dedupKey(failure),
     failureSnapshot: {
+      ...failureSnapshot(failure),
       call_id: ctx.callId,
       stage: ctx.stage,
       held_reason: reason,
@@ -116,14 +118,21 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
   return async (ctx: StageContext): Promise<StageResult> => {
     const { callId, stage, logger, pool } = ctx;
 
-    // 0. Retention preflight: a call whose clean transcript was HARD-deleted is
-    //    retention-final. Abort before writing ANYTHING — otherwise vault/findings
-    //    rows would be partially rewritten before the clean-transcript guard threw.
-    //    (putToken carries its own hard-delete guard as the second layer.)
-    if (await hasHardDeletedCleanTranscript(pool, callId)) {
+    // 0. Retention preflight (defense-in-depth): a call is retention-final if its clean
+    //    transcript was HARD-deleted, OR its raw/vault were HELD-CAP purged (raw_purged_at set;
+    //    the physical delete leaves no tombstone). Abort before writing ANYTHING — otherwise
+    //    vault/findings rows would be partially rewritten before the writers' own guards threw.
+    //    The writers (putTranscript/putToken/upsertCleanTranscript) each carry the same guard as
+    //    the authoritative second layer; the held-cap case is also transitively caught (raw gone
+    //    ⇒ getTranscript undefined ⇒ missing_transcript hold), but the explicit check keeps the
+    //    signal clear and never attempts a decrypt for a purged call.
+    if (
+      (await hasHardDeletedCleanTranscript(pool, callId)) ||
+      (await hasRawPurgedReview(pool, callId))
+    ) {
       throw new DalError(
         DAL_QUERY_FAILED,
-        `${DAL_QUERY_FAILED}: clean_transcripts row for this call is hard-deleted; redaction may not repopulate it (retention conflict)`,
+        `${DAL_QUERY_FAILED}: this call is retention-final (clean hard-deleted or raw held-cap purged); redaction may not repopulate it (retention conflict)`,
         { table: 'clean_transcripts', call_id: callId },
       );
     }

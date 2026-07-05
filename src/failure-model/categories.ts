@@ -34,6 +34,11 @@ export const ROOT_CAUSE_CATEGORIES = [
   'MODEL_RATE_LIMITED',
   'MODEL_MALFORMED_RESPONSE',
   'MODEL_COST_CAP_EXCEEDED',
+  // Warning threshold (Task 7.2): an advisory, PII-free, non-blocking alert emitted at most
+  // once per UTC day when estimated daily model spend crosses
+  // DAILY_MODEL_COST_CAP_USD * DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO. Distinct from the
+  // hard-cap MODEL_COST_CAP_EXCEEDED, which pauses new sends and holds the call.
+  'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
   'QUEUE_RETRY_EXHAUSTED',
   'DEAD_LETTER_CREATED',
   'RETENTION_PURGE_FAILED',
@@ -52,6 +57,10 @@ export const ROOT_CAUSE_CATEGORIES = [
   'CSRF_TOKEN_INVALID',
   'WEBHOOK_TIMESTAMP_INVALID',
   'INTERNAL_ERROR',
+  // Authenticated but insufficient role (Task 6.2). Distinct from AUTH_REQUIRED (unauthenticated):
+  // a valid session lacking the REVIEW_ELEVATED_ROLE needed for an elevated raw/vault reveal is
+  // refused 403. A routine client rejection — logged, not alerted.
+  'AUTH_FORBIDDEN',
   // Extract stage (Task 5.2). The second PII scan found possible residual PII in a
   // model-extracted verbatim marketing phrase — a POST-extraction hit, distinct from the
   // pre-egress redaction holds: the redacted transcript already crossed to Anthropic.
@@ -97,6 +106,9 @@ export const COMPONENT = [
   'review-surface',
   'status-surface',
   'knowledge-base-surface',
+  // Evaluation cron (Task 6.3): the label-sync duty + the weekly accuracy check. Its sanitized
+  // `component` context key on evaluation logs/alerts.
+  'evaluation-cron',
 ] as const;
 export const componentSchema = z.enum(COMPONENT);
 export type Component = z.infer<typeof componentSchema>;

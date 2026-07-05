@@ -26,7 +26,8 @@ export const SEVERITY = ['critical', 'high', 'medium', 'low'] as const;
  * distinct routing outcome from the classifier itself. Appended at the END so the value
  * ordinal matches the migration's `addTypeValue` (default end position) — the parity
  * test compares `enum_range` order exactly.
- * TODO(Task 6.1): assign SLA/retention policy for classified_spam in the review surface.
+ * (Task 6.1) `classified_spam` now carries a real per-reason review SLA
+ * (`REVIEW_SLA_MINUTES_BY_REASON`) like every other held_reason.
  */
 export const HELD_REASON = [
   'redaction_failed',
@@ -64,6 +65,50 @@ export const DROP_REASONS = [
 
 export const REVIEW_STATUS = ['open', 'in_review', 'resolved', 'unresolvable'] as const;
 
+/**
+ * `call_state.status` vocabulary (Task 6.1). `status` is a free `text` column (no pg enum), and
+ * its value set is shared by the pipeline (which owns the flow) and the DB layer (which must
+ * protect terminal states from a reseeding upsert). It lives HERE — the lower module both layers
+ * already import — rather than in `src/pipeline/stages.ts`, so `call-state-repo.ts` can reference
+ * it without a db → pipeline layering dependency. `stages.ts` re-exports its `STATUS_*` aliases
+ * from this tuple.
+ *
+ * - `review_closed` (Task 6.1): the terminal call-state a `markUnresolvable` transition moves a
+ *   held call to, kept lexically distinct from `review_queue.status='unresolvable'` so the two
+ *   vocabularies stay separate.
+ */
+export const CALL_STATE_STATUSES = [
+  'processing',
+  'completed',
+  'skipped',
+  'held',
+  'review_closed',
+] as const;
+export type CallStateStatus = (typeof CALL_STATE_STATUSES)[number];
+
+/**
+ * The call-state statuses `upsertCallState` must PRESERVE — never reseed back to `processing`
+ * from a duplicate ingestion. Terminal or set-aside states (`completed`/`skipped`/`held`/
+ * `review_closed`) are non-reseedable: a duplicate webhook must not resurrect a live held call or
+ * an archived review-closed one and re-run the pipeline while it has an active/terminal review
+ * row. Reprocessing goes through an explicit review action path, never generic ingestion upsert.
+ */
+export const UPSERT_PROTECTED_CALL_STATE_STATUSES = [
+  'completed',
+  'skipped',
+  'held',
+  'review_closed',
+] as const satisfies readonly CallStateStatus[];
+
+/**
+ * `operator_actions.action` — the review-surface actions (Task 6.1/6.2).
+ *
+ * `reveal_raw` (Task 6.2): appended because an elevated reviewer's audited raw/vault reveal
+ * must carry a controlled `operator_action` value and no existing one fits — it is a read
+ * disclosure, not a state transition. Appended at the END so the value ordinal matches the
+ * migration's `addTypeValue` (default end position) — the parity test compares `enum_range`
+ * order exactly.
+ */
 export const OPERATOR_ACTION = [
   'approve',
   'reject',
@@ -72,6 +117,7 @@ export const OPERATOR_ACTION = [
   'mark_spam',
   'correct_extraction',
   'mark_unresolvable',
+  'reveal_raw',
 ] as const;
 
 export const KEY_VERSION_STATUS = ['active', 'rotating', 'retired', 'destroyed'] as const;
@@ -142,6 +188,22 @@ export const PII_SCAN_FAILURE_KINDS = [
   'tokened_phrase',
   'verbatim_mismatch',
 ] as const;
+
+/**
+ * `reprocess_requests.status` — where a reprocess/approve/correct_extraction outbox row stands
+ * (Task 6.2). A `text` column guarded by the migration-`1782864000015` CHECK constraint, NOT a
+ * native pg enum (same convention as `PII_SCAN_STATUSES`). MUST stay in sync with that CHECK
+ * list by hand. Do NOT add to `PG_ENUMS`.
+ *
+ * - `pending`   — written in the state-change tx; the enqueue has not been confirmed.
+ * - `sent`      — the reprocess job was enqueued (the deterministic reprocess job id).
+ * - `superseded` — the reconciliation drain found `call_state` no longer at
+ *   `processing`@`target_stage` (a later operator/manual recovery moved the call), so the stale
+ *   work is NOT enqueued.
+ */
+export const REPROCESS_REQUEST_STATUSES = ['pending', 'sent', 'superseded'] as const;
+export const reprocessRequestStatusSchema = z.enum(REPROCESS_REQUEST_STATUSES);
+export type ReprocessRequestStatus = z.infer<typeof reprocessRequestStatusSchema>;
 
 /** name -> value tuple, for the parity test to iterate. */
 export const PG_ENUMS = {

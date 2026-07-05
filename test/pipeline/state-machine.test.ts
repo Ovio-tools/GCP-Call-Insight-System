@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { createRootLogger } from '../../src/logging/logger.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import {
   PIPELINE_STAGES,
   STATUS_COMPLETED,
@@ -15,7 +15,7 @@ import {
   holdCall,
   upsertCallState,
 } from '../../src/db/repositories/call-state-repo.js';
-import { setStatus } from '../../src/db/repositories/review-queue-repo.js';
+import { markUnresolvable, setStatus } from '../../src/db/repositories/review-queue-repo.js';
 import type { ReviewStatus } from '../../src/db/enums.js';
 import { listByCall } from '../../src/db/repositories/processing-log-repo.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
@@ -212,6 +212,106 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
     expect((await loggedStages(callId)).length).toBe(heldLogsBefore);
   });
 
+  it("forwards a hold action's failureSnapshot onto the held processing_log row", async () => {
+    const callId = 'test-sm-hold-snapshot';
+    await seed(callId, 'fetch-transcript');
+
+    const snapshot = {
+      error_code: 'DIALPAD_TRANSCRIPT_MISSING',
+      root_cause_category: 'DIALPAD_TRANSCRIPT_MISSING',
+      severity: 'low',
+      impact: 'held for review',
+      processing_state: 'degraded',
+      remediation_now: 'review the held call',
+      remediation_fix: 'same as the immediate step',
+      data_safe: true,
+      calls_state: 'held',
+      owner: 'OVIO on-call',
+      runbook_ref: 'runbook#dialpad-transcript-missing',
+      context: { call_id: callId, stage: 'fetch-transcript' },
+    };
+
+    await runPipeline(
+      app,
+      callId,
+      logger,
+      handlersWith({
+        'fetch-transcript': () =>
+          Promise.resolve({
+            action: 'hold' as const,
+            reason: 'missing_transcript' as const,
+            errorCode: 'DIALPAD_TRANSCRIPT_MISSING' as const,
+            failureSnapshot: snapshot,
+          }),
+      }),
+    );
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held).toHaveLength(1);
+    expect(held[0]?.failure_snapshot).toEqual(snapshot);
+  });
+
+  it('synthesizes a full failure_snapshot for a hold carrying an errorCode but no explicit snapshot', async () => {
+    const callId = 'test-sm-hold-synth';
+    await seed(callId, 'fetch-transcript');
+
+    await runPipeline(
+      app,
+      callId,
+      logger,
+      handlersWith({
+        'fetch-transcript': () =>
+          Promise.resolve({
+            action: 'hold' as const,
+            reason: 'missing_transcript' as const,
+            errorCode: 'DIALPAD_TRANSCRIPT_MISSING' as const,
+          }),
+      }),
+    );
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held).toHaveLength(1);
+    const snap = held[0]?.failure_snapshot as Record<string, unknown>;
+    expect(snap).toMatchObject({
+      error_code: 'DIALPAD_TRANSCRIPT_MISSING',
+      root_cause_category: 'DIALPAD_TRANSCRIPT_MISSING',
+      runbook_ref: 'runbook#dialpad-transcript-missing',
+      calls_state: 'held',
+      context: { call_id: callId, stage: 'fetch-transcript' },
+    });
+    // Every §4 field is present.
+    for (const key of [
+      'severity',
+      'impact',
+      'processing_state',
+      'remediation_now',
+      'remediation_fix',
+      'data_safe',
+      'owner',
+    ]) {
+      expect(snap).toHaveProperty(key);
+    }
+  });
+
+  it('leaves failure_snapshot null for a hold with no errorCode (a routing hold, not a failure)', async () => {
+    const callId = 'test-sm-hold-noerr';
+    await seed(callId, 'classify');
+
+    await runPipeline(
+      app,
+      callId,
+      logger,
+      handlersWith({
+        classify: () =>
+          Promise.resolve({ action: 'hold' as const, reason: 'classified_spam' as const }),
+      }),
+    );
+
+    const held = (await listByCall(app, callId)).filter((l) => l.outcome === 'held');
+    expect(held).toHaveLength(1);
+    expect(held[0]?.failure_snapshot).toBeNull();
+  });
+
   it('rejects a corrupt held row sitting at an unknown stage', async () => {
     const callId = 'test-sm-held-badstage';
     await seed(callId, 'not-a-real-stage', 'held');
@@ -228,7 +328,12 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
   // Hold the call (open review), then move its review to `reviewStatus`.
   const holdThenSetReview = async (callId: string, reviewStatus: ReviewStatus): Promise<void> => {
     await seed(callId, 'fetch-transcript');
-    await holdCall(app, { callId, atStage: 'fetch-transcript', heldReason: 'missing_transcript' });
+    await holdCall(app, {
+      callId,
+      atStage: 'fetch-transcript',
+      heldReason: 'missing_transcript',
+      slaMinutes: 60,
+    });
     const { rows } = await owner.query<{ id: string }>(
       `SELECT id FROM review_queue WHERE call_id = $1`,
       [callId],
@@ -251,6 +356,70 @@ describe.skipIf(!hasTestDb)('pipeline state machine', () => {
       await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
     },
   );
+
+  it('a markUnresolvable-d call: a requeued job no-ops via the review_closed guard', async () => {
+    const callId = 'test-sm-unres';
+    await seed(callId, 'redact');
+    await holdCall(app, {
+      callId,
+      atStage: 'redact',
+      heldReason: 'redaction_failed',
+      slaMinutes: 60,
+    });
+    await markUnresolvable(app, callId, 'alice');
+
+    await runPipeline(app, callId, logger); // must not throw — terminal no-op
+    expect((await getCallState(app, callId))?.status).toBe('review_closed');
+  });
+
+  it('a reject/mark_spam-style review_closed (review resolved) no-ops on re-enqueue', async () => {
+    // reject and mark_spam resolve the review (status='resolved') and move call_state to
+    // review_closed. The broadened terminal-review guard (Task 6.2) treats a resolved review as
+    // a valid closed review, so a reconciliation/duplicate re-enqueue is a logged no-op, not an
+    // "inconsistent" throw.
+    const callId = 'test-sm-reviewclosed-resolved';
+    await seed(callId, 'classify');
+    await holdCall(app, {
+      callId,
+      atStage: 'classify',
+      heldReason: 'classified_spam',
+      slaMinutes: 60,
+    });
+    const { rows } = await owner.query<{ id: string }>(
+      `SELECT id FROM review_queue WHERE call_id = $1`,
+      [callId],
+    );
+    await setStatus(app, rows[0]!.id, 'resolved');
+    await owner.query(`UPDATE call_state SET status='review_closed' WHERE call_id=$1`, [callId]);
+
+    await runPipeline(app, callId, logger); // must not throw — terminal no-op
+    expect((await getCallState(app, callId))?.status).toBe('review_closed');
+  });
+
+  it('a stray review_closed with NO terminal review throws inconsistent', async () => {
+    const callId = 'test-sm-stray-reviewclosed';
+    await seed(callId, 'redact');
+    await owner.query(`UPDATE call_state SET status='review_closed' WHERE call_id=$1`, [callId]);
+
+    await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
+  });
+
+  it('a review_closed at an unknown stage throws inconsistent', async () => {
+    const callId = 'test-sm-reviewclosed-badstage';
+    await seed(callId, 'redact');
+    await holdCall(app, {
+      callId,
+      atStage: 'redact',
+      heldReason: 'redaction_failed',
+      slaMinutes: 60,
+    });
+    await markUnresolvable(app, callId, 'alice');
+    await owner.query(`UPDATE call_state SET current_stage='not-a-stage' WHERE call_id=$1`, [
+      callId,
+    ]);
+
+    await expect(runPipeline(app, callId, logger)).rejects.toThrow(/inconsistent/i);
+  });
 
   it("lands a continue action detail on that stage's completed processing_log row", async () => {
     const callId = 'test-sm-continue-detail';

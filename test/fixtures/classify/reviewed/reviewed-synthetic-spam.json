@@ -1,0 +1,10 @@
+{
+  "name": "reviewed-synthetic-spam",
+  "redactedTranscript": "Automated message: congratulations, you have won a free cruise. Press one now to claim your prize.",
+  "modelResponse": {
+    "text": "{\"bucket\":\"spam\",\"reason\":\"reviewer-labeled\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": { "bucket": "spam" }
+}

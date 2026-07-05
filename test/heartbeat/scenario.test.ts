@@ -2,9 +2,9 @@ import { Writable } from 'node:stream';
 import { describe, expect, it, vi } from 'vitest';
 import { createRootLogger } from '../../src/logging/logger.js';
 import { startLivenessHeartbeat, type IntervalScheduler } from '../../src/heartbeat/emit.js';
-import { runReconciliation } from '../../src/reconciliation/run.js';
+import { runReconciliationCron } from '../../src/reconciliation/run.js';
 import { runRetention } from '../../src/retention/run.js';
-import { DialpadError, type DialpadClient } from '../../src/dialpad/client/index.js';
+import { DialpadError } from '../../src/dialpad/client/index.js';
 import { makeTestConfig } from '../_config.js';
 
 const WORKER_URL = 'https://checks.example.com/ping/worker';
@@ -44,28 +44,24 @@ describe('per-component heartbeat independence', () => {
       scheduler: noopScheduler(),
     });
 
-    // Reconciliation stalls: the Dialpad listing errors out mid-run.
-    const failing: Pick<DialpadClient, 'listRecentlyConcludedCalls'> = {
-      listRecentlyConcludedCalls: () =>
-        Promise.reject(
-          new DialpadError('rate_limited', { endpoint: 'calls', status: 429, attempts: 5 }),
-        ),
-    };
     const reconConfig = makeTestConfig({ RECONCILIATION_CHECK_URL: RECON_URL });
 
-    // Worker beats several times across the window in which reconciliation is failing.
+    // Worker beats several times across the window in which reconciliation is failing. The cron's
+    // sweep stalls (Dialpad rate-limited), so the combined-health gate withholds the recon ping.
     await heartbeat.beat();
     await expect(
-      runReconciliation({
+      runReconciliationCron({
         config: reconConfig,
         logger,
-        client: failing,
-        alreadyInPipeline: () => Promise.resolve(false),
-        ingestGap: () => Promise.resolve(),
-        pingCheck: reconPing,
-        clock: { now: () => 1_750_000_000_000 },
+        runSweep: () =>
+          Promise.reject(
+            new DialpadError('rate_limited', { endpoint: 'calls', status: 429, attempts: 5 }),
+          ),
+        runScan: () => Promise.resolve({ escalated: 0, failed: 0, lockedSkipped: 0 }),
+        ping: reconPing,
+        onSweepError: () => Promise.resolve(),
       }),
-    ).rejects.toBeInstanceOf(DialpadError);
+    ).rejects.toThrow(/duty failed/);
     await heartbeat.beat();
 
     // Worker check: alive and green. Reconciliation check: silent → the monitor alerts and

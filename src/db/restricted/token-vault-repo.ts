@@ -10,10 +10,17 @@ const TABLE = 'token_vault';
  * Store a token -> value mapping, envelope-encrypted, under the restricted role. AAD
  * binds the ciphertext to its call_id. Idempotent upsert on the composite (call_id,
  * token) key — re-running replaces the ciphertext for that token and clears a
- * recoverable soft delete. A HARD-deleted row is never updated: retention's hard
- * delete is final (crypto-shredding semantics) and redaction must not repopulate
- * it — the guarded conflict matches zero rows and this throws instead of silently
- * succeeding.
+ * recoverable soft delete.
+ *
+ * TWO retention-finality guards (crypto-shredding semantics — retention's removal is final and
+ * redaction must not repopulate it):
+ *   1. held-cap (Task 8.1 §6): a guarded `INSERT ... SELECT ... WHERE NOT EXISTS (a review with
+ *      raw_purged_at set)` inserts nothing for a cap-purged call. The held-cap PHYSICALLY
+ *      deletes the vault row (no tombstone), so the write path itself must fail closed;
+ *      `restricted_role` is granted SELECT on the two non-sensitive review_queue columns
+ *      (migration 013) to evaluate this.
+ *   2. tombstone: the conflict update is gated `WHERE token_vault.hard_deleted_at IS NULL`.
+ * Either guard matching zero rows throws instead of silently succeeding.
  */
 export async function putToken(
   runner: RestrictedRunner,
@@ -26,7 +33,10 @@ export async function putToken(
     const rows = await query(
       client,
       `INSERT INTO token_vault (call_id, token, ciphertext, key_version)
-       VALUES ($1, $2, $3, $4)
+       SELECT $1, $2, $3, $4
+       WHERE NOT EXISTS (
+         SELECT 1 FROM review_queue WHERE call_id = $1 AND raw_purged_at IS NOT NULL
+       )
        ON CONFLICT (call_id, token) DO UPDATE SET
          ciphertext = EXCLUDED.ciphertext,
          key_version = EXCLUDED.key_version,
@@ -38,11 +48,58 @@ export async function putToken(
     if (rows.length === 0) {
       throw new DalError(
         DAL_QUERY_FAILED,
-        `${DAL_QUERY_FAILED}: ${TABLE} row is hard-deleted; redaction may not repopulate it (retention conflict)`,
+        `${DAL_QUERY_FAILED}: ${TABLE} is retention-final (hard-deleted or held-cap purged); redaction may not repopulate it (retention conflict)`,
         { table: TABLE, call_id: v.callId },
       );
     }
   });
+}
+
+/**
+ * Stamp ALL of a call's vault rows retention-eligible (Task 5.3 mark-retention-eligible
+ * stage), under the restricted role. Metadata only — no decrypt, no ciphertext touched.
+ * The vault is purged with the raw transcript once the de-identified record exists (§2);
+ * actual deletion stays in the scheduled retention job.
+ *
+ * Idempotent + MONOTONIC: only stamps rows whose `retention_eligible_at` is still NULL, so
+ * a re-run never resets the purge clock. Never touches a HARD-deleted (crypto-shredded)
+ * row. A call with no tokens (no PII detected) stamps zero rows — not an error.
+ */
+export async function markTokensRetentionEligible(
+  runner: RestrictedRunner,
+  callId: string,
+): Promise<void> {
+  await runner.run((client) =>
+    query(
+      client,
+      `UPDATE token_vault SET retention_eligible_at = now()
+        WHERE call_id = $1 AND retention_eligible_at IS NULL AND hard_deleted_at IS NULL`,
+      [callId],
+    ),
+  );
+}
+
+/**
+ * Whether a live (non-deleted) vault row exists for exactly this (call_id, token) — WITHOUT
+ * decrypting it (Task 6.2). The review surface's elevated single-value reveal calls this FIRST
+ * to reject a token that does not belong to the call before it decrypts, so a reviewer can never
+ * pivot one call's reveal into another call's vault value. Restricted-role, metadata-only: it
+ * touches no ciphertext and returns only a boolean.
+ */
+export async function tokenExistsForCall(
+  runner: RestrictedRunner,
+  input: { callId: string; token: string },
+): Promise<boolean> {
+  const rows = await runner.run((client) =>
+    query<{ one: number }>(
+      client,
+      `SELECT 1 AS one FROM token_vault
+        WHERE call_id = $1 AND token = $2 AND soft_deleted_at IS NULL AND hard_deleted_at IS NULL
+        LIMIT 1`,
+      [input.callId, input.token],
+    ),
+  );
+  return rows.length > 0;
 }
 
 /** Decrypt and return the original value for a token, or undefined if absent/soft-deleted. */

@@ -8,8 +8,9 @@ import {
   type ProcessingState,
   createFailure,
   dedupKey,
+  failureSnapshot,
 } from '../failure-model/index.js';
-import { recordAlert } from '../db/repositories/alert-events-repo.js';
+import { recordAlert, recordAlertWithInsertStatus } from '../db/repositories/alert-events-repo.js';
 import { appendLog } from '../db/repositories/processing-log-repo.js';
 import { query, withTransaction } from '../db/sql.js';
 
@@ -42,7 +43,9 @@ export async function recordStageAlert(
     rootCauseCategory: failure.root_cause_category,
     severity: failure.severity,
     dedupKey: dedupKey(failure),
-    failureSnapshot: { call_id: callId, stage, ...extraSnapshot },
+    // Full §4 snapshot (Task 7.4) so alert_events stays explainable after the alert is gone,
+    // plus the sanitized top-level diagnostics (call_id/stage + closed-vocab counts/status).
+    failureSnapshot: { ...failureSnapshot(failure), call_id: callId, stage, ...extraSnapshot },
   });
 }
 
@@ -66,6 +69,88 @@ export async function recordVerbatimPiiDetectedAlertResilient(
 ): Promise<void> {
   await resilientSideEffect(logger, callId, stage, 'alert VERBATIM_PII_DETECTED', () =>
     recordStageAlert(pool, callId, stage, config, 'VERBATIM_PII_DETECTED', 'degraded', counts),
+  );
+}
+
+/**
+ * Emit the advisory daily-cost warning alert (Task 7.2) when a reservation lands the day's
+ * estimated spend at/above the warning threshold — at most ONCE per UTC day, including after a
+ * same-day acknowledgment, and WITHOUT ever blocking the pipeline. Shared by classify + extract;
+ * called AFTER the reserve null-check and BEFORE the model call. A no-op when the level was not
+ * reached.
+ *
+ * `reserveModelBudget` returns a LEVEL flag (true on EVERY admitted reservation at/above the
+ * threshold, not a one-shot crossing), so this can re-attempt on later calls; the day-scoped
+ * dedup guard below collapses those attempts to a single row, and `inserted === true` gates the
+ * log line to the first insert.
+ *
+ * The whole emit is wrapped in {@link resilientSideEffect}: an alert-insert failure is
+ * sanitized-logged and swallowed so it can never convert or block the call (advisory, not a gate).
+ *
+ * Strict once-per-day dedup — no new table. The `alert_events` partial-unique index dedups only
+ * ACTIVE (unacknowledged) rows, which is insufficient here: because the emit re-attempts on every
+ * above-threshold reservation, an operator acknowledging the warning at noon would have it
+ * re-fired by the next model call. So the emit runs lock → check → insert inside ONE transaction,
+ * mirroring `reserveModelBudget`:
+ *   1. advisory xact lock on the day-scoped dedup key — serializes concurrent emitters for the day;
+ *   2. existence check (matches acknowledged rows too) — skip if any row already exists;
+ *   3. otherwise insert on the SAME transaction client.
+ * The lock closes the check-then-insert TOCTOU (without it two workers could both see "no active
+ * row" after an ack and both insert). The next UTC day the key changes → a fresh row re-fires.
+ *
+ * PRIVACY: context is `{ stage, environment }` only (no call_id — the alert is day-scoped, not
+ * call-scoped) and the day rides in the dedup KEY, never in `context` (sanitizeContext's allowlist
+ * would strip a day key). The persisted snapshot is the full sanitized §4 failure — no PII.
+ */
+export async function emitCostWarningIfReached(
+  pool: Pool,
+  callId: string,
+  stage: string,
+  config: Config,
+  reservation: BudgetReservation,
+  logger: Logger,
+): Promise<void> {
+  if (!reservation.warningThresholdReached) return;
+  const failure = createFailure('MODEL_COST_WARNING_THRESHOLD_EXCEEDED', {
+    processingState: 'continuing',
+    context: { stage, environment: config.NODE_ENV },
+  });
+  const dedupKeyForDay = `MODEL_COST_WARNING_THRESHOLD_EXCEEDED:day:${reservation.day}`;
+  await resilientSideEffect(
+    logger,
+    callId,
+    stage,
+    'alert MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+    () =>
+      withTransaction(pool, async (client) => {
+        // (1) Serialize all same-day emitters. hashtextextended(text, 0) → bigint, the single-bigint
+        // advisory-lock overload. Protects the same-day acknowledgment race (see the doc comment).
+        await query(client, `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+          dedupKeyForDay,
+        ]);
+        // (2) Existence check — matches acknowledged rows too, so an acknowledged warning is NOT
+        // re-fired the same day.
+        const existing = await query<{ id: string }>(
+          client,
+          `SELECT id FROM alert_events WHERE dedup_key = $1 LIMIT 1`,
+          [dedupKeyForDay],
+        );
+        if (existing[0]) return;
+        // (3) Insert on the same transaction client, with the full sanitized §4 snapshot.
+        const { inserted } = await recordAlertWithInsertStatus(client, {
+          errorCode: failure.error_code,
+          rootCauseCategory: failure.root_cause_category,
+          severity: failure.severity,
+          dedupKey: dedupKeyForDay,
+          failureSnapshot: failureSnapshot(failure),
+        });
+        if (inserted) {
+          logger.info(
+            { stage, dedup_key: dedupKeyForDay },
+            'daily model-cost warning threshold reached — advisory alert emitted (pipeline continues)',
+          );
+        }
+      }),
   );
 }
 
@@ -216,6 +301,7 @@ export async function handleModelError(
         severity: failure.severity,
         dedupKey: dedupKey(failure),
         failureSnapshot: {
+          ...failureSnapshot(failure),
           call_id: callId,
           stage,
           ...(variable !== undefined ? { variable } : {}),

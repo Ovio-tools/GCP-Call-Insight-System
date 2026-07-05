@@ -13,6 +13,7 @@ import {
   buildExtractUserMessage,
 } from '../../../src/pipeline/extract/prompt.js';
 import * as alertRepo from '../../../src/db/repositories/alert-events-repo.js';
+import { acknowledgeAlert } from '../../../src/db/repositories/alert-events-repo.js';
 import type { StageContext, StageResult } from '../../../src/pipeline/stages.js';
 import type { Clock } from '../../../src/pipeline/fetch-transcript.js';
 import { upsertCallState, getCallState } from '../../../src/db/repositories/call-state-repo.js';
@@ -183,8 +184,8 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     await cleanupCalls(owner, PATTERN);
     await owner.query(
       `DELETE FROM alert_events WHERE error_code IN
-        ('MODEL_COST_CAP_EXCEEDED','MODEL_MALFORMED_RESPONSE','MODEL_AUTH_FAILED',
-         'MODEL_RATE_LIMITED','CONFIG_MISSING_OR_INVALID','VERBATIM_PII_DETECTED')`,
+        ('MODEL_COST_CAP_EXCEEDED','MODEL_COST_WARNING_THRESHOLD_EXCEEDED','MODEL_MALFORMED_RESPONSE',
+         'MODEL_AUTH_FAILED','MODEL_RATE_LIMITED','CONFIG_MISSING_OR_INVALID','VERBATIM_PII_DETECTED')`,
     );
     await owner.query(`DELETE FROM daily_cost_usage WHERE day = $1`, [FIXED_DAY]);
   });
@@ -265,6 +266,116 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     expect(await alertCount('MODEL_COST_CAP_EXCEEDED')).toBe(1);
     expect(await countRows('model_invocations', callId)).toBe(0);
     expect(await countRows('extraction_candidates', callId)).toBe(0);
+  });
+
+  // ---- cost warning threshold (Task 7.2) ---------------------------------------
+
+  const WARNING_CODE = 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED';
+  const warningDedupKey = `${WARNING_CODE}:day:${FIXED_DAY}`;
+  const dedupKeyCount = async (key: string): Promise<number> => {
+    const r = await owner.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM alert_events WHERE dedup_key = $1`,
+      [key],
+    );
+    return Number(r.rows[0]?.n);
+  };
+  // An extract reservation (ceiling 30k input, 4096 output at 3/15 per Mtok) costs ~0.15144 USD.
+  // cap 0.2 + ratio 0.5 → warningUsd 0.1: a single reservation lands ABOVE the warning yet still
+  // fits under the cap (non-blocking).
+  const WARN_ABOVE = {
+    DAILY_MODEL_COST_CAP_USD: 0.2,
+    DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: 0.5,
+  };
+  // cap 1 + ratio 0.8 → warningUsd 0.8: the same reservation stays well below the warning.
+  const WARN_BELOW = { DAILY_MODEL_COST_CAP_USD: 1, DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO: 0.8 };
+
+  it('below the warning threshold → no warning alert, model called, invocation success', async () => {
+    const callId = 'test-ext-warn-below';
+    await seed(callId);
+    const { model, spy } = fakeModel(() => Promise.resolve(result()));
+    const res = await handler(() => model, WARN_BELOW)(ctx(callId));
+
+    expect(res.action).toBe('continue');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(await alertCount(WARNING_CODE)).toBe(0);
+  });
+
+  it('at/above the warning threshold → exactly one warning alert AND the extract still proceeds (non-blocking)', async () => {
+    const callId = 'test-ext-warn-above';
+    await seed(callId);
+    const { model, spy } = fakeModel(() => Promise.resolve(result()));
+    const res = await handler(() => model, WARN_ABOVE)(ctx(callId));
+
+    // Non-blocking: model ran, record persisted, call advanced.
+    expect(res.action).toBe('continue');
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(await countRows('extraction_candidates', callId)).toBe(1);
+    // Exactly one advisory alert, under the day-scoped dedup key.
+    expect(await alertCount(WARNING_CODE)).toBe(1);
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+  });
+
+  it('multiple above-threshold calls the same UTC day → still exactly one warning alert (day dedup)', async () => {
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    for (const callId of ['test-ext-warn-dedup-1', 'test-ext-warn-dedup-2']) {
+      await seed(callId);
+      await handler(() => model, WARN_ABOVE)(ctx(callId));
+    }
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+  });
+
+  it('strict once-per-day even after acknowledgment: ack then re-trigger the same UTC day → still one row', async () => {
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    await seed('test-ext-warn-ack-1');
+    await handler(() => model, WARN_ABOVE)(ctx('test-ext-warn-ack-1'));
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+
+    expect(await acknowledgeAlert(app, warningDedupKey)).toBe(1);
+
+    await seed('test-ext-warn-ack-2');
+    await handler(() => model, WARN_ABOVE)(ctx('test-ext-warn-ack-2'));
+    expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+  });
+
+  it('robustness: a swallowed first emit does not block the call, and a later call still creates the row', async () => {
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    const spy = vi
+      .spyOn(alertRepo, 'recordAlertWithInsertStatus')
+      .mockRejectedValueOnce(new Error('simulated alert_events insert failure'));
+    try {
+      await seed('test-ext-warn-robust-1');
+      const res = await handler(() => model, WARN_ABOVE)(ctx('test-ext-warn-robust-1'));
+      // Swallowed emit failure: call still advanced, no row persisted (transaction rolled back).
+      expect(res.action).toBe('continue');
+      expect(await dedupKeyCount(warningDedupKey)).toBe(0);
+
+      await seed('test-ext-warn-robust-2');
+      await handler(() => model, WARN_ABOVE)(ctx('test-ext-warn-robust-2'));
+      expect(await dedupKeyCount(warningDedupKey)).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('hard cap supersedes: cap reached → cost_cap_held, MODEL_COST_CAP_EXCEEDED, NO warning alert', async () => {
+    const callId = 'test-ext-warn-vs-cap';
+    await seed(callId);
+    await upsertDailyCost(owner, {
+      day: FIXED_DAY,
+      inputTokens: 0,
+      outputTokens: 0,
+      estimatedCost: makeTestConfig().DAILY_MODEL_COST_CAP_USD,
+    });
+    const res = await handler(() => {
+      throw new Error('getModel must not be called when the cost cap is reached');
+    })(ctx(callId));
+    expect(res).toEqual({
+      action: 'hold',
+      reason: 'cost_cap_held',
+      errorCode: 'MODEL_COST_CAP_EXCEEDED',
+    });
+    expect(await alertCount('MODEL_COST_CAP_EXCEEDED')).toBe(1);
+    expect(await alertCount(WARNING_CODE)).toBe(0);
   });
 
   // ---- billing dispositions ----------------------------------------------------

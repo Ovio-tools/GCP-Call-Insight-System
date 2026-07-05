@@ -1,6 +1,7 @@
-// SEAM(Task 2.2): this is a minimal, worker-local failure-model shim. When Task 2.2's shared
-// failure-model modules land (typed error object, severity map, alert formatter, dedup +
-// escalation), replace the constants and sanitizeFailure() here with calls into them.
+// Worker-local failure diagnostics. `sanitizeFailure` builds the PII-free *diagnostic*
+// (failed stage, attempts, error class) that goes into `processing_log.detail` and
+// `dead_letter.last_error`; the full §4 `failure_snapshot` is built from the shared
+// failure-model catalog (`createFailure` + `failureSnapshot`) at the call sites (Task 7.4).
 
 import type { JsonValue } from '../db/index.js';
 import { PipelineStageError, safeErrorCode, safeErrorName } from '../pipeline/errors.js';
@@ -59,4 +60,21 @@ export function sanitizeFailure(job: FailedJobLike, err: unknown): SanitizedFail
   };
 
   return { failedStage, shortMessage, snapshot };
+}
+
+/**
+ * Assemble the sanitized `context` for a worker failure's {@link createFailure}. Only the
+ * allowlisted identifier keys are set; `createFailure`'s `sanitizeContext` is the trust
+ * boundary and drops `stage` unless it is a real pipeline stage (so `'unknown'` is filtered).
+ */
+export function failureContext(
+  callId: string | null,
+  jobId: string | undefined,
+  failedStage: string,
+): Record<string, string> {
+  const context: Record<string, string> = {};
+  if (callId) context.call_id = callId;
+  if (jobId) context.job_id = jobId;
+  if (failedStage) context.stage = failedStage;
+  return context;
 }

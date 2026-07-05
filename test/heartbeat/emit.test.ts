@@ -189,6 +189,69 @@ describe('startLivenessHeartbeat', () => {
     expect(line).not.toContain('checks.example.com');
   });
 
+  it('runs the in-DB mirror after a healthy beat, and the ping is not gated on it', async () => {
+    const { logger } = collectingLogger();
+    const ping = vi.fn((_url: string) => Promise.resolve());
+    const mirror = vi.fn(() => Promise.resolve());
+    const m = manualScheduler();
+
+    const hb = startLivenessHeartbeat({
+      component: 'worker',
+      url: WORKER_URL,
+      intervalMs: 60_000,
+      logger,
+      ping,
+      mirror,
+      scheduler: m.scheduler,
+    });
+
+    await hb.beat();
+    expect(ping).toHaveBeenCalledTimes(1);
+    expect(mirror).toHaveBeenCalledTimes(1);
+  });
+
+  it('a failing mirror never blocks the ping and is sanitized-logged, not thrown', async () => {
+    const { lines, logger } = collectingLogger();
+    const ping = vi.fn((_url: string) => Promise.resolve());
+    const mirror = vi.fn(() => Promise.reject(new Error('db write failed')));
+    const m = manualScheduler();
+
+    const hb = startLivenessHeartbeat({
+      component: 'worker',
+      url: WORKER_URL,
+      intervalMs: 60_000,
+      logger,
+      ping,
+      mirror,
+      scheduler: m.scheduler,
+    });
+
+    await expect(hb.beat()).resolves.toBeUndefined();
+    // The authoritative external ping still fired.
+    expect(ping).toHaveBeenCalledTimes(1);
+    expect(lines.some((l) => l.includes('heartbeat DB mirror failed'))).toBe(true);
+  });
+
+  it('does not run the mirror when the health probe reports unhealthy', async () => {
+    const { logger } = collectingLogger();
+    const mirror = vi.fn(() => Promise.resolve());
+    const m = manualScheduler();
+
+    const hb = startLivenessHeartbeat({
+      component: 'worker',
+      url: WORKER_URL,
+      intervalMs: 60_000,
+      logger,
+      ping: () => Promise.resolve(),
+      isHealthy: () => false,
+      mirror,
+      scheduler: m.scheduler,
+    });
+
+    await hb.beat();
+    expect(mirror).not.toHaveBeenCalled();
+  });
+
   it('stop() clears the scheduled interval', () => {
     const { logger } = collectingLogger();
     const m = manualScheduler();

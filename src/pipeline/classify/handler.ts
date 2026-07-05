@@ -7,12 +7,17 @@ import {
   reserveModelBudget,
   settleModelUsage,
 } from '../../model/cost.js';
-import { createFailure, dedupKey } from '../../failure-model/index.js';
+import { createFailure, dedupKey, failureSnapshot } from '../../failure-model/index.js';
 import { recordAlert } from '../../db/repositories/alert-events-repo.js';
 import { getCleanTranscript } from '../../db/repositories/clean-transcripts-repo.js';
 import { recordModelInvocation } from '../../db/repositories/model-invocations-repo.js';
 import type { Clock } from '../fetch-transcript.js';
-import { handleModelError, parkStageDisabled, recordStageAlert } from '../model-stage-shared.js';
+import {
+  emitCostWarningIfReached,
+  handleModelError,
+  parkStageDisabled,
+  recordStageAlert,
+} from '../model-stage-shared.js';
 import {
   CLASSIFY_PROMPT_VERSION,
   CLASSIFY_SYSTEM_PROMPT,
@@ -101,6 +106,11 @@ export function createClassifyHandler(deps: ClassifyHandlerDeps): StageHandler {
       return { action: 'hold', reason: 'cost_cap_held', errorCode: 'MODEL_COST_CAP_EXCEEDED' };
     }
 
+    // 4b. Advisory cost-warning alert (Task 7.2). Non-blocking and best-effort: emitted at most
+    //     once per UTC day when estimated spend crosses the warning threshold; it never holds,
+    //     retries, or converts the call. Runs AFTER the cost-cap gate (the hard cap supersedes).
+    await emitCostWarningIfReached(pool, callId, stage, deps.config, reservation, logger);
+
     // 5. Call the model. try/catch wraps BOTH getModel() and classify(). On any thrown error
     //    the reservation is released/kept per the billing disposition, then rethrown.
     let result;
@@ -156,6 +166,7 @@ export function createClassifyHandler(deps: ClassifyHandlerDeps): StageHandler {
         severity: failure.severity,
         dedupKey: dedupKey(failure),
         failureSnapshot: {
+          ...failureSnapshot(failure),
           call_id: callId,
           stage,
           ...(result.usagePresent ? {} : { usage_missing: true }),

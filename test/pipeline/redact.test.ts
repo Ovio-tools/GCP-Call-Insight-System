@@ -3,7 +3,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import type { Pool } from 'pg';
 import { DEK_BYTES, LocalKeyProvider } from '../../src/crypto/index.js';
 import { createRedactionHandler } from '../../src/pipeline/redact.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import type { StageContext, StageHandlers } from '../../src/pipeline/stages.js';
 import { defaultStageHandlers } from '../../src/pipeline/stages.js';
 import { getCallState, upsertCallState } from '../../src/db/repositories/call-state-repo.js';

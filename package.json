@@ -21,6 +21,9 @@
     "db:migrate:down": "node dist/scripts/migrate.js down",
     "requeue:classify": "node dist/scripts/requeue-parked-classify.js",
     "requeue:extract": "node dist/scripts/requeue-parked-extract.js",
+    "eval:sync": "node dist/scripts/sync-labeled-examples.js",
+    "eval:export": "node dist/scripts/export-reviewed-fixtures.js",
+    "eval:run": "node dist/scripts/run-evaluation.js",
     "prepare": "husky",
     "model:fetch": "node dist/scripts/fetch-ner-model.js"
   },
@@ -38,7 +41,7 @@
     "node-pg-migrate": "^8.0.4",
     "openid-client": "^6.8.4",
     "pg": "^8.22.0",
-    "pino": "^9.5.0",
+    "pino": "^10.3.1",
     "zod": "^3.23.8"
   },
   "overrides": {

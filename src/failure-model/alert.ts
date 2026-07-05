@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { type Severity } from '../db/enums.js';
 import { assertNoContentFields, isContentField } from '../logging/redaction.js';
-import { configSchema } from '../config/schema.js';
+import { configObjectSchema } from '../config/schema.js';
 import { type CallsState, type ErrorCode, type RootCauseCategory } from './categories.js';
 import { SAME_AS_IMMEDIATE } from './catalog.js';
 import { DEDUP_SCOPE_PRIORITY } from './dedup.js';
@@ -40,7 +40,7 @@ export interface FormatAlertOptions {
   timestamp: string;
 }
 
-const environmentSchema = configSchema.shape.NODE_ENV;
+const environmentSchema = configObjectSchema.shape.NODE_ENV;
 const timestampSchema = z.string().datetime();
 
 const SAME_AS_IMMEDIATE_TEXT = 'Same as the immediate step.';

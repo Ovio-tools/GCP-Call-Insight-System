@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { createRootLogger } from '../../src/logging/logger.js';
-import { runPipeline } from '../../src/pipeline/state-machine.js';
+import { runPipeline } from '../_run-pipeline.js';
 import { defaultStageHandlers, type StageHandlers } from '../../src/pipeline/stages.js';
 import { metadataPreFilterHandler } from '../../src/pipeline/metadata-prefilter.js';
 import { getCallState, upsertCallState } from '../../src/db/repositories/call-state-repo.js';

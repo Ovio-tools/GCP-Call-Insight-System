@@ -736,14 +736,44 @@ A held call's data is preserved while it is open and within the cap, never silen
 **Parallel with: observability**
 
 ```text
-Build a small authenticated review and admin surface for OVIO reviewers, on top of the shared Task 2.3 middleware (auth, size limits, rate limiting, PII-free responses). Requirements:
-- Authentication required. No anonymous access. Sessions expire.
-- List open review_queue items with their held reason, a plain-language explanation, and the SLA status.
-- Visibility rules: by default reviewers see redacted content. Raw transcript or vault values are shown only to an elevated role, only for the held call being reviewed, and every raw view is logged as an operator_action. Most hold reasons can be resolved on redacted content alone.
-- Actions, each recorded in operator_actions with before and after: approve, reject, reprocess (re-enter the pipeline from a chosen stage), mark non-customer, mark spam, correct extraction, mark unresolvable.
-- Reprocess re-enters the pipeline safely and idempotently, with no duplicate records and no double-write downstream.
-- No transcript content or PII in logs or in any response to an unauthorized caller.
-Tests: unauthorized access refused; a redacted-only reviewer cannot see raw values; an elevated raw view is logged; each action writes a complete operator_actions audit row; a reprocessed call re-enters and completes without duplicating records; an oversized or malformed request is rejected by the middleware.
+Build a small authenticated review and admin surface for OVIO reviewers, on top of the shared Task 2.3 middleware (auth, size limits, rate limiting, CSRF, PII-free responses). This is Plan mode: first inspect the repo and produce a concrete implementation plan; do not write code until the plan is approved.
+
+Git and conflict hygiene:
+- Start by running `git status --short --branch`, `git fetch origin`, and a comparison against `origin/main`. If the working tree has uncommitted or unrelated changes, stop and report them instead of overwriting them.
+- Work on a dedicated branch named `codex/task-6-2-review-surface` based on the latest `origin/main`, or rebase the existing task branch onto `origin/main` before coding. Never use `git reset --hard` or discard user changes.
+- Keep this task to one PR-sized change. Do not touch unrelated files. At the end, run `git status --short` and report every changed file.
+
+Before planning, read the existing contracts rather than inventing new ones:
+- Task 2.3 HTTP middleware docs and source (`createInternalApp`, auth/session, CSRF, shared error shaping).
+- Task 6.1 held-review docs/source, the `review_queue` and `operator_actions` schemas/repos, the restricted raw/vault access helpers, and the queue/pipeline re-entry helpers.
+- Current tests around auth middleware, review_queue, operator_actions, retention/raw purge behavior, and pipeline idempotency.
+- If the current `operator_actions.action` enum cannot represent a raw-view audit event, include a reversible migration and schema/test updates in the plan. Do not silently log raw views somewhere unaudited.
+
+Required surface and behavior:
+- Authentication required for every review route. No anonymous access. Sessions expire through the shared middleware. Use the shared internal app factory; do not roll custom auth, rate limiting, body parsing, CSRF, or error formatting.
+- Define the route contract in the plan before implementation. Minimum routes: list open review items, show one review item with redacted content by default, reveal raw/vault values only for an elevated reviewer on the specific held call, and POST actions for approve, reject, reprocess, mark non-customer, mark spam, correct extraction, and mark unresolvable.
+- List open `review_queue` items with id, call_id, held reason, fixed plain-language explanation, status/assignee, SLA due time, SLA state, escalated/raw-purged indicators, and timestamps. The list view must not include transcript content, vault values, raw PII, or clear redaction findings.
+- The detail view shows redacted content and safe metadata by default. If `raw_purged_at` is set or raw/vault rows are gone, the UI/API must say raw is unavailable and still allow redacted-only resolution or mark-unresolvable.
+- Raw transcript or vault reveal requires an elevated role, applies only to the selected review item/call_id, uses the restricted access path, and records an audit row in `operator_actions` with actor, action, review_queue_id, timestamp, and sanitized before/after metadata. Do not store raw transcript text or vault values inside `operator_actions`, logs, errors, or tests.
+- Most hold reasons must be resolvable without raw access. Make raw reveal an explicit, separate operation, not something loaded automatically with the detail page.
+- Every action runs in a transaction, verifies the review item is still open/in_review, writes an `operator_actions` row with sanitized before/after state, updates `review_queue`/`call_state` consistently, and is idempotent under duplicate submits.
+- `correct_extraction` accepts only the structured extraction fields already allowed by the schema, validates them, and never accepts labeled PII or raw transcript text.
+- `reprocess` accepts only an allowlisted stage, resets state only as needed for that stage, closes or updates the active review row safely, enqueues/runs the pipeline through existing queue helpers with an idempotency key, and proves no duplicate `structured_knowledge`, review rows, downstream writes, or double-processing occur.
+- `mark_non_customer` and `mark_spam` update the call to the appropriate terminal state without deleting evidence. `mark_unresolvable` uses the Task 6.1 unresolvable path and respects raw-retention behavior.
+- No transcript content, customer_language, vault value, redaction finding in clear, phone number, name, address, or other PII may appear in logs, unauthorized responses, error responses, or audit rows.
+
+The implementation plan must name the exact files to add/change, the route/API shapes, role checks, database transactions, migrations if needed, test fixtures, and the manual QA steps. Include an explicit risk section for raw-access leakage, stale review actions, double-submit/idempotency, and branch conflicts.
+
+Tests:
+- Unauthorized access to every review route is refused through the shared middleware, and oversized/malformed requests are rejected by the middleware with PII-free responses.
+- CSRF/session behavior is enforced for state-changing routes.
+- A standard reviewer can list and view only redacted/safe fields and cannot reveal raw transcript or vault values.
+- An elevated raw reveal returns raw only for the selected held call, logs exactly one sanitized operator_action audit row, and does not preload raw on the detail view.
+- If raw data has been purged, the detail route handles it gracefully and still supports redacted-only resolution or mark-unresolvable.
+- Each supported action writes one complete sanitized operator_actions row and updates review_queue/call_state correctly.
+- Duplicate action submits are idempotent and do not create duplicate downstream rows or duplicate open review rows.
+- A reprocessed call re-enters from the selected allowlisted stage and completes without duplicating structured_knowledge or downstream writes.
+- Negative privacy tests seed fake PII and assert it is absent from unauthorized responses, standard-reviewer responses, logs, error responses, and operator_actions.
 ```
 
 **Tests and QA**

@@ -3,13 +3,18 @@ import type { Logger } from 'pino';
 // Imported from db/errors.js directly (not the db barrel): the model-stage import
 // guard forbids pipeline modules from reaching modules that re-export raw/vault access.
 import { DalError, DAL_STALE_STAGE } from '../db/errors.js';
+import { createFailure, failureSnapshot } from '../failure-model/index.js';
+import { logStageFailure, logStageStart, logStageSuccess } from '../logging/stage-log.js';
 import {
   advanceStage,
   getCallState,
   holdCall,
   skipCall,
 } from '../db/repositories/call-state-repo.js';
-import { hasActiveReviewForCall } from '../db/repositories/review-queue-repo.js';
+import {
+  hasActiveReviewForCall,
+  hasTerminalReviewForCall,
+} from '../db/repositories/review-queue-repo.js';
 import { PipelineStageError } from './errors.js';
 import {
   FINAL_STAGE,
@@ -19,9 +24,11 @@ import {
   STATUS_HELD,
   STATUS_PROCESSING,
   STATUS_SKIPPED,
+  STATUS_REVIEW_CLOSED,
   defaultStageHandlers,
   isPipelineStage,
   type PipelineStage,
+  type SlaResolver,
   type StageHandlers,
   type StageResult,
 } from './stages.js';
@@ -92,12 +99,21 @@ async function resolveStale(
  * Handlers must themselves be idempotent: a crash after a handler runs but before its advance
  * commits re-runs that handler on retry. Trivial for the stubs; a convention real stages inherit.
  */
+export interface RunPipelineOptions {
+  /** Stage handlers; injectable so tests can force a stage to hold/fail. Defaults to the stubs. */
+  handlers?: StageHandlers;
+  /** Resolves the review SLA (minutes) for a hold's `held_reason`. REQUIRED — no default; the
+   * worker builds it from config, tests supply a fixed resolver (Task 6.1). */
+  slaMinutesFor: SlaResolver;
+}
+
 export async function runPipeline(
   pool: Pool,
   callId: string,
   logger: Logger,
-  handlers: StageHandlers = defaultStageHandlers,
+  options: RunPipelineOptions,
 ): Promise<void> {
+  const handlers = options.handlers ?? defaultStageHandlers;
   const state = await getCallState(pool, callId);
   if (!state) {
     throw new Error(`call_state row for ${callId} does not exist — call was not seeded`);
@@ -151,6 +167,27 @@ export async function runPipeline(
     );
   }
 
+  // Terminal no-op guard for a review-closed call (Task 6.1, broadened Task 6.2) — mirrors the
+  // held guard strictly. A valid `review_closed` row sits at a known stage AND has a matching
+  // CLOSED review row (`review_queue.status IN ('resolved','unresolvable')`): `mark_unresolvable`
+  // closes it `unresolvable`, while `reject`/`mark_spam` close it `resolved` — both write the
+  // review status + `call_state='review_closed'` in one transaction. Re-enqueueing it must be a
+  // no-op. A `review_closed` missing either invariant — unknown stage, or no closed review — is
+  // real corruption (a stray terminal status), so surface it rather than silently dropping the
+  // call from the pipeline.
+  if (state.status === STATUS_REVIEW_CLOSED) {
+    const knownStage = isPipelineStage(state.current_stage);
+    const hasTerminal = knownStage && (await hasTerminalReviewForCall(pool, callId));
+    if (knownStage && hasTerminal) {
+      logger.info({ stage: state.current_stage }, 'call review-closed — no-op');
+      return;
+    }
+    throw new Error(
+      `${callId}: review_closed status paired with stage '${state.current_stage}' / terminal ` +
+        `review ${String(hasTerminal)} — inconsistent`,
+    );
+  }
+
   // Validate the starting stage before walking, so an unknown stage can't index from -1.
   let index = dbStageIndex(state.current_stage);
   if (index === -1) {
@@ -160,10 +197,15 @@ export async function runPipeline(
   while (index <= LAST_INDEX) {
     const stage = PIPELINE_STAGES[index] as PipelineStage;
 
+    const startedAt = Date.now();
+    const durationMs = (): number => Date.now() - startedAt;
+    logStageStart(logger, { callId, stage });
+
     let result: StageResult | void;
     try {
       result = await handlers[stage]({ callId, stage, logger, pool });
     } catch (cause) {
+      logStageFailure(logger, { callId, stage, outcome: 'failed', durationMs: durationMs() });
       // Wrap so the worker's failed-handler knows exactly which stage failed. Fail-closed:
       // PipelineStageError never carries the raw error message.
       throw new PipelineStageError(stage, callId, cause);
@@ -188,6 +230,7 @@ export async function runPipeline(
         if (raced.status === STATUS_SKIPPED || raced.status === STATUS_COMPLETED) return;
         throw new Error(`${callId}: skip raced but status is '${raced.status}' — inconsistent`);
       }
+      logStageSuccess(logger, { callId, stage, outcome: 'skipped', durationMs: durationMs() });
       return;
     }
 
@@ -195,20 +238,38 @@ export async function runPipeline(
     // not-ready transcript retry). STOP here without advancing or failing — the call stays
     // at this stage in `processing` and resumes when the delayed job fires.
     if (result && result.action === 'defer') {
-      logger.info({ stage }, 'stage deferred — awaiting delayed re-run');
+      logStageSuccess(logger, { callId, stage, outcome: 'deferred', durationMs: durationMs() });
       return;
     }
 
     // A stage asked to hold the call for a person: hold it atomically (status + review_queue
     // + processing_log) and STOP. Mirrors the drop path's stale-race handling.
     if (result && result.action === 'hold') {
+      // A hold carrying an error_code IS a failure-model event, so its processing_log row must
+      // carry the full §4 snapshot (Task 7.4). A stage may pass an explicit `failureSnapshot`
+      // (with its own processing_state / diagnostics); otherwise the runner synthesizes one
+      // from the catalog so EVERY error-coded hold row stays explainable after its alert is
+      // gone. A hold with no error_code is a routing hold (spam, emergency review), not a
+      // failure — no snapshot, mirroring the drop path.
+      const holdSnapshot =
+        result.failureSnapshot ??
+        (result.errorCode !== undefined
+          ? failureSnapshot(
+              createFailure(result.errorCode, {
+                processingState: 'continuing',
+                context: { call_id: callId, stage },
+              }),
+            )
+          : undefined);
       try {
         await holdCall(pool, {
           callId,
           atStage: stage,
           heldReason: result.reason,
+          slaMinutes: options.slaMinutesFor(result.reason),
           ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
           ...(result.detail !== undefined ? { logDetail: result.detail } : {}),
+          ...(holdSnapshot !== undefined ? { failureSnapshot: holdSnapshot } : {}),
         });
       } catch (err) {
         if (!isStaleStageError(err)) throw err;
@@ -225,6 +286,13 @@ export async function runPipeline(
         }
         throw new Error(`${callId}: hold raced but status is '${raced.status}' — inconsistent`);
       }
+      logStageFailure(logger, {
+        callId,
+        stage,
+        outcome: 'held',
+        ...(result.errorCode !== undefined ? { errorCode: result.errorCode } : {}),
+        durationMs: durationMs(),
+      });
       return;
     }
 
@@ -248,6 +316,7 @@ export async function runPipeline(
           ...(continueDetail !== undefined ? { detail: continueDetail } : {}),
         },
       });
+      logStageSuccess(logger, { callId, stage, outcome: 'completed', durationMs: durationMs() });
     } catch (err) {
       if (!isStaleStageError(err)) throw err;
       const resolution = await resolveStale(pool, callId, targetIndex);

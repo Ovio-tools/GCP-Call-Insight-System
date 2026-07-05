@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import { DAL_QUERY_FAILED, DalError, parseOrThrow } from '../errors.js';
 import { query, toJsonParam } from '../sql.js';
+import type { Queryable } from '../types.js';
 import {
   type ExtractionCandidateInsert,
   type ExtractionCandidateRow,
@@ -29,12 +30,12 @@ const TABLE = 'extraction_candidates';
  * pattern as upsertCleanTranscript).
  */
 export async function upsertExtractionCandidate(
-  pool: Pool,
+  db: Queryable,
   input: ExtractionCandidateInsert,
 ): Promise<ExtractionCandidateRow> {
   const v = parseOrThrow(TABLE, extractionCandidateInsertSchema, input);
   const rows = await query<ExtractionCandidateRow>(
-    pool,
+    db,
     `INSERT INTO extraction_candidates (
        call_id, call_intent, service_category, problem_statement, symptoms, customer_language,
        location_in_home, access_or_scheduling_notes, prior_attempts, urgency, concerns,
@@ -96,6 +97,29 @@ export async function upsertExtractionCandidate(
     );
   }
   return parseOrThrow(TABLE, extractionCandidateRowSchema, rows[0]);
+}
+
+/**
+ * Stamp the candidate retention-eligible (Task 5.3 store stage) — the staging row is
+ * redundant once its content has been copied into structured_knowledge, so it becomes
+ * purgeable. Metadata only; deletion stays in the scheduled retention job.
+ *
+ * Idempotent + MONOTONIC: only stamps a row whose `retention_eligible_at` is still NULL,
+ * so a re-run never pushes the purge clock out. Never touches a HARD-deleted (retention-
+ * final) row. A missing / already-stamped / hard-deleted row is a silent no-op — the
+ * store stage asserts the candidate's presence and pass status separately before calling
+ * this, so no row-count guard is needed here.
+ */
+export async function markExtractionCandidateRetentionEligible(
+  pool: Pool,
+  callId: string,
+): Promise<void> {
+  await query(
+    pool,
+    `UPDATE extraction_candidates SET retention_eligible_at = now()
+      WHERE call_id = $1 AND retention_eligible_at IS NULL AND hard_deleted_at IS NULL`,
+    [callId],
+  );
 }
 
 export async function getExtractionCandidate(

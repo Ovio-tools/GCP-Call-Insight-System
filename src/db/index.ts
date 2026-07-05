@@ -4,7 +4,7 @@
  * envelope-encrypted access to the restricted vault tables.
  */
 export { createAppPool, createOwnerPool } from './pool.js';
-export { withTransaction, query, toJsonParam } from './sql.js';
+export { withTransaction, withClientTransaction, query, toJsonParam } from './sql.js';
 export {
   DalError,
   parseOrThrow,

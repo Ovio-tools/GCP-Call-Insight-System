@@ -2,24 +2,29 @@ import { randomBytes } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 import { validateEnv, CONFIG_ERROR_CODE, ConfigError } from '../../src/config/index.js';
 import { requireRedactionConfig } from '../../src/redaction/config.js';
-import { makeTestConfig } from '../_config.js';
+import { makeTestConfig, REQUIRED_ENV } from '../_config.js';
 
 /** A base64 key that decodes to exactly 32 bytes — the minimum valid hash key. */
 const VALID_KEY = randomBytes(32).toString('base64');
 
 describe('redaction config schema', () => {
   it('accepts a valid base64 key of >= 32 decoded bytes', () => {
-    const result = validateEnv({ NODE_ENV: 'test', REDACTION_VALUE_HASH_KEY: VALID_KEY });
+    const result = validateEnv({
+      NODE_ENV: 'test',
+      ...REQUIRED_ENV,
+      REDACTION_VALUE_HASH_KEY: VALID_KEY,
+    });
     expect(result.ok).toBe(true);
   });
 
   it('accepts an absent key (optional at boot; consumers enforce presence)', () => {
-    const result = validateEnv({ NODE_ENV: 'test' });
+    const result = validateEnv({ NODE_ENV: 'test', ...REQUIRED_ENV });
     expect(result.ok).toBe(true);
   });
 
   it('rejects a key that is not valid base64, naming the variable', () => {
     const result = validateEnv({
+      ...REQUIRED_ENV,
       NODE_ENV: 'test',
       REDACTION_VALUE_HASH_KEY: '!!!not-base64-at-all!!!',
     });
@@ -30,14 +35,18 @@ describe('redaction config schema', () => {
 
   it('rejects a key that decodes to fewer than 32 bytes', () => {
     const short = randomBytes(16).toString('base64');
-    const result = validateEnv({ NODE_ENV: 'test', REDACTION_VALUE_HASH_KEY: short });
+    const result = validateEnv({
+      NODE_ENV: 'test',
+      ...REQUIRED_ENV,
+      REDACTION_VALUE_HASH_KEY: short,
+    });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.invalid).toContain('REDACTION_VALUE_HASH_KEY');
   });
 
   it('validates the redaction tuning knobs with sane defaults', () => {
-    const result = validateEnv({ NODE_ENV: 'test' });
+    const result = validateEnv({ NODE_ENV: 'test', ...REQUIRED_ENV });
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.config.REDACTION_RISK_THRESHOLD).toBeGreaterThan(0);
@@ -50,7 +59,11 @@ describe('redaction config schema', () => {
   });
 
   it('rejects an out-of-range risk threshold', () => {
-    const result = validateEnv({ NODE_ENV: 'test', REDACTION_RISK_THRESHOLD: '1.5' });
+    const result = validateEnv({
+      NODE_ENV: 'test',
+      ...REQUIRED_ENV,
+      REDACTION_RISK_THRESHOLD: '1.5',
+    });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.error.invalid).toContain('REDACTION_RISK_THRESHOLD');

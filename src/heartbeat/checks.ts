@@ -6,7 +6,8 @@ import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
  * Each pings its OWN check on its OWN cadence; a shared check is deliberately impossible
  * because a single green light would mask a dead cron.
  */
-export type HeartbeatComponent = 'worker' | 'reconciliation-cron' | 'retention-cron';
+export type HeartbeatComponent =
+  'worker' | 'reconciliation-cron' | 'retention-cron' | 'evaluation-cron';
 
 /**
  * SINGLE source of truth mapping a component to its own check-URL config variable. This is
@@ -17,6 +18,7 @@ const CHECK_URL_VAR = {
   worker: 'WORKER_CHECK_URL',
   'reconciliation-cron': 'RECONCILIATION_CHECK_URL',
   'retention-cron': 'RETENTION_CHECK_URL',
+  'evaluation-cron': 'EVALUATION_CHECK_URL',
 } as const satisfies Record<HeartbeatComponent, keyof Config>;
 
 /** Environments where a component running unmonitored is a broken backstop: fail fast. */
