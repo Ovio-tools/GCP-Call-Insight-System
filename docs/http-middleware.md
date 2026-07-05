@@ -36,9 +36,13 @@ Production wiring builds Redis clients with `createRedisClient(url)` and passes
 
 - **Task 3.2 (Dialpad webhook) & Task 12.1 (ServiceTitan webhook)** — the provider specifics
   passed to `registerWebhook`: `verifySignature` (built from `hmacSha256Hex` /
-  `timingSafeEqualHex` or the provider's scheme), `extractEventId`, and `extractTimestamp`
-  (all three are required, so replay/freshness can never be omitted), plus the handler that
-  minimizes and stores the event. The toolkit owns wiring signature/replay/timestamp/rate
+  `timingSafeEqualHex` or the provider's scheme), `extractEventId`, and `extractTimestamp`,
+  plus the handler that minimizes and stores the event. `verifySignature` and `extractEventId`
+  are always required (signature + replay can never be omitted). `extractTimestamp` is
+  **optional**: omit it ONLY for a provider that does not sign a timestamp — the requirement is
+  to validate the timestamp _where supported_. When omitted, the freshness gate is skipped and
+  replay + the body-size limit remain the guards; every provider that signs a timestamp must
+  pass it. The toolkit owns wiring signature/replay/timestamp/rate
   limiting/hardening/errors. NB ServiceTitan auth is conditional (Task 12.0) — if HMAC is
   unavailable, supply the documented alternative `verifySignature`.
 - **Task 6.2 (review), 7.3 (status), 10.1 (knowledge-base)** — their routes and any
