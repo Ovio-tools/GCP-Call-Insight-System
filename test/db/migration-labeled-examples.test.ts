@@ -17,6 +17,27 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
   let app!: Pool;
 
   const CALL = 'mig016-call';
+  // Valid task-shaped expected_output payloads (the DB CHECK enforces shape + controlled values).
+  const VALID_EXTRACT =
+    '{"call_intent":"general","service_category":"other","urgency":"routine","sentiment":"neutral"}';
+  const VALID_CLASSIFY = '{"bucket":"spam"}';
+  const PERMISSION_DENIED = '42501';
+
+  /** Run `sql` as `role` in a rolled-back tx; returns the SQLSTATE on failure, else undefined. */
+  async function runAs(role: string, sql: string): Promise<string | undefined> {
+    const client = await owner.connect();
+    try {
+      await client.query('BEGIN');
+      await client.query(`SET LOCAL ROLE ${role}`);
+      await client.query(sql);
+      return undefined;
+    } catch (err) {
+      return (err as { code?: string }).code;
+    } finally {
+      await client.query('ROLLBACK').catch(() => undefined);
+      client.release();
+    }
+  }
 
   async function seedActionAndReview(
     pool: Pool,
@@ -74,10 +95,10 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
           redacted_input, expected_output, source_prompt_version, prompt_version_source,
           source_schema_version, model_id, model_id_source, eval_set_version, pii_gate_version)
        VALUES ($1, 'extract', $2, $3, 'schema_invalid', 'mig016', 'redacted text',
-               '{"call_intent":"general"}'::jsonb, 'extract-v1', 'current_constant',
+               $4::jsonb, 'extract-v1', 'current_constant',
                1, NULL, 'none', 1, 1)
        RETURNING created_at, source_schema_version`,
-      [actionId, reviewId, CALL],
+      [actionId, reviewId, CALL, VALID_EXTRACT],
     );
     expect(row.rows[0]!.created_at).toBeInstanceOf(Date);
     expect(row.rows[0]!.source_schema_version).toBe(1);
@@ -92,8 +113,8 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
            (operator_action_id, task_type, review_queue_id, call_id, held_reason, reviewer_actor,
             redacted_input, expected_output, source_prompt_version, prompt_version_source,
             model_id_source, eval_set_version, pii_gate_version)
-         VALUES ($1, $4, $2, $3, 'schema_invalid', 'mig016', 'x', '{}'::jsonb, 'v', $5, $6, 1, 1)`,
-        [actionId, reviewId, CALL, taskType, pvSource, modelSource],
+         VALUES ($1, $4, $2, $3, 'schema_invalid', 'mig016', 'x', $7::jsonb, 'v', $5, $6, 1, 1)`,
+        [actionId, reviewId, CALL, taskType, pvSource, modelSource, VALID_EXTRACT],
       );
     await expect(insert('bogus', 'current_constant', 'none')).rejects.toThrow();
     await expect(insert('extract', 'bogus', 'none')).rejects.toThrow();
@@ -109,9 +130,9 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
            (operator_action_id, task_type, review_queue_id, call_id, held_reason, reviewer_actor,
             redacted_input, expected_output, source_prompt_version, prompt_version_source,
             model_id_source, eval_set_version, pii_gate_version)
-         VALUES ($1, 'extract', $2, $3, 'schema_invalid', 'mig016', 'x', '{}'::jsonb, 'v',
+         VALUES ($1, 'extract', $2, $3, 'schema_invalid', 'mig016', 'x', $5::jsonb, 'v',
                  'current_constant', 'none', 1, $4)`,
-        [actionId, reviewId, CALL, piiGate],
+        [actionId, reviewId, CALL, piiGate, VALID_EXTRACT],
       );
     await insert(1);
     // Same (operator_action_id, task_type, pii_gate_version=1, eval_set_version=1) → conflict.
@@ -167,6 +188,46 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
     await owner.query(`DELETE FROM evaluation_reports WHERE eval_set_version = 1`);
   });
 
+  it('enforces the expected_output shape + controlled values by task_type', async () => {
+    const { reviewId, actionId } = await seedActionAndReview(owner, CALL);
+    const insert = (taskType: string, payload: string, piiGate: number): Promise<unknown> =>
+      owner.query(
+        `INSERT INTO labeled_examples
+           (operator_action_id, task_type, review_queue_id, call_id, held_reason, reviewer_actor,
+            redacted_input, expected_output, source_prompt_version, prompt_version_source,
+            model_id_source, eval_set_version, pii_gate_version)
+         VALUES ($1, $4, $2, $3, 'schema_invalid', 'mig016', 'x', $5::jsonb, 'v',
+                 'current_constant', 'none', 1, $6)`,
+        [actionId, reviewId, CALL, taskType, payload, piiGate],
+      );
+    // Valid classify + extract shapes accepted.
+    await expect(insert('classify', VALID_CLASSIFY, 1)).resolves.toBeDefined();
+    await expect(insert('extract', VALID_EXTRACT, 2)).resolves.toBeDefined();
+    // classify carrying extract enums → rejected.
+    await expect(insert('classify', VALID_EXTRACT, 3)).rejects.toThrow();
+    // extract carrying a bucket → rejected.
+    await expect(insert('extract', VALID_CLASSIFY, 4)).rejects.toThrow();
+    // extract missing a controlled field → rejected.
+    await expect(
+      insert(
+        'extract',
+        '{"call_intent":"general","service_category":"other","urgency":"routine"}',
+        5,
+      ),
+    ).rejects.toThrow();
+    // invalid controlled enum value → rejected.
+    await expect(
+      insert(
+        'extract',
+        '{"call_intent":"general","service_category":"other","urgency":"nope","sentiment":"neutral"}',
+        6,
+      ),
+    ).rejects.toThrow();
+    // classify with an out-of-vocabulary bucket → rejected.
+    await expect(insert('classify', '{"bucket":"held"}', 7)).rejects.toThrow();
+    await cleanup();
+  });
+
   it('grants app_role SELECT/INSERT but NOT UPDATE/DELETE on all three tables', async () => {
     const { reviewId, actionId } = await seedActionAndReview(owner, CALL);
     const ins = await app.query<{ id: string }>(
@@ -174,9 +235,9 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
          (operator_action_id, task_type, review_queue_id, call_id, held_reason, reviewer_actor,
           redacted_input, expected_output, source_prompt_version, prompt_version_source,
           model_id_source, eval_set_version, pii_gate_version)
-       VALUES ($1, 'extract', $2, $3, 'schema_invalid', 'mig016', 'x', '{}'::jsonb, 'v',
+       VALUES ($1, 'extract', $2, $3, 'schema_invalid', 'mig016', 'x', $4::jsonb, 'v',
                'current_constant', 'none', 1, 1) RETURNING id`,
-      [actionId, reviewId, CALL],
+      [actionId, reviewId, CALL, VALID_EXTRACT],
     );
     const id = ins.rows[0]!.id;
     await expect(
@@ -186,6 +247,28 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
       app.query(`UPDATE labeled_examples SET reviewer_actor = 'x' WHERE id = $1`, [id]),
     ).rejects.toThrow();
     await expect(app.query(`DELETE FROM labeled_examples WHERE id = $1`, [id])).rejects.toThrow();
+
+    // labeled_example_rejections: app_role SELECT/INSERT, never UPDATE/DELETE.
+    const rej = await app.query<{ id: string }>(
+      `INSERT INTO labeled_example_rejections
+         (operator_action_id, task_type, review_queue_id, call_id, held_reason,
+          rejection_reason, rejection_counts, eval_set_version, pii_gate_version)
+       VALUES ($1, 'extract', $2, $3, 'schema_invalid', 'schema', NULL, 1, 1) RETURNING id`,
+      [actionId, reviewId, CALL],
+    );
+    const rejId = rej.rows[0]!.id;
+    await expect(
+      app.query(`SELECT id FROM labeled_example_rejections WHERE id = $1`, [rejId]),
+    ).resolves.toBeDefined();
+    await expect(
+      app.query(`UPDATE labeled_example_rejections SET rejection_reason = 'pii' WHERE id = $1`, [
+        rejId,
+      ]),
+    ).rejects.toThrow();
+    await expect(
+      app.query(`DELETE FROM labeled_example_rejections WHERE id = $1`, [rejId]),
+    ).rejects.toThrow();
+
     // evaluation_reports: insert allowed, update/delete denied.
     const er = await app.query<{ id: string }>(
       `INSERT INTO evaluation_reports
@@ -197,7 +280,25 @@ describe.skipIf(!hasTestDb)('migration 016 — labeled examples', () => {
     await expect(
       app.query(`UPDATE evaluation_reports SET status = 'partial' WHERE id = $1`, [er.rows[0]!.id]),
     ).rejects.toThrow();
+    await expect(
+      app.query(`DELETE FROM evaluation_reports WHERE id = $1`, [er.rows[0]!.id]),
+    ).rejects.toThrow();
     await owner.query(`DELETE FROM evaluation_reports WHERE eval_set_version = 1`);
     await cleanup();
+  });
+
+  it('denies restricted_role and purge_role all access to the three new tables', async () => {
+    for (const role of ['restricted_role', 'purge_role']) {
+      for (const table of [
+        'labeled_examples',
+        'labeled_example_rejections',
+        'evaluation_reports',
+      ]) {
+        // SELECT is denied (no grant to these roles → 42501).
+        expect(await runAs(role, `SELECT 1 FROM ${table} LIMIT 1`)).toBe(PERMISSION_DENIED);
+        // DELETE is denied too (only app_role has DML, and only SELECT/INSERT).
+        expect(await runAs(role, `DELETE FROM ${table}`)).toBe(PERMISSION_DENIED);
+      }
+    }
   });
 });

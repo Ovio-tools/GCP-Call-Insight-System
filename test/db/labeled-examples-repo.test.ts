@@ -166,7 +166,18 @@ describe.skipIf(!hasTestDb)('labeled-examples repositories (Task 6.3)', () => {
       status: 'complete',
       skipReason: 'none',
       generatedAt: new Date('2026-07-05T00:00:00.000Z'),
-      summary: { byTaskType: { classify: { total: 1, correct: 1 } } },
+      summary: {
+        byTaskType: {
+          classify: {
+            metric: 'classify_bucket_accuracy',
+            total: 1,
+            correct: 1,
+            incorrect: 0,
+            accuracy: 1,
+          },
+        },
+        byGroup: [],
+      },
       failures: [],
       examplesEvaluated: 1,
       examplesSkipped: 0,

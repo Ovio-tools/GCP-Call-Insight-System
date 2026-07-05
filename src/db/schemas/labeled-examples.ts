@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { CLASSIFY_BUCKETS } from '../../anthropic/client.js';
 import {
   callIntentSchema,
   heldReasonSchema,
@@ -21,8 +20,17 @@ export type LabeledTaskType = z.infer<typeof labeledTaskTypeSchema>;
 export const promptVersionSourceSchema = z.enum(['model_invocations', 'current_constant', 'none']);
 export const modelIdSourceSchema = z.enum(['model_invocations', 'none']);
 
+/**
+ * The three classify buckets a reviewer decision can assert as GROUND TRUTH. Deliberately NOT the
+ * four wire buckets: a label never carries `held` (that is the classifier's own uncertainty, not a
+ * reviewer verdict). The mutually-exclusive reviewer actions map onto exactly these three.
+ */
+export const LABEL_CLASSIFY_BUCKETS = ['customer', 'non-customer', 'spam'] as const;
+
 /** A classify label's expected output — the reviewer-derived bucket only. */
-export const expectedClassifyOutputSchema = z.object({ bucket: z.enum(CLASSIFY_BUCKETS) }).strict();
+export const expectedClassifyOutputSchema = z
+  .object({ bucket: z.enum(LABEL_CLASSIFY_BUCKETS) })
+  .strict();
 /** An extract label's expected output — the four reviewer-correctable controlled enums only. */
 export const expectedExtractOutputSchema = z
   .object({
@@ -62,21 +70,37 @@ export const labeledExampleRowSchema = z.object({
 });
 export type LabeledExampleRow = z.infer<typeof labeledExampleRowSchema>;
 
-export const insertLabeledExampleSchema = z.object({
-  operatorActionId: z.string().uuid(),
-  taskType: labeledTaskTypeSchema,
-  reviewQueueId: z.string().uuid(),
-  callId: z.string().min(1),
-  heldReason: heldReasonSchema,
-  reviewerActor: z.string().min(1),
-  redactedInput: z.string(),
-  expectedOutput: expectedOutputSchema,
-  sourcePromptVersion: z.string().min(1),
-  promptVersionSource: promptVersionSourceSchema,
-  sourceSchemaVersion: z.number().int().nullable().optional(),
-  modelId: z.string().nullable().optional(),
-  modelIdSource: modelIdSourceSchema,
-  evalSetVersion: z.number().int(),
-  piiGateVersion: z.number().int(),
-});
+export const insertLabeledExampleSchema = z
+  .object({
+    operatorActionId: z.string().uuid(),
+    taskType: labeledTaskTypeSchema,
+    reviewQueueId: z.string().uuid(),
+    callId: z.string().min(1),
+    heldReason: heldReasonSchema,
+    reviewerActor: z.string().min(1),
+    redactedInput: z.string(),
+    expectedOutput: expectedOutputSchema,
+    sourcePromptVersion: z.string().min(1),
+    promptVersionSource: promptVersionSourceSchema,
+    sourceSchemaVersion: z.number().int().nullable().optional(),
+    modelId: z.string().nullable().optional(),
+    modelIdSource: modelIdSourceSchema,
+    evalSetVersion: z.number().int(),
+    piiGateVersion: z.number().int(),
+  })
+  // The `expected_output` shape must match the `task_type`: a classify label is exactly `{bucket}`
+  // (controlled), an extract label exactly the four controlled enums. Without this correlation the
+  // union would let a classify row store extract enums (or vice versa), which `runEvaluation` and
+  // the fixture export would then mis-read. The DB CHECK mirrors this as defense-in-depth.
+  .superRefine((v, ctx) => {
+    const shape =
+      v.taskType === 'classify' ? expectedClassifyOutputSchema : expectedExtractOutputSchema;
+    if (!shape.safeParse(v.expectedOutput).success) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['expectedOutput'],
+        message: `expected_output does not match task_type '${v.taskType}'`,
+      });
+    }
+  });
 export type InsertLabeledExampleInput = z.infer<typeof insertLabeledExampleSchema>;

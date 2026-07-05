@@ -79,6 +79,33 @@ exports.up = (pgm) => {
   pgm.addConstraint(EXAMPLES, `${EXAMPLES}_task_type_chk`, {
     check: "task_type IN ('classify', 'extract')",
   });
+  // The expected_output JSON shape + controlled values must match the task_type (defense-in-depth
+  // mirroring the insert schema, so even a raw-SQL writer can't store a classify bucket on an
+  // extract row or an invalid enum). A classify label is a single `bucket` in the three reviewer-
+  // assertable values (never `held`); an extract label carries exactly the four controlled enums.
+  // enum_range() covers the two pg-enum fields; service_category/sentiment are text+CHECK vocabs,
+  // listed inline (same convention as migration 9's extraction CHECKs).
+  // The `? 'bucket'` / `?&` key-existence guards are load-bearing: without them a missing key makes
+  // `expected_output->>'key'` NULL and the whole expression evaluate to NULL, which a CHECK treats
+  // as SATISFIED (only FALSE violates). Requiring the keys first forces a real TRUE/FALSE verdict.
+  pgm.addConstraint(EXAMPLES, `${EXAMPLES}_expected_output_shape_chk`, {
+    check: `
+      (task_type = 'classify'
+        AND expected_output ? 'bucket'
+        AND expected_output->>'bucket' IN ('customer', 'non-customer', 'spam'))
+      OR
+      (task_type = 'extract'
+        AND expected_output ?& array['call_intent', 'service_category', 'urgency', 'sentiment']
+        AND (expected_output->>'call_intent') = ANY(enum_range(NULL::call_intent)::text[])
+        AND (expected_output->>'urgency') = ANY(enum_range(NULL::urgency)::text[])
+        AND (expected_output->>'service_category') = ANY(ARRAY[
+          'water_heater', 'drain_blockage', 'leak_detection_or_repair', 'sewer_or_septic',
+          'toilet', 'faucet_sink_or_fixture', 'shower_or_tub', 'gas_line',
+          'sump_pump_or_drainage', 'water_quality_or_treatment', 'repipe_or_pipe_repair',
+          'appliance_install_or_hookup', 'inspection_or_maintenance', 'other'])
+        AND (expected_output->>'sentiment') = ANY(ARRAY[
+          'positive', 'neutral', 'negative', 'frustrated']))`,
+  });
   pgm.addConstraint(EXAMPLES, `${EXAMPLES}_prompt_version_source_chk`, {
     check: "prompt_version_source IN ('model_invocations', 'current_constant', 'none')",
   });

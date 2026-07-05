@@ -3,7 +3,6 @@ import type { Logger } from 'pino';
 import { loadConfig } from '../config/index.js';
 import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
 import type { Config } from '../config/schema.js';
-import type { JsonValue } from '../db/types.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { createAppPool } from '../db/index.js';
@@ -21,7 +20,11 @@ import {
 } from '../anthropic/client.js';
 import { listAcceptedExamples } from '../db/repositories/labeled-examples-repo.js';
 import { insertEvaluationReport } from '../db/repositories/evaluation-reports-repo.js';
-import type { EvaluationMode } from '../db/schemas/evaluation-reports.js';
+import type {
+  EvaluationFailureSample,
+  EvaluationMode,
+  EvaluationSummary,
+} from '../db/schemas/evaluation-reports.js';
 import { syncLabeledExamples } from '../evaluation/sync.js';
 import {
   type ClassifyPredictor,
@@ -59,8 +62,10 @@ export interface EvaluationRunJobDeps {
     classifyPredictor: ClassifyPredictor;
     extractPredictor: ExtractPredictor;
   };
-  /** Injectable label-sync safety net (defaults to `syncLabeledExamples`). */
-  syncLabels?: () => Promise<void>;
+  /** Injectable label-sync safety net (defaults to `syncLabeledExamples`). Returns the sync's
+   * operational-failure count so a nonzero `failed` aborts the run before any evaluation/report/ping
+   * — the same signal the reconciliation cron gates its heartbeat on. */
+  syncLabels?: () => Promise<{ failed: number }>;
   /** CLI-only preview: compute + return the report but persist NOTHING and never ping. */
   dryRun?: boolean;
 }
@@ -92,13 +97,24 @@ export async function runEvaluationJob(
     );
   }
 
-  // Safety-net sync (the reconciliation cron already runs it every 15 min).
+  // Safety-net sync (the reconciliation cron already runs it every 15 min). A sync operational
+  // failure means the corpus may be quietly incomplete, so abort BEFORE evaluating/persisting/
+  // pinging — a report over a half-captured corpus must never look complete, and the missed check
+  // is the alert (mirrors the reconciliation cron's `SyncSummary.failed` heartbeat gate).
   const syncLabels =
     deps.syncLabels ??
     (async () => {
-      await syncLabeledExamples(pool, { denyTerms: deps.denyTerms, logger });
+      const summary = await syncLabeledExamples(pool, { denyTerms: deps.denyTerms, logger });
+      return { failed: summary.failed };
     });
-  await syncLabels();
+  const { failed } = await syncLabels();
+  if (failed > 0) {
+    logger.error(
+      { component: 'evaluation-cron', failed },
+      'label sync reported operational failures — aborting the evaluation run (no report, no ping)',
+    );
+    throw new Error(`evaluation-run: label sync failed for ${failed} candidate(s) — run aborted`);
+  }
 
   const examples = await listAcceptedExamples(pool);
   const report = await runEvaluation({
@@ -134,12 +150,16 @@ export async function runEvaluationJob(
     status: report.status,
     skipReason: report.skip_reason,
     generatedAt: report.generated_at,
-    // JSON round-trip to a plain JsonValue (the metric objects carry readonly-array coverage
-    // metadata that is not structurally a mutable JsonValue). Grouped counts only — no content.
+    // Grouped counts only — validated against the strict `evaluationSummarySchema` at insert. The
+    // JSON round-trip normalizes the metric objects' readonly-array coverage metadata to plain
+    // arrays; the cast is safe because `insertEvaluationReport` re-parses the shape.
     summary: JSON.parse(
       JSON.stringify({ byTaskType: report.byTaskType, byGroup: report.byGroup }),
-    ) as JsonValue,
-    failures: report.failures,
+    ) as EvaluationSummary,
+    // The runner only ever emits controlled bucket/enum values here; the cast narrows the loose
+    // runner type to the strict schema type, and `insertEvaluationReport`'s parse re-validates it —
+    // any genuinely uncontrolled value would be rejected at insert.
+    failures: report.failures as EvaluationFailureSample[],
     examplesEvaluated: report.examples_evaluated,
     examplesSkipped: report.examples_skipped,
   });

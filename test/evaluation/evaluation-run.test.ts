@@ -119,7 +119,7 @@ describe.skipIf(!hasTestDb)('runEvaluationJob (Task 6.3)', () => {
       ping,
       denyTerms: [],
       predictors: { mode: 'live', classifyPredictor: spamClassify, extractPredictor: NOOP_EXTRACT },
-      syncLabels: async () => {},
+      syncLabels: () => Promise.resolve({ failed: 0 }),
     });
     expect(report).toBeNull();
     expect(await reportCount()).toBe(0);
@@ -145,9 +145,35 @@ describe.skipIf(!hasTestDb)('runEvaluationJob (Task 6.3)', () => {
           classifyPredictor: spamClassify,
           extractPredictor: NOOP_EXTRACT,
         },
-        syncLabels: async () => {},
+        syncLabels: () => Promise.resolve({ failed: 0 }),
       }),
     ).rejects.toBeInstanceOf(ConfigError);
+    expect(await reportCount()).toBe(0);
+    expect(calls).toHaveLength(0);
+  });
+
+  it('aborts (no report, no ping) when the safety-net sync reports operational failures', async () => {
+    await seedClassify(`${P}a`, 'a');
+    const { ping, calls } = fakePing();
+    await expect(
+      runEvaluationJob(app, {
+        config: makeTestConfig({
+          EVALUATION_RUN_ENABLED: true,
+          EVALUATION_LIVE_MODE: true,
+          EVALUATION_CHECK_URL: 'https://checks.example.com/eval',
+        }),
+        logger: silentLogger(),
+        now: () => NOW,
+        ping,
+        denyTerms: [],
+        predictors: {
+          mode: 'live',
+          classifyPredictor: spamClassify,
+          extractPredictor: NOOP_EXTRACT,
+        },
+        syncLabels: () => Promise.resolve({ failed: 1 }),
+      }),
+    ).rejects.toThrow(/label sync failed/i);
     expect(await reportCount()).toBe(0);
     expect(calls).toHaveLength(0);
   });
@@ -167,7 +193,7 @@ describe.skipIf(!hasTestDb)('runEvaluationJob (Task 6.3)', () => {
       ping,
       denyTerms: [],
       predictors: { mode: 'live', classifyPredictor: spamClassify, extractPredictor: NOOP_EXTRACT },
-      syncLabels: async () => {},
+      syncLabels: () => Promise.resolve({ failed: 0 }),
     });
     expect(report?.status).toBe('complete');
     const row = await owner.query<Record<string, unknown>>(
@@ -203,7 +229,7 @@ describe.skipIf(!hasTestDb)('runEvaluationJob (Task 6.3)', () => {
       ping,
       denyTerms: [],
       predictors: { mode: 'live', classifyPredictor: capping, extractPredictor: NOOP_EXTRACT },
-      syncLabels: async () => {},
+      syncLabels: () => Promise.resolve({ failed: 0 }),
     });
     expect(report?.status).toBe('partial');
     expect(calls).toHaveLength(0);
@@ -227,7 +253,7 @@ describe.skipIf(!hasTestDb)('runEvaluationJob (Task 6.3)', () => {
         classifyPredictor: spamClassify,
         extractPredictor: NOOP_EXTRACT,
       },
-      syncLabels: async () => {},
+      syncLabels: () => Promise.resolve({ failed: 0 }),
     });
     const row = await owner.query<{ mode: string }>(
       `SELECT mode FROM evaluation_reports WHERE eval_set_version = $1`,
@@ -251,7 +277,7 @@ describe.skipIf(!hasTestDb)('runEvaluationJob (Task 6.3)', () => {
       ping,
       denyTerms: [],
       predictors: { mode: 'live', classifyPredictor: spamClassify, extractPredictor: NOOP_EXTRACT },
-      syncLabels: async () => {},
+      syncLabels: () => Promise.resolve({ failed: 0 }),
       dryRun: true,
     });
     expect(report?.status).toBe('complete');
