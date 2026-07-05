@@ -972,6 +972,28 @@ Add a key-store deletion-semantics test or checklist: destroy or schedule destru
 **Security**
 - The deletion promise is honest and reaches backups, because the key material was never in the backed-up database. Crypto-shredding counts once the external key material is destroyed, and the procedure makes explicit what becomes permanently unrecoverable.
 
+**Scope delivered / not delivered (see `docs/task-8-2b-production-kms.md`).** Task 8.2 delivers the
+key hierarchy, lifecycle (rotation + DEK/KEK revocation, gated and audited), the crypto-shred
+launch gate, the restore drill, and the automatable tests **for dev + staging only**, backed by a
+reference external key store (`LocalFileKeyStore`). It does **not** make production live-processing
+ready.
+
+#### Task 8.2b: Production KMS provider + real-KMS deletion-semantics verification
+
+**Depends on: 8.2. BLOCKING for the §6.1 launch gates on live processing** — Task 8.2 is NOT
+complete against the production launch gates until 8.2b lands.
+
+```text
+Replace LocalFileKeyStore with a real external KMS/secret-store KeyStore implementation for
+production and verify its deletion semantics against reality. Deliverables (see
+docs/task-8-2b-production-kms.md): a production KeyStore implementing the same interface; the
+CRYPTO_KEY_PROVIDER=kms branch (currently throws); the real-KMS deletion-semantics confirmation
+(pending-deletion window elapsed, no replica/HSM-backup/version-history restore path, approval
+sign-off, all DEK-caching services restarted); the launch gate's "production requires a verified
+external KMS" check flipped from "always fail in production" to "pass once the verified KMS is
+configured"; and the full staging→production restore drill end-to-end.
+```
+
 ---
 
 ### Phase 9: Public endpoint security audit

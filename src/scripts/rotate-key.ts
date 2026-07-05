@@ -41,7 +41,9 @@ export async function main(): Promise<void> {
     throw new Error('rotate-key requires CRYPTO_KEY_PROVIDER=keystore');
   }
   if (!config.CRYPTO_KEY_DESTROY_COMMANDS_ENABLED) {
-    throw new Error('rotate-key is disabled (set CRYPTO_KEY_DESTROY_COMMANDS_ENABLED=true to enable)');
+    throw new Error(
+      'rotate-key is disabled (set CRYPTO_KEY_DESTROY_COMMANDS_ENABLED=true to enable)',
+    );
   }
   if (values.confirm !== CONFIRM_PHRASE) {
     throw new Error(`rotate-key: pass --confirm ${CONFIRM_PHRASE} to authorize the rotation`);

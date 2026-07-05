@@ -74,7 +74,9 @@ describe.skipIf(!hasTestDb)('key-lifecycle privacy (no PII / key bytes on abort)
       expect(message).not.toContain(dekBytes);
 
       // The lifecycle audit rows carry only sanitized metadata (actor + counts), never content.
-      const events = await owner.query(`SELECT * FROM key_lifecycle_events WHERE actor = 'kl-actor'`);
+      const events = await owner.query(
+        `SELECT * FROM key_lifecycle_events WHERE actor = 'kl-actor'`,
+      );
       const serialized = JSON.stringify(events.rows);
       expect(serialized).not.toMatch(/123-45-6789|Jane Doe|SSN/);
       expect(serialized).not.toContain(dekBytes);

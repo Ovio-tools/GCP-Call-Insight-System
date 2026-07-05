@@ -40,9 +40,7 @@ export async function seedIsolatedActiveKey(
     [kekVersion, `kek:${kekVersion}`],
   );
   const v = (
-    await owner.query<{ n: number }>(
-      `SELECT COALESCE(MAX(key_version),0)+1 AS n FROM key_versions`,
-    )
+    await owner.query<{ n: number }>(`SELECT COALESCE(MAX(key_version),0)+1 AS n FROM key_versions`)
   ).rows[0]!.n;
   await store.createDek({ keyVersion: v, kekVersion });
   await owner.query(

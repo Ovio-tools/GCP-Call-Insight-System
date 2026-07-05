@@ -6,7 +6,12 @@ import { join } from 'node:path';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
 import { makeTestConfig } from '../_config.js';
 import { checkLaunchGate } from '../../src/key-lifecycle/launch-gate.js';
-import { KL_KEK_PREFIX, cleanupKeyLifecycle, makeStoreProvider, seedIsolatedActiveKey } from './_helpers.js';
+import {
+  KL_KEK_PREFIX,
+  cleanupKeyLifecycle,
+  makeStoreProvider,
+  seedIsolatedActiveKey,
+} from './_helpers.js';
 
 let seq = 0;
 
@@ -47,7 +52,9 @@ describe.skipIf(!hasTestDb)('checkLaunchGate', () => {
       await seedIsolatedActiveKey(owner, store, kek);
       // A version marked destroyed in the DB, but its DEK material is still in the store.
       const v = (
-        await owner.query<{ n: number }>(`SELECT COALESCE(MAX(key_version),0)+1 AS n FROM key_versions`)
+        await owner.query<{ n: number }>(
+          `SELECT COALESCE(MAX(key_version),0)+1 AS n FROM key_versions`,
+        )
       ).rows[0]!.n;
       await store.createDek({ keyVersion: v, kekVersion: kek });
       await owner.query(
@@ -71,7 +78,9 @@ describe.skipIf(!hasTestDb)('checkLaunchGate', () => {
       const { store } = makeStoreProvider(dir, owner);
       await seedIsolatedActiveKey(owner, store, kek);
       const v = (
-        await owner.query<{ n: number }>(`SELECT COALESCE(MAX(key_version),0)+1 AS n FROM key_versions`)
+        await owner.query<{ n: number }>(
+          `SELECT COALESCE(MAX(key_version),0)+1 AS n FROM key_versions`,
+        )
       ).rows[0]!.n;
       await owner.query(
         `INSERT INTO key_versions

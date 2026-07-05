@@ -1,10 +1,6 @@
 import type { Queryable } from '../db/types.js';
 import type { KeyStore } from '../crypto/key-store.js';
-import {
-  getActiveKek,
-  insertKek,
-  updateKekStatus,
-} from '../db/repositories/kek-versions-repo.js';
+import { getActiveKek, insertKek, updateKekStatus } from '../db/repositories/kek-versions-repo.js';
 import { insertLifecycleEvent } from '../db/repositories/key-lifecycle-events-repo.js';
 
 export interface RotateKekArgs {

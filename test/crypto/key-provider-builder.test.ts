@@ -32,7 +32,10 @@ describe('buildKeyProvider', () => {
   });
 
   it('builds a KeyStoreProvider for the keystore provider (injected store)', () => {
-    const keyStore = new LocalFileKeyStore({ dir: mkdtempSync(join(tmpdir(), 'b-')), recoveryWindowDays: 0 });
+    const keyStore = new LocalFileKeyStore({
+      dir: mkdtempSync(join(tmpdir(), 'b-')),
+      recoveryWindowDays: 0,
+    });
     const provider = buildKeyProvider({
       config: cfg({ CRYPTO_KEY_PROVIDER: 'keystore' }),
       pool: activePool,

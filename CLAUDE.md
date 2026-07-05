@@ -218,7 +218,9 @@ residual PII in a model-extracted verbatim phrase — a post-egress hit),
 `MODEL_COST_WARNING_THRESHOLD_EXCEEDED` (Task 7.2: an advisory, non-blocking alert emitted at
 most once per UTC day when estimated daily model spend crosses
 `DAILY_MODEL_COST_CAP_USD * DAILY_MODEL_COST_WARNING_THRESHOLD_RATIO` — distinct from the
-hard-cap `MODEL_COST_CAP_EXCEEDED`).
+hard-cap `MODEL_COST_CAP_EXCEEDED`), `KEY_ROTATION_FAILED` / `KEY_REVOCATION_FAILED` (Task 8.2:
+critical — a key rotation / emergency revocation aborted, so the crypto-shred promise for the old
+key material may be unmet; data is safe, the old key is NOT destroyed on the failure path).
 
 > The config loader in this scaffold already emits `CONFIG_MISSING_OR_INVALID` and
 > names the offending variable; it is the first member of this taxonomy.
@@ -273,7 +275,19 @@ bytes. `key_version` is recorded on every encrypted row. Rotation re-encrypts un
 a new DEK and destroys the old DEK material once re-encryption completes. Emergency
 revocation destroys the target DEK material or a KEK version, rendering affected
 rows unreadable everywhere including restored backups (the backup never contained
-the key material — crypto-shredding). Procedures: Task 8.2.
+the key material — crypto-shredding). The key lifecycle now exists (Task 8.2,
+`src/key-lifecycle/` + `src/crypto/key-store.ts`): the external `KeyStore` seam with the
+dev/staging-only `LocalFileKeyStore` reference (KEK bytes + wrapped DEK files, two-state
+recovery-windowed destruction), single-active DEK/KEK invariants (migration 016), DB-sourced
+active version, `bootstrap-key`/`rotate-kek`/`rotate-key`/`revoke-key`/`confirm-destruction`
+CLIs, the shared advisory lock + queue-safe maintenance pause (backstop `moveToDelayed`+
+`DelayedError`, never a burned retry), two-phase destruction (Phase A under lock releases before
+the recovery window; Phase B finalizer confirms `store.recoverability`), the column-scoped
+`key_admin_role` (never raw/vault), and the crypto-shred launch gate. See
+`docs/key-hierarchy.md`, `docs/backup-retention.md`, `docs/restore-drill.md`, and ADR
+`0005`. **Production live-processing is NOT unblocked**: the production KMS provider is the named
+blocking follow-up **Task 8.2b** (`docs/task-8-2b-production-kms.md`) — `keystore` is refused in
+production, `kms` still throws, and the launch gate fails in production without a verified KMS.
 
 **Model calls** — model IDs are configurable, never hardcoded. Every invocation
 records model ID and prompt version in `model_invocations`.

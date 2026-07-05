@@ -34,8 +34,7 @@ export interface CreateDekResult {
   wrappedRef: string;
 }
 export type RecoverabilityQuery =
-  | { type: 'dek'; keyVersion: number }
-  | { type: 'kek'; kekVersion: string };
+  { type: 'dek'; keyVersion: number } | { type: 'kek'; kekVersion: string };
 export interface Recoverability {
   /** Whether the key material can still be retrieved (unwrapped/read) right now. */
   recoverable: boolean;
@@ -91,7 +90,7 @@ interface KekMeta {
 /**
  * Reference {@link KeyStore} — dev/staging ONLY, never production. The directory is the external
  * secret store: the KEK bytes live in a strict-0600 file (legitimately — that is its job, and it
- * is outside Postgres backups) and each DEK is stored ONLY as AES-256-GCM-wrapped material. No key
+ * is outside Postgres backups) and each DEK is stored ONLY as wrapped (AES-256-GCM) material. No key
  * bytes ever touch Postgres, logs, errors, or lifecycle events. Production is Task 8.2b.
  */
 export class LocalFileKeyStore implements KeyStore {

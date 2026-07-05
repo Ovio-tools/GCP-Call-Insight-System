@@ -73,9 +73,9 @@ async function withLock<T>(pool: Pool, fn: (c: PoolClient) => Promise<T>): Promi
     try {
       return await fn(client);
     } finally {
-      await client.query('SELECT pg_advisory_unlock($1)', [RETENTION_ADVISORY_LOCK_KEY]).catch(
-        () => undefined,
-      );
+      await client
+        .query('SELECT pg_advisory_unlock($1)', [RETENTION_ADVISORY_LOCK_KEY])
+        .catch(() => undefined);
     }
   } finally {
     client.release();
@@ -111,7 +111,10 @@ export async function revokeDek(deps: RevokeDeps, keyVersion: number): Promise<R
         )
       )[0]?.status;
       if (!status) {
-        throw new KeyLifecycleError('KEY_REVOCATION_FAILED', `revoke: key_version ${keyVersion} not found`);
+        throw new KeyLifecycleError(
+          'KEY_REVOCATION_FAILED',
+          `revoke: key_version ${keyVersion} not found`,
+        );
       }
       if (status !== 'retired') {
         throw new KeyLifecycleError(
@@ -120,9 +123,16 @@ export async function revokeDek(deps: RevokeDeps, keyVersion: number): Promise<R
         );
       }
 
-      const affected = await countRecoverableAtVersion(deps.pool, deps.restrictedRunner, keyVersion);
+      const affected = await countRecoverableAtVersion(
+        deps.pool,
+        deps.restrictedRunner,
+        keyVersion,
+      );
       const recoveryWindowUntil = new Date(now().getTime() + windowDays * 24 * 60 * 60 * 1000);
-      await markDestroyRequested(client, keyVersion, { recoveryWindowUntil, approvalRef: justification });
+      await markDestroyRequested(client, keyVersion, {
+        recoveryWindowUntil,
+        approvalRef: justification,
+      });
       await deps.keyStore.destroyDek(keyVersion);
       await insertLifecycleEvent(client, {
         event: 'revoke_dek',

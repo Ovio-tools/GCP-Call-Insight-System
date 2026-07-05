@@ -116,14 +116,15 @@ export async function countRecoverableAtVersion(
       [oldVersion],
     )
   )[0]!.n;
-  const vault = await runner.run(async (client) =>
-    (
-      await query<{ n: number }>(
-        client,
-        `SELECT count(*)::int AS n FROM token_vault WHERE ${RECOVERABLE}`,
-        [oldVersion],
-      )
-    )[0]!.n,
+  const vault = await runner.run(
+    async (client) =>
+      (
+        await query<{ n: number }>(
+          client,
+          `SELECT count(*)::int AS n FROM token_vault WHERE ${RECOVERABLE}`,
+          [oldVersion],
+        )
+      )[0]!.n,
   );
   return { raw, vault, total: raw + vault };
 }

@@ -71,17 +71,17 @@ describe.skipIf(!hasTestDb)('key-versions-repo lifecycle', () => {
 
   it('allocateNextKeyVersion returns MAX+1 without inserting a row', async () => {
     await inTx(async (c) => {
-      const before = (
-        await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM key_versions`)
-      ).rows[0]!.n;
+      const before = (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM key_versions`))
+        .rows[0]!.n;
       const next = await allocateNextKeyVersion(c);
       const max = (
-        await c.query<{ m: number }>(`SELECT COALESCE(MAX(key_version),0)::int AS m FROM key_versions`)
+        await c.query<{ m: number }>(
+          `SELECT COALESCE(MAX(key_version),0)::int AS m FROM key_versions`,
+        )
       ).rows[0]!.m;
       expect(next).toBe(max + 1);
-      const after = (
-        await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM key_versions`)
-      ).rows[0]!.n;
+      const after = (await c.query<{ n: number }>(`SELECT count(*)::int AS n FROM key_versions`))
+        .rows[0]!.n;
       expect(after).toBe(before); // no row inserted
     });
   });

@@ -162,7 +162,10 @@ export async function markDestroyed(db: Queryable, keyVersion: number): Promise<
 }
 
 /** Every version wrapped by a given KEK — the KEK-revocation blast radius. */
-export async function listVersionsByKek(db: Queryable, kekVersion: string): Promise<KeyVersionRow[]> {
+export async function listVersionsByKek(
+  db: Queryable,
+  kekVersion: string,
+): Promise<KeyVersionRow[]> {
   const rows = await query<KeyVersionRow>(
     db,
     `SELECT * FROM key_versions WHERE kek_version = $1 ORDER BY key_version`,

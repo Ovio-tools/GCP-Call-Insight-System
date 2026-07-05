@@ -100,14 +100,16 @@ export async function finalizeDestruction(deps: FinalizeDeps): Promise<FinalizeR
       ])
     ).rows[0]?.ok;
     if (!locked) {
-      throw new Error('finalizeDestruction: another rotation/retention run holds the advisory lock');
+      throw new Error(
+        'finalizeDestruction: another rotation/retention run holds the advisory lock',
+      );
     }
     try {
       return await finalizeUnderLock(client, deps);
     } finally {
-      await client.query('SELECT pg_advisory_unlock($1)', [RETENTION_ADVISORY_LOCK_KEY]).catch(
-        () => undefined,
-      );
+      await client
+        .query('SELECT pg_advisory_unlock($1)', [RETENTION_ADVISORY_LOCK_KEY])
+        .catch(() => undefined);
     }
   } finally {
     client.release();

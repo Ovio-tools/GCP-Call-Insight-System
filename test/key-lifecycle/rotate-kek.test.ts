@@ -43,7 +43,11 @@ describe.skipIf(!hasTestDb)('rotateKek', () => {
       // Old active KEK with a DEK under it.
       await store.createKek({ kekVersion: 'kek-old' });
       await store.createDek({ keyVersion: 8801, kekVersion: 'kek-old' });
-      await insertKek(c, { kekVersion: 'kek-old', externalKekRef: 'kek:kek-old', status: 'active' });
+      await insertKek(c, {
+        kekVersion: 'kek-old',
+        externalKekRef: 'kek:kek-old',
+        status: 'active',
+      });
 
       const res = await rotateKek({
         db: c,

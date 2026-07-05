@@ -20,11 +20,7 @@ import type { LocalFileKeyStore } from '../../src/crypto/key-store.js';
 
 let seq = 0;
 
-async function seedRetiredKey(
-  owner: Pool,
-  store: LocalFileKeyStore,
-  kek: string,
-): Promise<number> {
+async function seedRetiredKey(owner: Pool, store: LocalFileKeyStore, kek: string): Promise<number> {
   const v = (
     await owner.query<{ n: number }>(`SELECT COALESCE(MAX(key_version),0)+1 AS n FROM key_versions`)
   ).rows[0]!.n;

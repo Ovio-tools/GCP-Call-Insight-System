@@ -61,7 +61,10 @@ export async function checkLaunchGate(deps: LaunchGateDeps): Promise<LaunchGateR
 
   // 2. Stalled destruction: requested, window elapsed, never finalized.
   const nowMs = now().getTime();
-  const stalledDeks = await query<{ key_version: number; destroy_recovery_window_until: Date | null }>(
+  const stalledDeks = await query<{
+    key_version: number;
+    destroy_recovery_window_until: Date | null;
+  }>(
     deps.pool,
     `SELECT key_version, destroy_recovery_window_until FROM key_versions
       WHERE destroy_requested_at IS NOT NULL AND destroyed_at IS NULL`,
@@ -74,7 +77,10 @@ export async function checkLaunchGate(deps: LaunchGateDeps): Promise<LaunchGateR
       );
     }
   }
-  const stalledKeks = await query<{ kek_version: string; destroy_recovery_window_until: Date | null }>(
+  const stalledKeks = await query<{
+    kek_version: string;
+    destroy_recovery_window_until: Date | null;
+  }>(
     deps.pool,
     `SELECT kek_version, destroy_recovery_window_until FROM kek_versions
       WHERE destroy_requested_at IS NOT NULL AND destroyed_at IS NULL`,

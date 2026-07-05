@@ -15,7 +15,11 @@ import {
 } from '../db/repositories/key-versions-repo.js';
 import { getActiveKek } from '../db/repositories/kek-versions-repo.js';
 import { insertLifecycleEvent } from '../db/repositories/key-lifecycle-events-repo.js';
-import { reencryptRawTranscripts, reencryptTokenVault, countRecoverableAtVersion } from './reencrypt.js';
+import {
+  reencryptRawTranscripts,
+  reencryptTokenVault,
+  countRecoverableAtVersion,
+} from './reencrypt.js';
 import { finalizeUnderLock } from './finalize-destruction.js';
 import type { MaintenanceController } from './maintenance-controller.js';
 import { KeyLifecycleError } from './errors.js';
@@ -92,9 +96,9 @@ export async function rotateKey(deps: RotateKeyDeps): Promise<RotateKeyResult> {
       );
       throw err;
     } finally {
-      await client.query('SELECT pg_advisory_unlock($1)', [RETENTION_ADVISORY_LOCK_KEY]).catch(
-        () => undefined,
-      );
+      await client
+        .query('SELECT pg_advisory_unlock($1)', [RETENTION_ADVISORY_LOCK_KEY])
+        .catch(() => undefined);
     }
   } finally {
     client.release();
@@ -154,9 +158,11 @@ async function runRotation(
 
   // Atomic active swap (retire old FIRST so the single-active index is never transiently violated).
   const status = (
-    await query<{ status: string }>(client, `SELECT status FROM key_versions WHERE key_version = $1`, [
-      newVersion,
-    ])
+    await query<{ status: string }>(
+      client,
+      `SELECT status FROM key_versions WHERE key_version = $1`,
+      [newVersion],
+    )
   )[0]?.status;
   if (status === 'rotating') {
     await client.query('BEGIN');

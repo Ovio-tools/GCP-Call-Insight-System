@@ -95,7 +95,10 @@ describe.skipIf(!hasTestDb)('bootstrapKey', () => {
       await expect(
         bootstrapKey({
           db: c,
-          keyStore: new LocalFileKeyStore({ dir: mkdtempSync(join(tmpdir(), 'b2-')), recoveryWindowDays: 0 }),
+          keyStore: new LocalFileKeyStore({
+            dir: mkdtempSync(join(tmpdir(), 'b2-')),
+            recoveryWindowDays: 0,
+          }),
           kekVersion: 'kek-boot-2',
           actor: 'ops',
           reason: 'again',

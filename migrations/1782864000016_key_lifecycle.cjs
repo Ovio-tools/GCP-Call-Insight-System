@@ -103,9 +103,7 @@ BEGIN
   END IF;
 END
 $$;`);
-  pgm.sql(
-    `CREATE UNIQUE INDEX ${KV_ACTIVE_IDX} ON key_versions (status) WHERE status = 'active';`,
-  );
+  pgm.sql(`CREATE UNIQUE INDEX ${KV_ACTIVE_IDX} ON key_versions (status) WHERE status = 'active';`);
 
   // --- 3. kek_versions: durable authoritative KEK state. ---
   pgm.createTable('kek_versions', {
@@ -126,7 +124,7 @@ $$;`);
     `CREATE UNIQUE INDEX ${KEK_ACTIVE_IDX} ON kek_versions (status) WHERE status = 'active';`,
   );
   pgm.sql(
-    "COMMENT ON COLUMN kek_versions.external_kek_ref IS " +
+    'COMMENT ON COLUMN kek_versions.external_kek_ref IS ' +
       "'External secret-store pointer/identifier for the KEK. NEVER the key bytes — no " +
       "recoverable key material lives in Postgres (crypto-shredding).';",
   );

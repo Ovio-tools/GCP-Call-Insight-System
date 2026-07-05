@@ -301,7 +301,8 @@ export const REMEDIATION_CATALOG: Record<ErrorCode, CatalogEntry> = {
       'An emergency DEK/KEK revocation aborted before the external material was confirmed unrecoverable. Rows under the target key may still be readable in the live DB and in backups.',
     remediationNow:
       'Investigate the revocation failure, re-run the finalizer (confirm-destruction), and verify recoverability is false for every affected version before declaring the shred complete.',
-    remediationFix: 'Add revocation-completion monitoring keyed off store.recoverability, not the DB flag.',
+    remediationFix:
+      'Add revocation-completion monitoring keyed off store.recoverability, not the DB flag.',
     dataSafe: true,
     callsState: 'none',
     owner: PLATFORM,
