@@ -71,9 +71,18 @@ ones record `model_invocations` + honor the cost cap/kill switch) into PII-free 
 (`mode` live|test_stub, status×skip_reason CHECK; `dry_run` is a CLI-only non-persisting preview);
 the `evaluation-cron` heartbeat pings `EVALUATION_CHECK_URL` only on a complete live run, and
 staging/prod `EVALUATION_RUN_ENABLED && !EVALUATION_LIVE_MODE` is fail-fast `CONFIG_MISSING_OR_INVALID`;
-real reviewed exports are gitignored, only synthetic reviewed fixtures are committed. The
-remaining surfaces (knowledge-base surface, ServiceTitan, backfill) and
-Task 8.2 crypto/restore do not yet exist. The NER model is vendored by
+real reviewed exports are gitignored, only synthetic reviewed fixtures are committed, and the
+consented staging sample-validation harness (Task 11.1, `src/sample-validation/` +
+`src/scripts/run-sample-validation.ts` + `src/scripts/mark-sample.ts`; see `docs/sample-validation.md`):
+the ONE §0.2 exception to synthetic-only — staging-only + no-production-resource guards, a bounded
+call-id-list/sample-size selection, a §0.2 consent-gate check (ServiceTitan matching consent required
+only when the run exercises that path) that blocks before any fetch/model/enqueue/pipeline/report,
+the FULL existing `runPipeline` (injected, never duplicated), a PII-free side-by-side report built
+only from de-identified stores (never `raw_transcripts`/`token_vault`, sentiment excluded, residual-
+gated), and `markSample`→`seedLabeledBaseline` seeding the Phase 6.3 corpus via the existing
+`syncLabeledExamples` (no duplicated label logic). The
+remaining work (the historical backfill runner Task 11.2, and the ServiceTitan write-back Phase 12)
+does not yet exist. The NER model is vendored by
 `npm run model:fetch` into `models/` (gitignored); model stages read ONLY
 `clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
