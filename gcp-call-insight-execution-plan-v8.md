@@ -1073,7 +1073,7 @@ Build a sample-validation harness. It runs a small batch of real calls through t
 
 #### Task 11.2: Historical backfill
 
-**Plan mode: YES. GATED on the signed data-processing addendum.**
+**Plan mode: YES. GATED on all section 0.2 processing, legal, and vendor-retention gates.**
 **Depends on: 11.1**
 
 ```text

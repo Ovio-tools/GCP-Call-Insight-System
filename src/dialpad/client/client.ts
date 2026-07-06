@@ -18,6 +18,11 @@ export interface RecentCall {
   state?: string;
   direction?: string;
   duration?: number;
+  /** Epoch ms the call STARTED, when Dialpad provides `date_started` in a parseable form.
+   * The reconciliation sweep ignores it; the backfill runner (Task 11.2) REQUIRES it as its
+   * scan/watermark axis (`started_after` pages by start time) and fails closed on a page with
+   * any unparseable start. Absent only for unrecognised formats. */
+  startedAt?: number;
   /** Epoch ms the call CONCLUDED, when Dialpad provides `date_ended` in a parseable form.
    * Absent for in-progress calls (no end yet) and for unrecognised formats — consumers must
    * fail open on absence (the field name is provisional; see schemas.ts). */
@@ -64,9 +69,10 @@ export interface CreateDialpadClientOptions {
 
 const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
-/** Parse Dialpad's `date_ended` (epoch ms number, numeric string, or ISO string) into epoch
- * ms; undefined when absent or unrecognisable — never a throw, the sweep fails open. */
-function parseEndedAt(raw: string | number | undefined): number | undefined {
+/** Parse a Dialpad timestamp (`date_started` / `date_ended`: epoch ms number, numeric string, or
+ * ISO string) into epoch ms; undefined when absent or unrecognisable — never a throw, so the
+ * sweep fails open. Shared by both start and end so the two axes parse identically. */
+function parseEpochMs(raw: string | number | undefined): number | undefined {
   if (raw === undefined) return undefined;
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined;
   const asNumber = Number(raw);
@@ -240,12 +246,14 @@ export function createDialpadClient(opts: CreateDialpadClientOptions): DialpadCl
       }
 
       const calls: RecentCall[] = parsed.data.items.map((item) => {
-        const endedAt = parseEndedAt(item.date_ended);
+        const startedAt = parseEpochMs(item.date_started);
+        const endedAt = parseEpochMs(item.date_ended);
         return {
           callId: String(item.call_id),
           ...(item.state !== undefined ? { state: item.state } : {}),
           ...(item.direction !== undefined ? { direction: item.direction } : {}),
           ...(item.duration !== undefined ? { duration: item.duration } : {}),
+          ...(startedAt !== undefined ? { startedAt } : {}),
           ...(endedAt !== undefined ? { endedAt } : {}),
         };
       });

@@ -9,9 +9,10 @@ import { hasTestDb, makePool, migrate } from './_pg.js';
  * Rolling back ABOVE migrations exposes the pre-012 schema (review_queue exists from migration 2,
  * without the partial unique index / CHECK). Bump ABOVE when a later migration is stacked on top:
  * 012 + 013 (retention purge grants, Task 8.1) + 014 (reveal_raw enum) + 015 (reprocess_requests,
- * Task 6.2) + 016 (labeled_examples, Task 6.3) + 017 (key lifecycle, Task 8.2) = 6.
+ * Task 6.2) + 016 (labeled_examples, Task 6.3) + 017 (key lifecycle, Task 8.2) + 018 (backfill run
+ * status, Task 11.2) = 7.
  */
-const ABOVE = 6;
+const ABOVE = 7;
 const PATTERN = 'test-rqau-%';
 
 describe.skipIf(!hasTestDb)('migration 012 review_queue active-row invariants', () => {

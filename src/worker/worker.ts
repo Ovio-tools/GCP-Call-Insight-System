@@ -4,6 +4,8 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import { appendLog } from '../db/repositories/processing-log-repo.js';
+import { getCallState } from '../db/repositories/call-state-repo.js';
+import { BACKFILL_SYNTHETIC_SOURCE } from '../backfill/ingest.js';
 import { createCallLogger } from '../logging/logger.js';
 import { runPipeline } from '../pipeline/state-machine.js';
 import type { StageHandlers } from '../pipeline/stages.js';
@@ -105,6 +107,18 @@ export function createPipelineWorker(
       }
       const callId = job.data.callId;
       const callLogger = createCallLogger(callId, parentLogger);
+      // Defense-in-depth (Task 11.2, R4 #1): a staging-synthetic backfill call must NEVER be
+      // processed by a real worker. Synthetic runs execute in-process against a fixture-backed
+      // Dialpad client and are never enqueued; if one somehow reached the shared queue, refuse it
+      // here as a logged no-op rather than run redaction/model stages on fixture data.
+      const state = await getCallState(pool, callId);
+      if (state?.source === BACKFILL_SYNTHETIC_SOURCE) {
+        callLogger.warn(
+          { source: BACKFILL_SYNTHETIC_SOURCE },
+          'refusing a synthetic backfill job on the shared worker (no-op)',
+        );
+        return;
+      }
       await runPipeline(pool, callId, callLogger, {
         handlers,
         slaMinutesFor: (reason) => slaMinutesFor(config, reason),

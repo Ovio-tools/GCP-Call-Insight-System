@@ -11,3 +11,10 @@ export {
   type RunLoopStatus,
   createWorkerLivenessProbe,
 } from './worker-liveness.js';
+export {
+  type BackfillMonitor,
+  type BackfillSignalUrls,
+  type BackfillProgressCounts,
+  type CreateBackfillMonitorDeps,
+  createBackfillMonitor,
+} from './backfill-monitor.js';
