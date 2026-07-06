@@ -31,6 +31,7 @@ export async function cleanupCalls(owner: Pool, pattern: string): Promise<void> 
     'structured_knowledge',
     'processing_log',
     'dead_letter',
+    'backfill_run_calls',
   ];
   for (const table of childTables) {
     await owner.query(`DELETE FROM ${table} WHERE call_id LIKE $1`, [pattern]);

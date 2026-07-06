@@ -16,8 +16,8 @@ describe.skipIf(!hasTestDb)('migration 9 down-guard (extraction_candidates rows)
   // (component_heartbeats) + 11 (alert_events delivery cols, Task 7.3) + 12 (review_queue
   // active-row invariants, Task 6.1) + 13 (retention purge grants, Task 8.1) + 14 (reveal_raw
   // enum) + 15 (reprocess_requests, Task 6.2) + 16 (labeled_examples, Task 6.3) + 17 (key
-  // lifecycle, Task 8.2) sit above 9.
-  const MIGRATIONS_ABOVE_9 = 8;
+  // lifecycle, Task 8.2) + 18 (backfill run status, Task 11.2) sit above 9.
+  const MIGRATIONS_ABOVE_9 = 9;
 
   beforeAll(async () => {
     await migrate('up');

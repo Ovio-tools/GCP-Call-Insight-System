@@ -307,6 +307,36 @@ export const configObjectSchema = z.object({
    * cron entrypoint REQUIRES it in staging/production via requireCheckUrl. */
   RECONCILIATION_CHECK_URL: z.string().url().optional(),
 
+  // --- Historical backfill runner (Task 11.2) ---
+
+  /** The backfill runner's OWN job-style dead-man's-switch base URL. The runner derives FOUR
+   * distinct signal URLs from it (start/progress/success/fail); a pairwise collision after
+   * derivation fails at construction. Optional in the schema (dev/test skip the ping), but the
+   * entrypoint REQUIRES it in staging/production via requireCheckUrl(config, 'backfill'). Kept
+   * separate from the worker/cron URLs — a shared check would stay green while the backfill is
+   * dead. */
+  BACKFILL_CHECK_URL: z.string().url().optional(),
+
+  /** Longest plausible call (minutes) for the backfill list query. Dialpad's list API filters by
+   * START time only, so the backfill scan reaches back `from - this margin` — otherwise a long
+   * call that started before the window but CONCLUDED inside it would never be listed. Larger than
+   * the reconciliation margin because a historical backfill may span unusually long calls. */
+  BACKFILL_MAX_CALL_MINUTES: z.coerce.number().int().positive().default(240),
+
+  /** How often (ms) the job monitor sends a progress ping while the run is active and within the
+   * stall threshold. Periodic cadence (not only on movement); shorter than the external monitor's
+   * missing-progress grace. */
+  BACKFILL_PROGRESS_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** How long (ms) the run may make no terminal progress before the monitor WITHHOLDS progress
+   * pings so the external monitor's missing-progress window fires the stall alert. Generous: a
+   * historical backfill legitimately waits on slow transcript availability. Default 6h. */
+  BACKFILL_STALL_THRESHOLD_MS: z.coerce.number().int().positive().default(21_600_000),
+
+  /** Delay (ms) between drain-phase polls that check whether every tracked call reached a terminal
+   * state (or dead-lettered) before the terminal success ping. */
+  BACKFILL_DRAIN_POLL_MS: z.coerce.number().int().positive().default(15_000),
+
   // --- Per-component dead-man's switches (Task 7.1) ---
 
   /** The WORKER's OWN external check URL, pinged every WORKER_HEARTBEAT_INTERVAL_MS to prove

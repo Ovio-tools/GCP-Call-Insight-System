@@ -10,10 +10,10 @@ import { TEST_DATABASE_URL } from './_pg.js';
  * table, the append-only `key_lifecycle_events` audit log, and the column-scoped `key_admin_role`
  * (metadata + audit ONLY — never raw/vault ciphertext).
  *
- * 017 is the topmost migration, so ABOVE = 1: `down(1)` exposes the pre-017 schema, `up(1)`
- * re-applies 017 (re-running its preflight).
+ * With migration 018 (backfill run status, Task 11.2) stacked on top, ABOVE = 2: `down(2)` rolls
+ * back 018 then exposes the pre-017 schema, `up(2)` re-applies 017 (re-running its preflight) + 018.
  */
-const ABOVE = 1;
+const ABOVE = 2;
 
 describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
   let owner!: Pool;
