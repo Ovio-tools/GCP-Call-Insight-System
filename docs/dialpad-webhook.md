@@ -30,10 +30,11 @@ malformed JSON regardless of the `Content-Type` header. The body-size limit stil
    mode by omitting `extractTimestamp`; replay + body limit remain the guards.)
 5. **Replay** — key per the fallback matrix below; duplicate → `WEBHOOK_REPLAY_DETECTED` (409),
    no enqueue.
-6. **Handler** — decode claims, require `call_id` (else `REQUEST_MALFORMED`, 400), then: upsert
-   `call_state` (non-PII `source_metadata`, so the Task 3.1 pre-filter has input), write a
-   minimized `raw_webhook_events` audit row, enqueue exactly one ingest job keyed by `call_id`,
-   return `200 { received: true }`. No transcript fetch, no model call, no heavy work.
+6. **Handler** — decode claims, **resolve** the call id from any known-equivalent shape (see
+   [Field resolution](#field-resolution-mvp)); if none is present → `REQUEST_MALFORMED` (400).
+   Then: seed `call_state` (non-PII `source_metadata`, so the Task 3.1 pre-filter has input), write
+   a minimized `raw_webhook_events` audit row, enqueue exactly one ingest job keyed by the resolved
+   call id, return `200 { received: true }`. No transcript fetch, no model call, no heavy work.
 
 ## Replay-key fallback matrix
 
@@ -58,9 +59,13 @@ transcript/message/free-text can never leak even if Dialpad adds fields:
   `date_started`, `date_ended`. No phone/name, not even hashed.
 - **`raw_webhook_events`** (purgeable) — `source`, `received_at`, `signature_status = valid`,
   `retention_eligible_at`, and a `payload` allowlist: `event_id` (the replay key), `call_id`,
-  the same non-PII metadata, `iat`, plus `phone_hmac` / `name_hmac` arrays when a phone or name
-  appears **anywhere** in the payload. Phone/name are one-way HMAC-SHA256 hashed under
-  `DIALPAD_PII_HASH_SECRET`; the plaintext is never stored.
+  the same non-PII metadata, `iat`, plus `phone_hmac` / `name_hmac` / `email_hmac` arrays when a
+  phone, name, or email appears **anywhere** in the payload. Each value is **normalized to a
+  canonical form before hashing** (phones → digits with an optional leading `+`; names → trimmed,
+  whitespace-collapsed, lowercased; emails → trimmed, lowercased) so the same person hashes
+  identically regardless of formatting, and incidental non-PII leaves (e.g. a `"work"` label inside
+  a phone object, or a short sequence number) are dropped rather than hashed as noise. Values are
+  one-way HMAC-SHA256 hashed under `DIALPAD_PII_HASH_SECRET`; the plaintext is never stored.
 
 `received_at` and `retention_eligible_at` are both stamped to a single captured `clock.now()` at
 ingest; the retention cron (Task 8.1) applies the `RAW_WEBHOOK_RETENTION_MS` window before purging.
@@ -103,11 +108,43 @@ Order matters — the receiver must accept both secrets **before** Dialpad signs
 Any events rejected during a mis-sequenced rotation are still recovered by the reconciliation cron
 (Task 3.4), so the failure mode is bounded.
 
-## Provisional field names
+## Field resolution (MVP) <a id="field-resolution-mvp"></a>
 
-The claim field names (`call_id`, `direction`, `state`, `duration`, `is_internal`,
-`operator_call_id`, `master_call_id`, `iat`, `date_started`, `date_ended`) are mirrored from the
-Task 3.1 pre-filter and confirmed against real staging payloads. The lenient `passthrough` schema
-in `src/dialpad/webhook/payload.ts` is the single place to adjust them; because it is an explicit
-allowlist, a wrong mapping can only under-populate metadata (safe), never leak an un-allowlisted
-field.
+The Dialpad claim field names are **provisional** — mirrored from the Task 3.1 pre-filter and not
+yet reconciled against a corpus of real production payloads (tracked as issue #31). To keep the
+MVP/staging demo from hard-failing when a real payload spells or nests a field slightly differently,
+`src/dialpad/webhook/payload.ts` resolves each canonical field from a **small, explicit prioritized
+list of known-equivalent paths** — an allowlist of accepted shapes, not a broad fuzzy search. An
+unknown shape still resolves to `undefined` (metadata under-populates safely; a missing call id
+rejects cleanly), and nothing outside the allowlist is ever stored.
+
+| Canonical field                                                       | Accepted shapes (in priority order)                                                                     | Status                      |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------- |
+| **call id** (required)                                                | `call_id`, `callId`, `call.call_id`, `call.callId`, `call.id`, `data.call_id`, `data.callId`, `data.id` | provisional — validate live |
+| `direction` / `state` / `duration`                                    | top-level, or nested under `call.` / `data.`                                                            | provisional                 |
+| `is_internal`                                                         | `is_internal`, `internal`, or nested under `call.` / `data.`                                            | provisional                 |
+| `operator_call_id` / `master_call_id` / `date_started` / `date_ended` | top-level, or nested under `call.` / `data.`                                                            | provisional                 |
+| `iat` (signed timestamp)                                              | top-level JWT claim                                                                                     | confirmed (JWT standard)    |
+
+A **bare top-level `id`** is intentionally NOT treated as the call id — it is the event-id fallback
+for the replay key (see the matrix above), so it is only trusted as a call id when disambiguated by
+a `call`/`data` wrapper.
+
+### Before production
+
+- **Validate these shapes against real Dialpad webhook traffic** (issue #31). Capture a sample of
+  real `call` events in staging, confirm which shape Dialpad actually sends, and prune the accepted
+  paths down to the confirmed spelling(s). The alias list is a demo-robustness measure, not a
+  license to keep guessing indefinitely.
+- Confirm `iat` is always present; if any real event lacks it, register in unsupported-timestamp
+  mode (omit `extractTimestamp`) — replay + body limit remain the guards.
+
+## Post-MVP hardening (deferred)
+
+- **Non-atomic side effect** (issue #34): the sink performs `call_state` seed → audit insert →
+  enqueue as three separate operations, not one transaction (and the enqueue targets Redis, which
+  cannot share a Postgres transaction). A crash between steps can leave a call seeded but not
+  enqueued. This is **acceptable for a controlled MVP/demo** because the **reconciliation cron
+  (Task 3.4) re-enqueues any concluded call the webhook missed**, bounding the failure. A
+  production-grade fix (transactional outbox for the enqueue) is deferred and out of scope for the
+  MVP.

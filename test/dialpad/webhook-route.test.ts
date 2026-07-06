@@ -128,6 +128,33 @@ describe('Dialpad webhook route — happy path', () => {
     expect(res.statusCode).toBe(200);
   });
 
+  it('ingests a real-world alias/nested shape (call.id + nested metadata + internal alias)', async () => {
+    // Guards issue #31: a plausible Dialpad payload that does NOT spell the id as top-level
+    // `call_id` must still ingest, not hard-fail as REQUEST_MALFORMED.
+    const h = await setup();
+    const res = await h.inject(
+      signJwt(
+        {
+          event_id: 'evt-nested',
+          iat: Math.floor(h.clock.now() / 1000),
+          call: { id: 4917123, direction: 'inbound', state: 'connected', duration: 30 },
+          internal: false,
+        },
+        PRIMARY,
+      ),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(h.sink.events).toHaveLength(1);
+    const e = h.sink.events[0] as DialpadIngestEvent;
+    expect(e.callId).toBe('4917123');
+    expect(e.sourceMetadata).toEqual({
+      direction: 'inbound',
+      state: 'connected',
+      duration: 30,
+      is_internal: false,
+    });
+  });
+
   it('still ingests when an optional field has an unexpected type (only that field is dropped)', async () => {
     const h = await setup();
     const res = await h.inject(

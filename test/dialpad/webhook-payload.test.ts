@@ -3,8 +3,10 @@ import { hashPii } from '../../src/dialpad/webhook/hash.js';
 import {
   collectPii,
   extractCallId,
+  normalizePhone,
   parseClaims,
   replayKeyFor,
+  resolveCallId,
   toAuditPayload,
   toCallStateMetadata,
 } from '../../src/dialpad/webhook/payload.js';
@@ -115,7 +117,8 @@ describe('toAuditPayload', () => {
     expect(payload.state).toBe('connected');
     expect(payload.iat).toBe(1_700_000_000);
     expect(payload.phone_hmac).toEqual([hashOne('+15551234567')]);
-    expect(payload.name_hmac).toEqual([hashOne('Jane Doe')]);
+    // Names are normalized (trim + collapse whitespace + lowercase) before hashing (issue #35).
+    expect(payload.name_hmac).toEqual([hashOne('jane doe')]);
 
     const serialized = JSON.stringify(payload);
     for (const leak of [
@@ -182,5 +185,96 @@ describe('extractCallId / parseClaims', () => {
     expect(extractCallId(parseClaims({ call_id: 987654321 }))).toBe('987654321');
     expect(extractCallId(parseClaims({ call_id: '  ' }))).toBeUndefined();
     expect(extractCallId(parseClaims({}))).toBeUndefined();
+  });
+});
+
+describe('resolveCallId (alias + nesting tolerance, issue #31)', () => {
+  it('reads the confirmed top-level call_id (number or string)', () => {
+    expect(resolveCallId({ call_id: 987654321 })).toBe('987654321');
+    expect(resolveCallId({ call_id: 'abc-1' })).toBe('abc-1');
+  });
+
+  it('accepts camelCase and call/data wrapper shapes for the same information', () => {
+    expect(resolveCallId({ callId: '42' })).toBe('42');
+    expect(resolveCallId({ call: { id: 4917123 } })).toBe('4917123');
+    expect(resolveCallId({ call: { call_id: '77' } })).toBe('77');
+    expect(resolveCallId({ data: { call_id: 88 } })).toBe('88');
+    expect(resolveCallId({ data: { id: 'd-9' } })).toBe('d-9');
+  });
+
+  it('prefers the explicit top-level call_id over nested variants', () => {
+    expect(resolveCallId({ call_id: '1', call: { id: '2' } })).toBe('1');
+  });
+
+  it('returns undefined when no known call-id field is present (clean reject, not a crash)', () => {
+    expect(resolveCallId({ event_id: 'evt-x', state: 'connected' })).toBeUndefined();
+    expect(resolveCallId({ call_id: '   ' })).toBeUndefined();
+    expect(resolveCallId({})).toBeUndefined();
+  });
+
+  it('does not treat a bare top-level id (the event id) as the call id', () => {
+    expect(resolveCallId({ id: 'evt-9' })).toBeUndefined();
+  });
+});
+
+describe('toCallStateMetadata (alias + nesting tolerance)', () => {
+  it('resolves the internal alias and metadata nested under a call wrapper', () => {
+    const meta = toCallStateMetadata({
+      call: { direction: 'inbound', state: 'connected', duration: 12 },
+      internal: true,
+    });
+    expect(meta).toEqual({
+      direction: 'inbound',
+      state: 'connected',
+      duration: 12,
+      is_internal: true,
+    });
+  });
+});
+
+describe('PII normalization + over-broad tightening (issue #35)', () => {
+  const audit = (claims: Record<string, unknown>): Record<string, unknown> =>
+    toAuditPayload(resultFor(claims), hashOne);
+
+  it('hashes a phone stably across punctuation and spacing', () => {
+    const a = audit({ call_id: '1', phone: '+1 (555) 123-4567' });
+    const b = audit({ call_id: '1', phone: '+15551234567' });
+    expect(a.phone_hmac).toEqual(b.phone_hmac);
+    expect(a.phone_hmac).toEqual([hashOne('+15551234567')]);
+  });
+
+  it('hashes a name stably across case and internal spacing', () => {
+    const a = audit({ call_id: '1', contact_name: 'Jane  DOE' });
+    const b = audit({ call_id: '1', contact_name: 'jane doe' });
+    expect(a.name_hmac).toEqual(b.name_hmac);
+  });
+
+  it('drops non-phone labels collected under a phone object (over-broad tightening)', () => {
+    const payload = audit({
+      call_id: '1',
+      contact: { phone: { primary: '+15550001111', label: 'work' } },
+    });
+    // Only the real number survives; the "work" label is not hashed as a phone.
+    expect(payload.phone_hmac).toEqual([hashOne(normalizePhone('+15550001111') as string)]);
+  });
+
+  it('drops short numeric noise below a plausible phone length', () => {
+    expect(audit({ call_id: '1', number: 42 })).not.toHaveProperty('phone_hmac');
+  });
+
+  it('hashes an email, normalized to lowercase, deduped across fields', () => {
+    const a = audit({ call_id: '1', email: 'Jane.Doe@Example.COM' });
+    const b = audit({ call_id: '1', contact_email: 'jane.doe@example.com' });
+    expect(a.email_hmac).toEqual(b.email_hmac);
+    expect(a.email_hmac).toEqual([hashOne('jane.doe@example.com')]);
+  });
+
+  it('dedupes the same phone supplied in two formats to one hmac', () => {
+    const payload = audit({
+      call_id: '1',
+      from_number: '(555) 123-4567',
+      to_number: '555-123-4567',
+    });
+    expect(payload.phone_hmac).toEqual([hashOne('5551234567')]);
   });
 });
