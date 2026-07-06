@@ -3,8 +3,19 @@ import { makeTestConfig } from '../_config.js';
 import {
   assertNoProductionResources,
   assertStagingEnvironment,
+  assertStagingResources,
   SampleValidationError,
 } from '../../src/sample-validation/index.js';
+
+function reasonOf(fn: () => unknown): string | undefined {
+  try {
+    fn();
+  } catch (err) {
+    if (err instanceof SampleValidationError) return err.reason;
+    throw err;
+  }
+  return undefined;
+}
 
 describe('assertStagingEnvironment', () => {
   it('passes in staging', () => {
@@ -93,5 +104,52 @@ describe('assertNoProductionResources', () => {
         databaseUrl: 'postgres://user:prodpass@db.staging.internal:5432/app',
       }),
     ).not.toThrow();
+  });
+});
+
+describe('assertStagingResources (pure config guard for entrypoints)', () => {
+  const staging = makeTestConfig({
+    NODE_ENV: 'staging',
+    DATABASE_URL: 'postgres://u:pw@db.staging.internal:5432/app',
+    REDIS_URL: 'redis://redis.staging.internal:6379',
+    DIALPAD_BASE_URL: 'https://dialpad.staging.example.com',
+    OIDC_ISSUER_URL: 'https://auth.staging.example.com',
+  });
+
+  it('passes for a fully-staging config', () => {
+    expect(() => assertStagingResources(staging)).not.toThrow();
+  });
+
+  it('refuses a non-staging environment', () => {
+    expect(reasonOf(() => assertStagingResources(makeTestConfig({ NODE_ENV: 'production' })))).toBe(
+      'not_staging',
+    );
+  });
+
+  it('refuses a production database host drawn from config', () => {
+    expect(
+      reasonOf(() =>
+        assertStagingResources(
+          makeTestConfig({
+            NODE_ENV: 'staging',
+            DATABASE_URL: 'postgres://u:pw@db.prod.internal:5432/app',
+          }),
+        ),
+      ),
+    ).toBe('production_resource');
+  });
+
+  it('refuses a production Dialpad endpoint drawn from config', () => {
+    expect(
+      reasonOf(() =>
+        assertStagingResources(
+          makeTestConfig({
+            NODE_ENV: 'staging',
+            DATABASE_URL: 'postgres://u:pw@db.staging.internal:5432/app',
+            DIALPAD_BASE_URL: 'https://dialpad.production.example.com',
+          }),
+        ),
+      ),
+    ).toBe('production_resource');
   });
 });

@@ -2,11 +2,7 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import { query } from '../db/sql.js';
-import {
-  assertNoProductionResources,
-  assertStagingEnvironment,
-  type ResourceEndpoint,
-} from './guards.js';
+import { assertStagingResources, type ResourceEndpoint } from './guards.js';
 import { resolveSampleSelection, type SampleSelectionInput } from './selection.js';
 import { assertProcessingGates } from './gates.js';
 import { buildSampleReport, type SampleReportEntry } from './report.js';
@@ -76,19 +72,10 @@ export async function runSampleValidation(
   deps: SampleValidationDeps,
 ): Promise<SampleValidationRunResult> {
   // 1 + 2 — environment and resource guards. Refuse before ANY DB read or pipeline call.
-  assertStagingEnvironment(config);
-  assertNoProductionResources(
-    {
-      databaseUrl: config.DATABASE_URL,
-      queueUrl: config.REDIS_URL,
-      endpoints: [
-        { label: 'dialpad', url: config.DIALPAD_BASE_URL },
-        { label: 'oidc', url: config.OIDC_ISSUER_URL },
-        ...(deps.resourceEndpoints ?? []),
-      ],
-    },
-    { productionMarkers: deps.productionMarkers },
-  );
+  assertStagingResources(config, {
+    productionMarkers: deps.productionMarkers,
+    resourceEndpoints: deps.resourceEndpoints,
+  });
 
   // 3 — bounded selection (pure, no side effects).
   const selection = resolveSampleSelection(input.selection, { maxSampleSize: deps.maxSampleSize });

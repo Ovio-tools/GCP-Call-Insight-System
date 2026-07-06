@@ -1,9 +1,12 @@
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
+import type { HeldReason } from '../db/enums.js';
 import type { JsonValue } from '../db/types.js';
-import { enqueueReview } from '../db/repositories/review-queue-repo.js';
+import { query } from '../db/sql.js';
 import { recordOperatorAction } from '../db/repositories/operator-actions-repo.js';
 import { syncLabeledExamples, type SyncSummary } from '../evaluation/sync.js';
+import { validateRedactedInputSafe } from '../evaluation/pii-gate.js';
+import { SampleValidationError } from './errors.js';
 
 /**
  * Marking a validation sample correct/wrong and seeding the Phase 6.3 labeled baseline (Task 11.1).
@@ -49,9 +52,14 @@ export interface MarkSampleResult {
 const SEED_SLA_MINUTES = 120;
 
 interface Mapped {
-  heldReason: 'classifier_uncertain' | 'schema_invalid';
+  heldReason: HeldReason;
   action: 'approve' | 'mark_non_customer' | 'mark_spam' | 'correct_extraction';
   actionParams?: ExtractEnums;
+}
+
+export interface MarkSampleOptions {
+  /** Deny terms for the residual-PII gate applied to `notes` before storage. */
+  denyTerms?: readonly string[];
 }
 
 /**
@@ -84,16 +92,48 @@ function mapMark(input: MarkSampleInput): Mapped {
   };
 }
 
-/** Record a sample mark as a review + operator-action audit row (the seed for the labeled corpus). */
-export async function markSample(pool: Pool, input: MarkSampleInput): Promise<MarkSampleResult> {
+/**
+ * Record a sample mark as a review + operator-action audit row (the seed for the labeled corpus).
+ *
+ * The seed review row is inserted with a TERMINAL `resolved` status, NOT via `enqueueReview`: an
+ * active (`open`/`in_review`) row would be escalated by the stalled-review scan (a fake
+ * `REVIEW_QUEUE_STALLED` alert), occupy the one-active-per-call slot, and — via `enqueueReview`'s
+ * conflict handling — risk resolving a genuine operational review for the same call. A `resolved`
+ * row is invisible to the scan and outside the active partial-unique index, yet is still mined by
+ * `syncLabeledExamples` (whose candidate query has no status filter).
+ *
+ * A `notes` value is screened by the residual-PII gate BEFORE anything is written and refused
+ * (`reviewer_note_unsafe`) on a hit, so an operator cannot paste a name/phone/address into the
+ * indefinite `operator_actions` audit table.
+ */
+export async function markSample(
+  pool: Pool,
+  input: MarkSampleInput,
+  options: MarkSampleOptions = {},
+): Promise<MarkSampleResult> {
   const mapped = mapMark(input);
 
+  if (input.notes !== undefined) {
+    const gate = validateRedactedInputSafe(input.notes, options.denyTerms ?? []);
+    if (!gate.safe) {
+      // Sanitized: category keys only, never the note text.
+      throw new SampleValidationError(
+        'reviewer_note_unsafe',
+        'refusing to store a reviewer note held by the residual-PII gate',
+        { categories: Object.keys(gate.counts) },
+      );
+    }
+  }
+
   const slaDueAt = new Date(Date.now() + SEED_SLA_MINUTES * 60_000);
-  const review = await enqueueReview(pool, {
-    callId: input.callId,
-    heldReason: mapped.heldReason,
-    slaDueAt,
-  });
+  const inserted = await query<{ id: string }>(
+    pool,
+    `INSERT INTO review_queue (call_id, held_reason, sla_due_at, status, resolved_at)
+     VALUES ($1, $2, $3, 'resolved', now())
+     RETURNING id`,
+    [input.callId, mapped.heldReason, slaDueAt],
+  );
+  const reviewQueueId = inserted[0]!.id;
 
   const after: Record<string, JsonValue> = { reviewer_verdict: input.verdict };
   if (input.notes !== undefined) after.reviewer_notes = input.notes;
@@ -102,14 +142,14 @@ export async function markSample(pool: Pool, input: MarkSampleInput): Promise<Ma
   }
 
   const action = await recordOperatorAction(pool, {
-    reviewQueueId: review.id,
+    reviewQueueId,
     actor: input.actor,
     action: mapped.action,
     before: null,
     after,
   });
 
-  return { reviewQueueId: review.id, operatorActionId: action.id };
+  return { reviewQueueId, operatorActionId: action.id };
 }
 
 export interface SeedBaselineDeps {

@@ -1,11 +1,10 @@
 import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
-import { assertDependenciesReady } from '../boot/readiness.js';
 import { createAppPool } from '../db/index.js';
 import { loadDenyList } from '../redaction/deny-list.js';
 import {
-  assertStagingEnvironment,
+  assertStagingResources,
   markSample,
   seedLabeledBaseline,
   type MarkSampleInput,
@@ -72,21 +71,23 @@ function parseArgs(argv: readonly string[]): { input: MarkSampleInput; seed: boo
 export async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createBootLogger({ level: config.LOG_LEVEL, name: 'mark-sample' });
-  // Marking (and its seeding) writes to the staging stores only.
-  assertStagingEnvironment(config);
-  await assertDependenciesReady(config, logger);
+  // Marking (and its seeding) writes validation artifacts to review_queue / operator_actions /
+  // labeled_examples, so it needs the SAME staging-only + no-production-resource guard as the run,
+  // before any DB connection. It uses no queue, so no Redis readiness is required.
+  assertStagingResources(config);
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
 
   const { input, seed } = parseArgs(process.argv.slice(2));
+  const denyTerms = loadDenyList(config.REDACTION_DENY_LIST_PATH);
   const pool = createAppPool(config.DATABASE_URL);
 
   try {
-    const { reviewQueueId, operatorActionId } = await markSample(pool, input);
+    // denyTerms gates any reviewer note through the residual-PII scan before it is stored.
+    const { reviewQueueId, operatorActionId } = await markSample(pool, input, { denyTerms });
     // Ids are low-sensitivity correlation keys; no content, no reviewer notes in the log.
     logger.info({ reviewQueueId, operatorActionId, task: input.taskType }, 'sample marked');
 
     if (seed) {
-      const denyTerms = loadDenyList(config.REDACTION_DENY_LIST_PATH);
       const summary = await seedLabeledBaseline(pool, { denyTerms, logger });
       logger.info({ ...summary }, 'labeled baseline seeded from marks');
     }

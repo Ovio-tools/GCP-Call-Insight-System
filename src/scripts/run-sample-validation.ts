@@ -13,7 +13,12 @@ import { createQueueConnectionFromConfig } from '../queue/connection.js';
 import { createPipelineQueue } from '../queue/pipeline-queue.js';
 import { runPipeline } from '../pipeline/state-machine.js';
 import { slaMinutesFor } from '../review-queue/sla.js';
-import { runSampleValidation, type SampleSelectionInput } from '../sample-validation/index.js';
+import {
+  assertProcessingGates,
+  assertStagingResources,
+  runSampleValidation,
+  type SampleSelectionInput,
+} from '../sample-validation/index.js';
 
 /**
  * Sample-validation harness entrypoint (Task 11.1). The ONE consented staging exception: run a small
@@ -56,57 +61,68 @@ export async function main(): Promise<void> {
   const config = loadConfig();
   const logger = createBootLogger({ level: config.LOG_LEVEL, name: 'sample-validation' });
   requireRedactionConfig(config);
-  await assertDependenciesReady(config, logger);
+
+  // Pure guards FIRST — staging-only + no production database/queue/endpoint — before readiness or
+  // ANY database/Redis connection is constructed, so a misconfigured run never touches infra.
+  assertStagingResources(config);
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
 
   const { selection, exercisesServiceTitan, out } = parseArgs(process.argv.slice(2));
   const denyTerms = loadDenyList(config.REDACTION_DENY_LIST_PATH);
 
+  // Connect ONLY the screened staging database and confirm every §0.2 consent gate is recorded
+  // BEFORE building any Redis / key / Dialpad / pipeline dependency (which would fetch/enqueue).
   const pool = createAppPool(config.DATABASE_URL);
-  const queueConnection = createQueueConnectionFromConfig(config);
-  const limiterConnection = createQueueConnectionFromConfig(config);
-  const queue = createPipelineQueue(config, queueConnection);
-
   try {
-    // Real stage handlers — the FULL existing pipeline, never duplicated logic. The harness guards
-    // (staging-only, no production resource, gates recorded) run inside runSampleValidation BEFORE
-    // any of these are exercised.
-    const keyProvider = await buildServiceKeyProvider({ config, pool });
-    const limiter = new RedisDualWindowLimiter(limiterConnection, {
-      perSecond: config.DIALPAD_RATE_PER_SECOND,
-      perMinute: config.DIALPAD_RATE_PER_MINUTE,
-    });
-    const client = createDialpadClient({ config, limiter, logger });
-    const handlers = buildProductionStageHandlers({ client, keyProvider, queue, config });
+    await assertProcessingGates(pool, { requireServiceTitanMatching: exercisesServiceTitan });
 
-    const result = await runSampleValidation(
-      pool,
-      config,
-      { selection, exercisesServiceTitan },
-      {
-        runCall: (p, callId, lg) =>
-          runPipeline(p, callId, lg, {
-            handlers,
-            slaMinutesFor: (reason) => slaMinutesFor(config, reason),
-          }),
-        denyTerms,
-        logger,
-      },
-    );
+    // Gates cleared: NOW verify Redis reachability and build the real pipeline dependencies.
+    await assertDependenciesReady(config, logger);
+    const queueConnection = createQueueConnectionFromConfig(config);
+    const limiterConnection = createQueueConnectionFromConfig(config);
+    const queue = createPipelineQueue(config, queueConnection);
 
-    const json = JSON.stringify(result, null, 2);
-    if (out !== undefined) {
-      await writeFile(out, json, 'utf8');
-      // Count only — the report itself is PII-free but the log line stays sanitized.
-      logger.info({ calls: result.callIds.length, out }, 'sample-validation report written');
-    } else {
-      process.stdout.write(`${json}\n`);
-      logger.info({ calls: result.callIds.length }, 'sample-validation report emitted');
+    try {
+      // Real stage handlers — the FULL existing pipeline, never duplicated logic. runSampleValidation
+      // re-runs the same guards + gate check (idempotent) before it exercises any of these.
+      const keyProvider = await buildServiceKeyProvider({ config, pool });
+      const limiter = new RedisDualWindowLimiter(limiterConnection, {
+        perSecond: config.DIALPAD_RATE_PER_SECOND,
+        perMinute: config.DIALPAD_RATE_PER_MINUTE,
+      });
+      const client = createDialpadClient({ config, limiter, logger });
+      const handlers = buildProductionStageHandlers({ client, keyProvider, queue, config });
+
+      const result = await runSampleValidation(
+        pool,
+        config,
+        { selection, exercisesServiceTitan },
+        {
+          runCall: (p, callId, lg) =>
+            runPipeline(p, callId, lg, {
+              handlers,
+              slaMinutesFor: (reason) => slaMinutesFor(config, reason),
+            }),
+          denyTerms,
+          logger,
+        },
+      );
+
+      const json = JSON.stringify(result, null, 2);
+      if (out !== undefined) {
+        await writeFile(out, json, 'utf8');
+        // Count only — the report itself is PII-free but the log line stays sanitized.
+        logger.info({ calls: result.callIds.length, out }, 'sample-validation report written');
+      } else {
+        process.stdout.write(`${json}\n`);
+        logger.info({ calls: result.callIds.length }, 'sample-validation report emitted');
+      }
+    } finally {
+      await queue.close();
+      await queueConnection.quit();
+      await limiterConnection.quit();
     }
   } finally {
-    await queue.close();
-    await queueConnection.quit();
-    await limiterConnection.quit();
     await pool.end();
   }
 }

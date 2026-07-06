@@ -71,6 +71,23 @@ The correct/wrong verdict and optional reviewer notes live on the audit row only
 asserted ground truth, and `syncLabeledExamples` reads **only** the controlled fields (never notes),
 with its residual-PII + schema gates applied before an example is accepted.
 
+Two safety properties of `markSample`:
+
+- **Terminal review rows, never active ones.** The seed `review_queue` row is inserted with a
+  terminal `resolved` status (not via `enqueueReview`). A `resolved` row is invisible to the
+  stalled-review scan (so it never emits a fake `REVIEW_QUEUE_STALLED`), sits outside the
+  one-active-per-call partial-unique index (so it neither blocks nor resolves a **genuine**
+  operational review for the same call), yet is still mined by `syncLabeledExamples` (whose
+  candidate query has no status filter).
+- **Notes are residual-PII gated.** A `--notes` value is screened by the same residual-PII gate
+  before anything is written and refused (`reviewer_note_unsafe`) on a hit, so an operator cannot
+  paste a name / phone / address into the indefinite `operator_actions` audit table.
+
+Both entrypoints run the pure staging + no-production-resource guard (`assertStagingResources`)
+**before any database or Redis connection is constructed**; the run CLI additionally confirms the
+§0.2 consent gates against only the screened staging database before it builds any Redis / key /
+Dialpad / pipeline dependency. `mark-sample` uses no queue and needs no Redis.
+
 ## Running it (staging operator)
 
 ```bash

@@ -20,7 +20,9 @@ export type SampleValidationRefusalReason =
   /** The operator-provided sample size or call-id list is missing, empty, or over the cap. */
   | 'invalid_sample_selection'
   /** A required §0.2 processing gate (or the conditional ServiceTitan matching consent) is absent. */
-  | 'missing_consent_gates';
+  | 'missing_consent_gates'
+  /** A reviewer note tripped the residual-PII gate and was refused rather than stored. */
+  | 'reviewer_note_unsafe';
 
 /** A hard refusal from the sample-validation harness. `context` is sanitized (no secrets, no PII). */
 export class SampleValidationError extends Error {

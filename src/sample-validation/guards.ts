@@ -61,6 +61,39 @@ function markerHit(url: string | undefined, markers: readonly string[]): string 
   return markers.find((m) => host.includes(m.toLowerCase()));
 }
 
+/** Build the resource screen for a config: its database, queue, and known service endpoints. */
+export function configResourceCheck(
+  config: Config,
+  extraEndpoints: readonly ResourceEndpoint[] = [],
+): ProductionResourceCheck {
+  return {
+    databaseUrl: config.DATABASE_URL,
+    queueUrl: config.REDIS_URL,
+    endpoints: [
+      { label: 'dialpad', url: config.DIALPAD_BASE_URL },
+      { label: 'oidc', url: config.OIDC_ISSUER_URL },
+      ...extraEndpoints,
+    ],
+  };
+}
+
+export interface StagingRunGuardOptions {
+  productionMarkers?: readonly string[] | undefined;
+  resourceEndpoints?: readonly ResourceEndpoint[] | undefined;
+}
+
+/**
+ * The combined staging + no-production-resource guard, derived entirely from config. Pure (no
+ * connections, no DB) so an entrypoint can call it FIRST — before readiness, before any database or
+ * queue connection is constructed — so a misconfigured run is refused before it can touch anything.
+ */
+export function assertStagingResources(config: Config, options: StagingRunGuardOptions = {}): void {
+  assertStagingEnvironment(config);
+  assertNoProductionResources(configResourceCheck(config, options.resourceEndpoints ?? []), {
+    productionMarkers: options.productionMarkers,
+  });
+}
+
 /** Refuse if any configured database / queue / service endpoint resolves to a production host. */
 export function assertNoProductionResources(
   check: ProductionResourceCheck,

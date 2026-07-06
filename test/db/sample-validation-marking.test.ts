@@ -153,6 +153,69 @@ describe.skipIf(!hasTestDb)('sample-validation marking → labeled baseline (Tas
     expect(rows.rows[0]!.after.reviewer_notes).toBe('internal call');
   });
 
+  it('seeds a TERMINAL (resolved) review row, never an active one', async () => {
+    const { reviewQueueId } = await markSample(app, {
+      callId: CALL,
+      taskType: 'classify',
+      verdict: 'correct',
+      classifyBucket: 'customer',
+      actor: 'validator-1',
+    });
+    const rows = await owner.query<{ status: string }>(
+      `SELECT status FROM review_queue WHERE id = $1`,
+      [reviewQueueId],
+    );
+    // A resolved row is invisible to the stalled-review scan and outside the active partial
+    // unique index, so validation marks cannot pollute operations or emit fake REVIEW_QUEUE_STALLED.
+    expect(rows.rows[0]!.status).toBe('resolved');
+    // ...yet it is still mined into the labeled baseline.
+    await seedLabeledBaseline(app, { denyTerms: [], logger });
+    expect((await listAcceptedExamples(owner)).filter((e) => e.call_id === CALL)).toHaveLength(1);
+  });
+
+  it('does not collide with (or resolve) a real active review for the same call', async () => {
+    // A genuine operational hold: an ACTIVE review row exists for the call.
+    await owner.query(
+      `INSERT INTO review_queue (call_id, held_reason, sla_due_at, status)
+       VALUES ($1, 'classifier_uncertain', now() + interval '1 hour', 'open')`,
+      [CALL],
+    );
+    await markSample(app, {
+      callId: CALL,
+      taskType: 'classify',
+      verdict: 'wrong',
+      classifyBucket: 'spam',
+      actor: 'validator-1',
+    });
+    // The real active review is untouched; the mark added its own terminal row.
+    const active = await owner.query(
+      `SELECT 1 FROM review_queue WHERE call_id = $1 AND status IN ('open','in_review')`,
+      [CALL],
+    );
+    expect(active.rows).toHaveLength(1);
+    const resolved = await owner.query(
+      `SELECT 1 FROM review_queue WHERE call_id = $1 AND status = 'resolved'`,
+      [CALL],
+    );
+    expect(resolved.rows).toHaveLength(1);
+  });
+
+  it('refuses a reviewer note that carries residual PII (never stored)', async () => {
+    await expect(
+      markSample(app, {
+        callId: CALL,
+        taskType: 'classify',
+        verdict: 'wrong',
+        classifyBucket: 'non-customer',
+        actor: 'validator-1',
+        notes: 'call the customer back on 415-555-0199',
+      }),
+    ).rejects.toThrow();
+    // Nothing was written for the refused mark.
+    const rows = await owner.query(`SELECT 1 FROM review_queue WHERE call_id = $1`, [CALL]);
+    expect(rows.rows).toHaveLength(0);
+  });
+
   it('refuses a classify mark without an asserted bucket, and an extract mark without enums', async () => {
     await expect(
       markSample(app, { callId: CALL, taskType: 'classify', verdict: 'correct', actor: 'v' }),
