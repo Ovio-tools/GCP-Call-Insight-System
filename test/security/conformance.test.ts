@@ -65,18 +65,43 @@ const HARDENING_TOKENS: readonly { name: string; re: RegExp }[] = [
 /**
  * The Dialpad receiver legitimately installs a raw-body content-type parser so a bare-JWT body is
  * not rejected as malformed JSON. It sits ON TOP of `createWebhookApp` (not a bypass) and is the
- * single documented owner (see `src/dialpad/webhook/route.ts` and docs/security-audit.md). A NEW
- * file rolling its own parser would still fail this guard.
+ * single documented owner (see `src/dialpad/webhook/route.ts` and docs/security-audit.md).
+ *
+ * The allowlist is TOKEN-level, not file-level: only the two content-type-parser tokens are exempt
+ * for that ONE file, each expected exactly once. If that file later adds `addHook`,
+ * `setErrorHandler`, `fastify()`, `bodyLimit`, or a second parser call, the guard still fails.
  */
-const HARDENING_ALLOWLIST = new Set(['dialpad/webhook/route.ts']);
+const HARDENING_ALLOWLIST: Record<string, ReadonlyMap<string, number>> = {
+  'dialpad/webhook/route.ts': new Map([
+    ['.addContentTypeParser(', 1],
+    ['.removeAllContentTypeParsers(', 1],
+  ]),
+};
+
+/** Count non-overlapping matches of a token regex in a file. */
+function countMatches(content: string, re: RegExp): number {
+  const global = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+  return (content.match(global) ?? []).length;
+}
 
 describe('security conformance — no self-rolled hardening outside src/http', () => {
   it('every HTTP protection comes from the Task 2.3 factories', () => {
     const offenders: string[] = [];
     for (const file of OUTSIDE_HTTP) {
-      if (HARDENING_ALLOWLIST.has(file.rel)) continue;
+      const allowed = HARDENING_ALLOWLIST[file.rel];
       for (const token of HARDENING_TOKENS) {
-        if (token.re.test(file.content)) offenders.push(`${file.rel} :: ${token.name}`);
+        if (!token.re.test(file.content)) continue;
+        const exemptCount = allowed?.get(token.name);
+        if (exemptCount === undefined) {
+          offenders.push(`${file.rel} :: ${token.name}`);
+          continue;
+        }
+        // Exempt token — but only up to the documented occurrence count, so a NEW call of an
+        // otherwise-allowed parser token in the same file still trips the guard.
+        const actual = countMatches(file.content, token.re);
+        if (actual > exemptCount) {
+          offenders.push(`${file.rel} :: ${token.name} (${actual} > allowed ${exemptCount})`);
+        }
       }
     }
     expect(offenders).toEqual([]);

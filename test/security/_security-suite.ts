@@ -286,6 +286,15 @@ export interface StatePathHardeningOpts {
   rejectCode: ExpectedCode;
   /** Prove nothing was written after a rejected request. */
   assertNoSideEffect: () => Promise<void>;
+  /**
+   * Whether the route READS its body. `true` (default) → an authed+CSRF malicious body must be
+   * REJECTED with `rejectCode`. `false` → the route ignores its body (e.g. reveal-raw, whose only
+   * input is a query param), so the malicious-body-reject case is skipped: the factory still
+   * enforces CSRF/oversized/malformed/media-type (proven by the other cases), and a non-empty body
+   * carries no injection surface. See docs/security-audit.md for the reveal-raw body-strictness
+   * follow-up.
+   */
+  includeMaliciousBody?: boolean;
 }
 
 /** The shared state-changing matrix: CSRF, body-parsing negatives, and malicious-payload rejection. */
@@ -334,25 +343,29 @@ export function runStatePathHardening(opts: StatePathHardeningOpts): void {
     expectMiddlewareError(res, 'UNSUPPORTED_MEDIA_TYPE');
   });
 
-  it(`${opts.label}: rejects every malicious payload with no side effect`, async () => {
-    const session = await opts.session();
-    for (const p of MALICIOUS_PAYLOADS) {
-      const res = await opts.getApp().inject({
-        method: 'POST',
-        url,
-        headers: {
-          cookie: session.cookie,
-          'x-csrf-token': session.csrfToken,
-          'content-type': 'application/json',
-        },
-        payload: p.rawBody,
-      });
-      expect(res.statusCode, `${p.name} expected ${opts.rejectCode}`).toBe(
-        EXPECTED_STATUS[opts.rejectCode],
-      );
-      assertNoPii(res.payload, p.name);
-      await opts.assertNoSideEffect();
-    }
-    assertNoPrototypePollution();
-  });
+  // Only when the route READS its body. A body-ignoring route (reveal-raw) skips this — the factory
+  // still enforces CSRF/oversized/malformed/media-type above, and its body is not an operation input.
+  if (opts.includeMaliciousBody ?? true) {
+    it(`${opts.label}: rejects every malicious payload with no side effect`, async () => {
+      const session = await opts.session();
+      for (const p of MALICIOUS_PAYLOADS) {
+        const res = await opts.getApp().inject({
+          method: 'POST',
+          url,
+          headers: {
+            cookie: session.cookie,
+            'x-csrf-token': session.csrfToken,
+            'content-type': 'application/json',
+          },
+          payload: p.rawBody,
+        });
+        expect(res.statusCode, `${p.name} expected ${opts.rejectCode}`).toBe(
+          EXPECTED_STATUS[opts.rejectCode],
+        );
+        assertNoPii(res.payload, p.name);
+        await opts.assertNoSideEffect();
+      }
+      assertNoPrototypePollution();
+    });
+  }
 }

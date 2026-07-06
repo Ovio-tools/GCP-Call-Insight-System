@@ -296,6 +296,23 @@ describe.skipIf(!hasTestDb)('review surface (6.2) — security matrix', () => {
     },
   });
 
+  // The second state-changing route. The shared factory enforces CSRF/oversized/malformed/media-type
+  // on it too (preHandler + parser run BEFORE the reveal handler) — none reach `performReveal`, so no
+  // raw/vault reveal and no audit row. The malicious-body-reject case is skipped: reveal-raw's only
+  // input is the `?token=` query param and it does not read its request body (see the reveal-raw
+  // body-strictness follow-up in docs/security-audit.md).
+  runStatePathHardening({
+    label: 'POST /review/:id/reveal-raw',
+    getApp: () => h.app,
+    path: '/review/test-sec-review-nobody/reveal-raw',
+    session: () => h.login({ elevated: true }),
+    rejectCode: 'REQUEST_MALFORMED',
+    includeMaliciousBody: false,
+    assertNoSideEffect: async () => {
+      expect(await operatorActionCount()).toBe(0);
+    },
+  });
+
   it('detail view never preloads raw/vault (no raw text in the response)', async () => {
     const callId = 'test-sec-review-noraw';
     const id = await h.seedHeld(callId, { reason: 'redaction_failed' });

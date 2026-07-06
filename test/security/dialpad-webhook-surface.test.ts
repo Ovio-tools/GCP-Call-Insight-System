@@ -1,11 +1,18 @@
-import { describe, expect, it } from 'vitest';
-import type { LightMyRequestResponse } from 'fastify';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import type { FastifyInstance, LightMyRequestResponse } from 'fastify';
+import type { Pool } from 'pg';
+import type { Queue } from 'bullmq';
 import { MemoryRateStore, MemoryReplayStore } from '../../src/http/index.js';
 import { createRootLogger } from '../../src/logging/logger.js';
+import { repositories } from '../../src/db/index.js';
 import type { Config } from '../../src/config/schema.js';
+import type { PipelineJobData } from '../../src/queue/pipeline-queue.js';
 import { makeTestConfig } from '../_config.js';
 import { FakeClock } from '../http/_helpers.js';
+import { hasTestDb, makePool, migrate } from '../db/_pg.js';
+import { cleanupCalls, makeAppPool } from '../db/_dal.js';
 import { buildWebhookReceiverApp } from '../../src/dialpad/webhook/receiver-app.js';
+import { createPgIngestSink } from '../../src/dialpad/webhook/sink.js';
 import type { DialpadIngestEvent, DialpadIngestSink } from '../../src/dialpad/webhook/sink.js';
 import {
   assertNoPii,
@@ -232,3 +239,135 @@ describe('Dialpad webhook surface — PII egress', () => {
     assertNoPii(h.lines.join('\n'), 'logs');
   });
 });
+
+/**
+ * The real DB/queue side-effect proof, so `npm run test:security` itself owns the live-surface claim
+ * ("call_state seed + minimized audit row + one enqueue") rather than leaning on the FakeSink above
+ * (the separate `test/dialpad/pg-ingest-sink.test.ts` proves the sink in isolation; this drives it
+ * end-to-end through the real receiver). Redis is avoided with a stub queue.
+ */
+describe.skipIf(!hasTestDb)(
+  'Dialpad webhook surface — real DB/queue side effects (liveSuite)',
+  () => {
+    let owner: Pool;
+    let app: Pool;
+    const PATTERN = 'test-sec-dp-%';
+    const added: string[] = [];
+    const stubQueue = {
+      add: (_name: string, data: PipelineJobData) => {
+        added.push(data.callId);
+        return Promise.resolve({});
+      },
+    } as unknown as Queue<PipelineJobData>;
+
+    async function dbReceiver(): Promise<{ recv: FastifyInstance; clock: FakeClock }> {
+      const clock = new FakeClock();
+      const config = makeTestConfig({
+        DIALPAD_WEBHOOK_SECRET: PRIMARY,
+        DIALPAD_PII_HASH_SECRET: HASH,
+      });
+      const sink = createPgIngestSink({ pool: app, queue: stubQueue, config });
+      const webhookApp = await buildWebhookReceiverApp({
+        config,
+        replayStore: new MemoryReplayStore(clock),
+        rateStore: new MemoryRateStore(clock),
+        sink,
+        clock,
+      });
+      await webhookApp.app.ready();
+      return { recv: webhookApp.app, clock };
+    }
+
+    const wipe = async (): Promise<void> => {
+      added.length = 0;
+      await owner.query(`DELETE FROM raw_webhook_events WHERE source = 'dialpad-webhook'`);
+      await cleanupCalls(owner, PATTERN);
+    };
+
+    beforeAll(async () => {
+      await migrate('up');
+      owner = makePool();
+      app = makeAppPool();
+    });
+    beforeEach(wipe);
+    afterAll(async () => {
+      await wipe();
+      await owner.end();
+      await app.end();
+    });
+
+    it('a valid signed event seeds call_state, writes a minimized audit row (phone/name hashed), enqueues once', async () => {
+      const { recv, clock } = await dbReceiver();
+      const callId = 'test-sec-dp-ok';
+      const token = signJwt(
+        {
+          call_id: callId,
+          event_id: 'dp-e1',
+          iat: Math.floor(clock.now() / 1000),
+          direction: 'inbound',
+          state: 'connected',
+          contact_name: PII_SEEDS.name,
+          phone: PII_SEEDS.phone,
+          transcript: PII_SEEDS.customerLanguage,
+        },
+        PRIMARY,
+      );
+      const res = await recv.inject({
+        method: 'POST',
+        url: '/webhooks/dialpad',
+        headers: { 'content-type': 'application/json' },
+        payload: token,
+      });
+      expect(res.statusCode).toBe(200);
+
+      // call_state seeded at stage 0, with only the non-PII allowlisted source_metadata.
+      const state = await repositories.callState.getCallState(app, callId);
+      expect(state?.current_stage).toBe('metadata-pre-filter');
+      assertNoPii(JSON.stringify(state?.source_metadata), 'call_state.source_metadata');
+      expect(JSON.stringify(state?.source_metadata)).not.toContain('hmac');
+
+      // Exactly one minimized raw_webhook_events row: allowlisted metadata + hashed phone/name, no
+      // raw PII, no transcript/content.
+      const audit = await owner.query<{ payload: Record<string, unknown> }>(
+        `SELECT payload FROM raw_webhook_events
+        WHERE source = 'dialpad-webhook' AND payload->>'call_id' = $1`,
+        [callId],
+      );
+      expect(audit.rows).toHaveLength(1);
+      const payload = audit.rows[0]!.payload;
+      assertNoPii(JSON.stringify(payload), 'raw_webhook_events');
+      expect(payload.phone_hmac).toBeDefined();
+      expect(payload.name_hmac).toBeDefined();
+      expect(JSON.stringify(payload)).not.toContain('transcript');
+
+      // Exactly one enqueue keyed by call_id.
+      expect(added).toEqual([callId]);
+      await recv.close();
+    });
+
+    it('an invalid-signature event writes no row, seeds no call_state, enqueues nothing', async () => {
+      const { recv, clock } = await dbReceiver();
+      const callId = 'test-sec-dp-bad';
+      const token = signJwt(
+        { call_id: callId, event_id: 'dp-bad', iat: Math.floor(clock.now() / 1000) },
+        'the-wrong-secret-000000000000000',
+      );
+      const res = await recv.inject({
+        method: 'POST',
+        url: '/webhooks/dialpad',
+        headers: { 'content-type': 'application/json' },
+        payload: token,
+      });
+      expect(res.statusCode).toBe(401);
+
+      const audit = await owner.query(
+        `SELECT 1 FROM raw_webhook_events WHERE source = 'dialpad-webhook' AND payload->>'call_id' = $1`,
+        [callId],
+      );
+      expect(audit.rows).toHaveLength(0);
+      expect(await repositories.callState.getCallState(app, callId)).toBeFalsy();
+      expect(added).toEqual([]);
+      await recv.close();
+    });
+  },
+);
