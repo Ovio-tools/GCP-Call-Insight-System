@@ -496,6 +496,68 @@ describe('retention windows config (Task 8.1)', () => {
   });
 });
 
+describe('knowledge-base surface config (Task 10.1)', () => {
+  it('resolves the planned defaults when unset', () => {
+    const result = validateEnv(validEnv());
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.KNOWLEDGE_PAGE_SIZE_DEFAULT).toBe(50);
+    expect(result.config.KNOWLEDGE_PAGE_SIZE_MAX).toBe(200);
+    expect(result.config.KNOWLEDGE_MAX_EXPORT_ROWS).toBe(5000);
+  });
+
+  it('coerces numeric-string overrides', () => {
+    const result = validateEnv({
+      ...validEnv(),
+      KNOWLEDGE_PAGE_SIZE_DEFAULT: '25',
+      KNOWLEDGE_PAGE_SIZE_MAX: '100',
+      KNOWLEDGE_MAX_EXPORT_ROWS: '1000',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.KNOWLEDGE_PAGE_SIZE_DEFAULT).toBe(25);
+    expect(result.config.KNOWLEDGE_PAGE_SIZE_MAX).toBe(100);
+    expect(result.config.KNOWLEDGE_MAX_EXPORT_ROWS).toBe(1000);
+  });
+
+  it('rejects non-positive / non-integer values, naming the variable', () => {
+    for (const key of [
+      'KNOWLEDGE_PAGE_SIZE_DEFAULT',
+      'KNOWLEDGE_PAGE_SIZE_MAX',
+      'KNOWLEDGE_MAX_EXPORT_ROWS',
+    ] as const) {
+      for (const bad of ['0', '-1', '1.5', 'abc', '']) {
+        const result = validateEnv({ ...validEnv(), [key]: bad });
+        expect(result.ok, `${key}=${JSON.stringify(bad)} should be rejected`).toBe(false);
+        if (result.ok) continue;
+        expect(result.error.invalid).toContain(key);
+      }
+    }
+  });
+
+  it('rejects KNOWLEDGE_PAGE_SIZE_DEFAULT greater than KNOWLEDGE_PAGE_SIZE_MAX (schema refine)', () => {
+    const result = validateEnv({
+      ...validEnv(),
+      KNOWLEDGE_PAGE_SIZE_DEFAULT: '201',
+      KNOWLEDGE_PAGE_SIZE_MAX: '200',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('KNOWLEDGE_PAGE_SIZE_DEFAULT');
+  });
+
+  it('is present in .env.example (kept in lockstep with the schema)', () => {
+    const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
+    for (const key of [
+      'KNOWLEDGE_PAGE_SIZE_DEFAULT',
+      'KNOWLEDGE_PAGE_SIZE_MAX',
+      'KNOWLEDGE_MAX_EXPORT_ROWS',
+    ]) {
+      expect(example).toContain(key);
+    }
+  });
+});
+
 describe('per-component heartbeat config (Task 7.1)', () => {
   it('resolves defaults when unset', () => {
     const result = validateEnv(validEnv());
