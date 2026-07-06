@@ -15,6 +15,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "test": "vitest run",
+    "test:security": "vitest run test/security",
     "test:watch": "vitest",
     "start": "node dist/index.js",
     "db:migrate": "node dist/scripts/migrate.js up",
