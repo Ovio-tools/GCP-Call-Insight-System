@@ -8,9 +8,9 @@ import { systemClock, type Clock, type WebhookApp } from '../../http/index.js';
 import { verifyAndDecodeDialpadJwt, type DialpadSecrets } from './jwt.js';
 import { hashPii } from './hash.js';
 import {
-  extractCallId,
   parseClaims,
   replayKeyFor,
+  resolveCallId,
   toAuditPayload,
   toCallStateMetadata,
 } from './payload.js';
@@ -127,7 +127,7 @@ export function registerDialpadWebhook(webhookApp: WebhookApp, deps: DialpadWebh
           context: { environment: config.NODE_ENV, component: 'webhook-receiver' },
         });
       }
-      const callId = extractCallId(parseClaims(result.claims));
+      const callId = resolveCallId(result.claims);
       if (!callId) {
         throw createFailure('REQUEST_MALFORMED', {
           processingState: 'continuing',
