@@ -623,6 +623,21 @@ export const configObjectSchema = z.object({
    * staging/production via requireCheckUrl(config, 'evaluation-cron'). Kept separate from the other
    * cron URLs on purpose — a shared check would stay green while one component is dead. */
   EVALUATION_CHECK_URL: z.string().url().optional(),
+
+  // --- Knowledge-base surface (Task 10.1) ---
+
+  /** Default page size for the paginated knowledge VIEW (`/knowledge`, `/knowledge.json`) when a
+   * request omits `page_size`. Clamped to `[1, KNOWLEDGE_PAGE_SIZE_MAX]`. The cross-field
+   * superRefine enforces `DEFAULT <= MAX`. */
+  KNOWLEDGE_PAGE_SIZE_DEFAULT: z.coerce.number().int().positive().default(50),
+
+  /** Upper bound for the knowledge view `page_size`; a request asking for more is clamped to it. */
+  KNOWLEDGE_PAGE_SIZE_MAX: z.coerce.number().int().positive().default(200),
+
+  /** Hard cap on rows an EXPORT (`export.csv`, `export.json`) returns. The export fetches all
+   * rows matching the filters up to this cap and signals truncation (CSV `X-Export-*` headers /
+   * JSON `truncated`). Bounds the response size of an all-rows export. */
+  KNOWLEDGE_MAX_EXPORT_ROWS: z.coerce.number().int().positive().default(5000),
 });
 
 /**
@@ -671,6 +686,16 @@ export const configSchema = configObjectSchema.superRefine((cfg, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['RETENTION_CLEAN_HARD_DELETE_DAYS'],
       message: `RETENTION_CLEAN_HARD_DELETE_DAYS (${cleanHard}) must be greater than RETENTION_CLEAN_SOFT_DELETE_DAYS (${cleanSoft})`,
+    });
+  }
+
+  // Knowledge view pagination (Task 10.1): the default page size must not exceed the max, else
+  // the clamp `[1, MAX]` would silently shrink an unspecified request below its own default.
+  if (cfg.KNOWLEDGE_PAGE_SIZE_DEFAULT > cfg.KNOWLEDGE_PAGE_SIZE_MAX) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['KNOWLEDGE_PAGE_SIZE_DEFAULT'],
+      message: `KNOWLEDGE_PAGE_SIZE_DEFAULT (${cfg.KNOWLEDGE_PAGE_SIZE_DEFAULT}) must be <= KNOWLEDGE_PAGE_SIZE_MAX (${cfg.KNOWLEDGE_PAGE_SIZE_MAX})`,
     });
   }
 });
