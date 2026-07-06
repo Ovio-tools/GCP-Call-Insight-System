@@ -1,0 +1,11 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "npm ci && npm run build && npm run model:fetch"
+  },
+  "deploy": {
+    "startCommand": "node dist/scripts/run-sample-validation.js --calls \"${SAMPLE_CALL_IDS}\"",
+    "preDeployCommand": ["npm run db:migrate"],
+    "restartPolicyType": "NEVER"
+  }
+}
