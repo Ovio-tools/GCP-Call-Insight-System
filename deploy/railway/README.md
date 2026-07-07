@@ -5,13 +5,25 @@ One config file per service. In the Railway dashboard, set each service's
 
 ## Services
 
-| Service             | Config                     | Public domain   | Schedule           |
-| ------------------- | -------------------------- | --------------- | ------------------ |
-| webhook-receiver    | `webhook-receiver.json`    | yes (dashboard) | —                  |
-| worker              | `worker.json`              | **no**          | —                  |
-| reconciliation-cron | `reconciliation-cron.json` | no              | `*/15 * * * *` UTC |
-| retention-cron      | `retention-cron.json`      | no              | `0 4 * * *` UTC    |
-| evaluation-cron     | `evaluation-cron.json`     | no              | `0 6 * * 1` UTC    |
+| Service             | Config                     | Public domain   | Schedule                   |
+| ------------------- | -------------------------- | --------------- | -------------------------- |
+| webhook-receiver    | `webhook-receiver.json`    | yes (dashboard) | —                          |
+| worker              | `worker.json`              | **no**          | —                          |
+| reconciliation-cron | `reconciliation-cron.json` | no              | `*/15 * * * *` UTC         |
+| retention-cron      | `retention-cron.json`      | no              | `0 4 * * *` UTC            |
+| evaluation-cron     | `evaluation-cron.json`     | no              | `0 6 * * 1` UTC            |
+| sample-validation   | `sample-validation.json`   | no              | on-demand (Task 11.1 demo) |
+
+The **sample-validation** service is NOT part of the live pipeline — it is the consented,
+staging-only demo job (Task 11.1), the one sanctioned way to run **real** Dialpad calls through
+the full pipeline in staging (plan §0.2). For a client demo, deploy Postgres + Redis + this job
+**instead of** the live services; the full end-to-end runbook is
+[`docs/demo-sample-validation-railway.md`](../../docs/demo-sample-validation-railway.md). It has
+prerequisites the live services do not: a persistent volume for the file keystore, a one-time key
+bootstrap on that volume, and the five §0.2 consent gates recorded in `consent_gates`. Its own
+`preDeployCommand` runs migrations (it owns the schema in a demo where no worker is deployed), and
+`restartPolicyType: NEVER` makes it a run-to-completion job — you "trigger" a run by redeploying /
+restarting the service, and the PII-free report prints to the service logs.
 
 ## By-hand dashboard steps (build plan Task 0.3)
 
