@@ -168,11 +168,11 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
   });
 
   it('migration 013 reverses cleanly (down re-grants DELETE, up re-revokes it)', async () => {
-    // down 6: roll back 018 (backfill run status, Task 11.2) + 017 (key lifecycle, Task 8.2) + 016
-    // (labeled_examples, Task 6.3) + 015 (reprocess_requests) + 014 (reveal_raw enum) — all stacked
-    // above 013 — then 013 itself, reaching the pre-013 state where purge_role can DELETE all
-    // purgeable tables again.
-    await migrate('down', 6);
+    // down 7: roll back 019 (kek_versions app read grant) + 018 (backfill run status, Task 11.2) +
+    // 017 (key lifecycle, Task 8.2) + 016 (labeled_examples, Task 6.3) + 015 (reprocess_requests) +
+    // 014 (reveal_raw enum) — all stacked above 013 — then 013 itself, reaching the pre-013 state
+    // where purge_role can DELETE all purgeable tables again.
+    await migrate('down', 7);
     expect(await runAs('purge_role', `DELETE FROM clean_transcripts`)).toBeUndefined();
     // up: 013 (and 014/015/016/017/018) re-applied — the column-scoped DELETE revoke is back.
     await migrate('up');
