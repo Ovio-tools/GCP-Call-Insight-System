@@ -76,7 +76,7 @@ jobs:
       # test fails if TEST_NER_MODEL_DIR is unset, so the recall gate can never
       # silently skip on a PR.
       - name: Cache NER model
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: models
           key: ner-model-${{ hashFiles('package-lock.json') }}-Xenova/bert-base-NER
