@@ -175,6 +175,18 @@ const ADDRESS_WINDOW_CHARS = 40;
 const GREETING_STRONG = /\b(?:my\s+name\s+is|ask\s+for|speaking\s+with)\s+([A-Z][a-z'-]+)/g;
 const GREETING_WEAK = /\b(?:this\s+is|it'?s)\s+([A-Z][a-z'-]+\s+[A-Z][a-z'-]+)/g;
 
+/**
+ * Per-value diagnostic predicate: does `plaintext` reappear in `redactedText`, by the SAME
+ * rule the vault_value_reintroduced sub-scan uses (tokens stripped; long values matched on the
+ * punctuation-collapsed text, short values on word boundaries)? Used ONLY by the offline
+ * redaction-inspection tool to show WHICH vaulted value leaked — the production scan reports
+ * counts only. Kept here so the inspection view can never drift from the scan's verdict.
+ */
+export function isVaultValueReintroduced(plaintext: string, redactedText: string): boolean {
+  const text = redactedText.replace(TOKEN_PATTERN, ' ');
+  return reintroduced(plaintext, normalizeAggressive(text), wordTokens(text));
+}
+
 export function residualScan(input: ResidualScanInput): ResidualScanResult {
   // Strip our own tokens first so [PHONE_3456789] digits never self-trigger.
   const text = input.redactedText.replace(TOKEN_PATTERN, ' ');

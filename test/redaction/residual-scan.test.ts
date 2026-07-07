@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { residualScan } from '../../src/redaction/residual-scan.js';
+import { isVaultValueReintroduced, residualScan } from '../../src/redaction/residual-scan.js';
 
 function scan(redactedText: string, vaultPlaintexts: string[] = [], denyTerms: string[] = []) {
   return residualScan({ redactedText, vaultPlaintexts, denyTerms });
@@ -123,6 +123,18 @@ describe('residualScan', () => {
       expect(
         scan('ok j-o-h-n S M I T H called', ['John Smith']).counts.vault_value_reintroduced,
       ).toBe(1);
+    });
+  });
+
+  describe('isVaultValueReintroduced (per-value predicate, for the inspection diagnostic)', () => {
+    it('matches the residualScan verdict: standalone reintroduction hits, in-word substring does not', () => {
+      expect(isVaultValueReintroduced('Ana', 'please call Ana back')).toBe(true);
+      expect(isVaultValueReintroduced('Ana', 'the banana bread')).toBe(false);
+    });
+
+    it('catches a long value split by punctuation and ignores our own tokens', () => {
+      expect(isVaultValueReintroduced('John Smith', 'ok j-o-h-n S M I T H called')).toBe(true);
+      expect(isVaultValueReintroduced('John Smith', 'hi [NAME_1] here')).toBe(false);
     });
   });
 });
