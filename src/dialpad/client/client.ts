@@ -229,7 +229,10 @@ export function createDialpadClient(opts: CreateDialpadClientOptions): DialpadCl
       if (o.cursor !== undefined) params.set('cursor', o.cursor);
       if (o.limit !== undefined) params.set('limit', String(o.limit));
 
-      const { status, text } = await request('calls', `/calls?${params.toString()}`);
+      // Dialpad Call-List endpoint is GET /api/v2/call (singular) — confirmed against the
+      // official reference (developers.dialpad.com/reference/calllist). The `endpoint` tag
+      // stays 'calls' so the failure-model context/log taxonomy is unchanged.
+      const { status, text } = await request('calls', `/call?${params.toString()}`);
       if (status !== 200) {
         throw new DialpadError('api_changed', { endpoint: 'calls', status, attempts: 1 });
       }

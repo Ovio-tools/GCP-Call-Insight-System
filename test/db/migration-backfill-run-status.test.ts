@@ -11,9 +11,10 @@ import { makeAppPool } from './_dal.js';
  * the tracking table's PK + FKs + grants (SELECT/INSERT/DELETE — the restart contract deletes
  * tracking rows), and a clean down.
  *
- * 018 is the topmost migration, so ABOVE = 1: down(1) exposes the pre-018 schema, up(1) re-applies.
+ * With migration 019 (kek_versions app read grant) stacked on top, ABOVE = 2: down(2) rolls back
+ * 019 then exposes the pre-018 schema, up(2) re-applies 018 + 019.
  */
-const ABOVE = 1;
+const ABOVE = 2;
 
 describe.skipIf(!hasTestDb)('migration 018 — backfill run status + tracking', () => {
   let owner!: Pool;

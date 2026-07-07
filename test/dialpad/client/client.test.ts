@@ -167,8 +167,10 @@ describe('DialpadClient.listRecentlyConcludedCalls', () => {
       { callId: 'c-2', state: 'hangup' },
     ]);
     // started_after is passed as the since epoch; no transcript endpoint is touched.
+    // The real Dialpad Call-List endpoint is GET /api/v2/call (singular), not /calls.
     const url = String(fetchImpl.mock.calls[0]?.[0]);
-    expect(url).toContain('/calls?');
+    expect(url).toMatch(/\/call\?/);
+    expect(url).not.toContain('/calls?');
     expect(url).toContain('started_after=1700000000000');
     expect(url).not.toContain('/transcripts/');
   });

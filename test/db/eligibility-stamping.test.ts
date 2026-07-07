@@ -194,10 +194,11 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
     );
 
     // Re-run migration 013 → its forward-only backfill stamps clean/findings/webhook/match_keys.
-    // down 6 rolls back 018 (backfill run status, Task 11.2) + 017 (key lifecycle, Task 8.2) + 016
-    // (labeled_examples, Task 6.3) + 015 (reprocess_requests) + 014 (reveal_raw enum) — all stacked
-    // above 013 — then 013 itself; the following `up` re-applies all six, re-running 013's backfill.
-    await migrate('down', 6);
+    // down 7 rolls back 019 (kek_versions app read grant) + 018 (backfill run status, Task 11.2) +
+    // 017 (key lifecycle, Task 8.2) + 016 (labeled_examples, Task 6.3) + 015 (reprocess_requests) +
+    // 014 (reveal_raw enum) — all stacked above 013 — then 013 itself; the following `up` re-applies
+    // all seven, re-running 013's backfill.
+    await migrate('down', 7);
     await migrate('up');
 
     expect(await cleanEligibleAt('test-elig-bf')).not.toBeNull();

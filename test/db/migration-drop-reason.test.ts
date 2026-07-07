@@ -19,9 +19,10 @@ describe.skipIf(!hasTestDb)('migration 6 precondition (pre-existing skipped rows
   // 8 (classify_reasons), 9 (extract_stage), 10 (component_heartbeats), 11 (alert_events delivery
   // cols), 12 (review_queue active-row invariants), 13 (retention purge grants, Task 8.1), 14
   // (reveal_raw enum), 15 (reprocess_requests, Task 6.2), 16 (labeled_examples, Task 6.3), 17
-  // (key lifecycle, Task 8.2), and 18 (backfill run status, Task 11.2) sit above 6, so we roll back
-  // 13 migrations (6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18) to reach the pre-6 schema.
-  const MIGRATIONS_ABOVE_6 = 13;
+  // (key lifecycle, Task 8.2), 18 (backfill run status, Task 11.2), and 19 (kek_versions app read
+  // grant) sit above 6, so we roll back 14 migrations (6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17,
+  // 18, 19) to reach the pre-6 schema.
+  const MIGRATIONS_ABOVE_6 = 14;
 
   it('fails loudly if a skipped call_state row pre-exists', async () => {
     const callId = 'test-drop-preexisting-skipped';

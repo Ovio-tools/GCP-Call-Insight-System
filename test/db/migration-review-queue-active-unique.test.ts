@@ -12,7 +12,7 @@ import { hasTestDb, makePool, migrate } from './_pg.js';
  * Task 6.2) + 016 (labeled_examples, Task 6.3) + 017 (key lifecycle, Task 8.2) + 018 (backfill run
  * status, Task 11.2) = 7.
  */
-const ABOVE = 7;
+const ABOVE = 8;
 const PATTERN = 'test-rqau-%';
 
 describe.skipIf(!hasTestDb)('migration 012 review_queue active-row invariants', () => {
