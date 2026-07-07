@@ -23,6 +23,7 @@ import { createDenyListDetector, loadDenyList } from '../redaction/deny-list.js'
 import { createNerDetector } from '../redaction/ner-detector.js';
 import { createRegexDetector } from '../redaction/regex-detectors.js';
 import { residualScan } from '../redaction/residual-scan.js';
+import { transcriptToRedactableText } from '../redaction/transcript-text.js';
 import { deriveSpanSignals, scoreRisk, shouldHoldForRisk } from '../redaction/risk.js';
 import { mergeDetections } from '../redaction/spans.js';
 import { tokenize } from '../redaction/tokenize.js';
@@ -138,8 +139,8 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     }
 
     // 1. Input: raw transcript only, via envelope decryption. Absent ⇒ fail closed.
-    const transcript = await getTranscript(pool, deps.keyProvider, callId);
-    if (transcript === undefined) {
+    const rawTranscript = await getTranscript(pool, deps.keyProvider, callId);
+    if (rawTranscript === undefined) {
       logger.info({ stage }, 'raw transcript absent at redact — holding');
       return {
         action: 'hold',
@@ -147,6 +148,12 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
         errorCode: 'DIALPAD_TRANSCRIPT_MISSING',
       };
     }
+    // Redact/scan the spoken CONTENT, not the raw JSON envelope. The stored blob keeps
+    // the verbatim response for audit; here we derive the model-visible text — dropping
+    // per-line structural metadata (epoch-ms timestamps, numeric ids) that would
+    // otherwise flood the residual scan with false digit_run holds. A non-JSON /
+    // unrecognised blob falls back to the raw string unchanged (never redacts less).
+    const transcript = transcriptToRedactableText(rawTranscript);
 
     // 2. Detect. Infrastructure throws (model missing/corrupt) propagate to the
     //    runner → BullMQ retry → dead-letter; the call never advances. Quality

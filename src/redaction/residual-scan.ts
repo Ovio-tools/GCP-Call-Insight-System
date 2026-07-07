@@ -52,6 +52,61 @@ function normalizeAggressive(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
+/** Lowercase alphanumeric word tokens, for boundary-aware matching. */
+function wordTokens(s: string): string[] {
+  return s
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/** True when `needle` appears as a consecutive run of WHOLE words inside `hay`. */
+function containsWordSequence(hay: readonly string[], needle: readonly string[]): boolean {
+  if (needle.length === 0) return false;
+  for (let i = 0; i + needle.length <= hay.length; i += 1) {
+    let match = true;
+    for (let j = 0; j < needle.length; j += 1) {
+      if (hay[i + j] !== needle[j]) {
+        match = false;
+        break;
+      }
+    }
+    if (match) return true;
+  }
+  return false;
+}
+
+/** Below this many normalized chars, a value is too short to recheck at all. */
+const REINTRO_MIN_CHARS = 3;
+/** At/above this many normalized chars, the aggressive concatenated-substring match is
+ *  safe: a coincidental in-word collision at that length is negligible, and it still
+ *  catches a letter-/space-split reintroduction ("j-o-h-n s m i t h"). */
+const REINTRO_CONCAT_MIN_CHARS = 8;
+
+/**
+ * Was a vaulted plaintext reintroduced into the output? Two modes, split to kill the
+ * short-substring false positive (a 3-char name matching INSIDE a common word — "Ana"
+ * in "banana") without weakening the boundary:
+ *  - LONG values (>= {@link REINTRO_CONCAT_MIN_CHARS} normalized chars, e.g.
+ *    "John Smith" -> "johnsmith"): matched on the punctuation-collapsed text, so a
+ *    split reintroduction is still caught; in-word collision at that length is
+ *    negligible.
+ *  - SHORT values (3-7 chars, i.e. most single names): matched on WORD BOUNDARIES,
+ *    so a standalone reintroduction still holds but a substring-of-a-word does not.
+ *    Tradeoff: a short name spelled out letter-by-letter is not caught here; the far
+ *    more common standalone reintroduction is.
+ */
+function reintroduced(
+  plaintext: string,
+  concatText: string,
+  hayTokens: readonly string[],
+): boolean {
+  const alnum = normalizeAggressive(plaintext);
+  if (alnum.length < REINTRO_MIN_CHARS) return false;
+  if (alnum.length >= REINTRO_CONCAT_MIN_CHARS) return concatText.includes(alnum);
+  return containsWordSequence(hayTokens, wordTokens(plaintext));
+}
+
 /** Number words for the spelled-out-digit scan. "oh" counts as zero; bare "o" does not. */
 const DIGIT_WORDS = new Map<string, number>([
   ['zero', 1],
@@ -128,19 +183,20 @@ export function residualScan(input: ResidualScanInput): ResidualScanResult {
     .toLowerCase()
     .split(/[^a-z]+/)
     .filter(Boolean);
+  // Word tokens INCLUDING digits, for the boundary-aware vault recheck below.
+  const textTokens = wordTokens(text);
 
   const counts: Record<string, number> = {};
   const add = (category: ResidualScanCategory, n: number): void => {
     if (n > 0) counts[category] = (counts[category] ?? 0) + n;
   };
 
-  // 1. Vault-originals recheck — catches replacement/offset bugs.
+  // 1. Vault-originals recheck — catches replacement/offset bugs. Long values match on
+  //    the punctuation-collapsed text; short values (names) match on word boundaries so
+  //    they can't false-hit inside a common word. See reintroduced().
   add(
     'vault_value_reintroduced',
-    input.vaultPlaintexts.filter((p) => {
-      const needle = normalizeAggressive(p);
-      return needle.length >= 3 && normalized.includes(needle);
-    }).length,
+    input.vaultPlaintexts.filter((p) => reintroduced(p, normalized, textTokens)).length,
   );
 
   // 2a. Digit runs: >= 7 digits ignoring ALL intervening non-alphanumerics.
