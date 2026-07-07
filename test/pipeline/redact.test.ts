@@ -432,6 +432,42 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     expect(classifySpy).not.toHaveBeenCalled();
   });
 
+  it('scans spoken content, not the raw JSON envelope: a lines[] transcript with epoch-ms metadata is not held on digit_run', async () => {
+    const callId = 'test-rd-json-envelope';
+    // A realistic Dialpad lines[] body: clean spoken content plus per-line structural
+    // metadata (13-digit epoch-ms `time`, numeric `user_id`) that is NOT speech. Scanning
+    // the whole envelope would trip digit_run on every timestamp and hold the call.
+    const body = JSON.stringify({
+      call_id: callId,
+      lines: [
+        {
+          name: 'Agent',
+          content: 'How can I help you today',
+          time: 1_700_000_000_123,
+          user_id: 42,
+        },
+        {
+          name: 'Customer',
+          content: 'the water heater is leaking and we need someone this week',
+          time: 1_700_000_009_999,
+          user_id: 88,
+        },
+      ],
+    });
+    await seedProcessing(callId, body);
+    // No detections: the spoken content carries no PII, so the only thing that could hold
+    // this call is the envelope metadata — which must not be scanned.
+    const result = await makeHandler([fakeDetector('fake', {})])(ctx(callId));
+    expect(result).toEqual({ action: 'continue' });
+
+    const clean = await getCleanTranscript(app, callId);
+    expect(clean?.redacted_text).toContain('How can I help you today');
+    expect(clean?.redacted_text).toContain('the water heater is leaking');
+    // The model must never see the raw envelope timestamps.
+    expect(clean?.redacted_text).not.toContain('1700000000123');
+    expect(clean?.redacted_text).not.toContain('user_id');
+  });
+
   it('missing transcript at redact holds missing_transcript', async () => {
     const callId = 'test-rd-notranscript';
     await upsertCallState(app, {
