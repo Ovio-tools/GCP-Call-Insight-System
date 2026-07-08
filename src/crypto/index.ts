@@ -28,6 +28,7 @@ export {
 } from './key-store.js';
 export { KeyStoreProvider, type KeyStoreProviderOptions } from './key-store-provider.js';
 export { RailwaySecretKeyStore } from './railway-secret-key-store.js';
+export { RailwayApiSecretBackend } from './railway-api-secret-backend.js';
 export {
   EnvSecretBackend,
   InMemorySecretBackend,

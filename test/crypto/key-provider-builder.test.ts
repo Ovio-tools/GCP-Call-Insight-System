@@ -100,6 +100,30 @@ describe('keyStoreFromConfig — railway', () => {
     expect(store).toBeInstanceOf(RailwaySecretKeyStore);
   });
 
+  it('throws naming CRYPTO_KEK_MATERIAL when railway key material is missing', () => {
+    expect(() =>
+      keyStoreFromConfig(
+        cfg({
+          NODE_ENV: 'production',
+          CRYPTO_KEY_PROVIDER: 'railway',
+          CRYPTO_WRAPPED_DEK_MATERIAL: JSON.stringify({ active: {}, pending: {} }),
+        }),
+      ),
+    ).toThrow(/CRYPTO_KEK_MATERIAL/);
+  });
+
+  it('throws naming CRYPTO_WRAPPED_DEK_MATERIAL when only the KEK material is present', () => {
+    expect(() =>
+      keyStoreFromConfig(
+        cfg({
+          NODE_ENV: 'production',
+          CRYPTO_KEY_PROVIDER: 'railway',
+          CRYPTO_KEK_MATERIAL: JSON.stringify({ active: {}, pending: {} }),
+        }),
+      ),
+    ).toThrow(/CRYPTO_WRAPPED_DEK_MATERIAL/);
+  });
+
   it('isKeyStoreProvider is true for keystore and railway, false for local/kms', () => {
     expect(isKeyStoreProvider('keystore')).toBe(true);
     expect(isKeyStoreProvider('railway')).toBe(true);

@@ -80,6 +80,15 @@ migration split); it is not detailed further here since it is a separate PR.
 - `docs/key-hierarchy.md`, `docs/backup-retention.md`, and `docs/restore-drill.md` are
   updated alongside this ADR to describe the Railway key holder and (for Move 2) the
   two-database layout.
+- **Operational: the secret-name/env-var coupling is load-bearing.** A running service
+  reads key material from the env vars `CRYPTO_KEK_MATERIAL` / `CRYPTO_WRAPPED_DEK_MATERIAL`,
+  but the CLIs write the Railway _variable named by_ `CRYPTO_KEK_SECRET_NAME` /
+  `CRYPTO_WRAPPED_DEK_SECRET_NAME`. For a CLI write to reach services, the Railway variable
+  under each `*_SECRET_NAME` must be injected as the matching `CRYPTO_*_MATERIAL` env var.
+  The defaults make the name equal to the env var (`CRYPTO_KEK_SECRET_NAME=CRYPTO_KEK_MATERIAL`),
+  so they are coupled with no extra wiring; overriding a `*_SECRET_NAME` requires wiring the
+  correspondingly-named Railway variable into the matching `CRYPTO_*_MATERIAL` env var, or
+  CLI-written material never reaches services.
 
 See the full design spec:
 `docs/superpowers/specs/2026-07-08-railway-secret-keystore-and-raw-store-isolation-design.md`.

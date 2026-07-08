@@ -117,6 +117,15 @@ export function keyProviderFromConfig(config: Config): KeyProvider {
  */
 export function keyStoreFromConfig(config: Config): KeyStore {
   if (config.CRYPTO_KEY_PROVIDER === 'railway') {
+    // Presence validation lives here (the consumer), not in the loader — services that never
+    // encrypt still boot. Name the missing var(s), matching "names the missing value".
+    if (!config.CRYPTO_KEK_MATERIAL || !config.CRYPTO_WRAPPED_DEK_MATERIAL) {
+      const missing = [
+        !config.CRYPTO_KEK_MATERIAL ? 'CRYPTO_KEK_MATERIAL' : null,
+        !config.CRYPTO_WRAPPED_DEK_MATERIAL ? 'CRYPTO_WRAPPED_DEK_MATERIAL' : null,
+      ].filter(Boolean);
+      throw new Error(`CRYPTO_KEY_PROVIDER=railway requires: ${missing.join(', ')}`);
+    }
     return new RailwaySecretKeyStore({
       backend: new EnvSecretBackend({
         [config.CRYPTO_KEK_SECRET_NAME]: config.CRYPTO_KEK_MATERIAL,

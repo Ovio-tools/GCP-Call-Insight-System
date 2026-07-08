@@ -2,7 +2,7 @@ import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { createAppPool } from '../db/index.js';
-import { keyProviderFromConfig } from '../crypto/index.js';
+import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
 import { createRestrictedRunner } from '../db/restricted/restricted-context.js';
 import { loadDenyList } from '../redaction/deny-list.js';
 import { createQueueConnectionFromConfig } from '../queue/connection.js';
@@ -39,7 +39,7 @@ async function main(): Promise<void> {
   const redis = createRedisClient(config.REDIS_URL);
   const queueConnection = createQueueConnectionFromConfig(config);
   const queue = createPipelineQueue(config, queueConnection);
-  const keyProvider = keyProviderFromConfig(config);
+  const keyProvider = await buildServiceKeyProvider({ config, pool });
   const runner = createRestrictedRunner(pool);
   const denyTerms = loadDenyList(config.REDACTION_DENY_LIST_PATH);
 
