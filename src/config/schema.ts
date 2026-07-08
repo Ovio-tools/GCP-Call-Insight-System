@@ -71,6 +71,12 @@ export const configObjectSchema = z.object({
    * CONFIG_MISSING_OR_INVALID so the store-specific code always surfaces. */
   DATABASE_URL: z.string().min(1).optional(),
 
+  /** DB-B (raw store) connection. Holds ONLY raw_transcripts + token_vault + raw_purge_tombstone,
+   * on a Postgres whose backups are off (ADR 0008 Move 2). Optional here for the same reason as
+   * DATABASE_URL: presence + reachability are owned by the boot readiness check, which emits
+   * DATABASE_UNAVAILABLE rather than CONFIG_MISSING_OR_INVALID. */
+  RAW_DATABASE_URL: z.string().min(1).optional(),
+
   /** Redis connection string (BullMQ backend). Optional for the same reason as
    * DATABASE_URL — readiness owns it and emits REDIS_UNAVAILABLE. */
   REDIS_URL: z.string().min(1).optional(),

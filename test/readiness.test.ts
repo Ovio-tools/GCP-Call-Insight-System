@@ -7,6 +7,7 @@ import { makeTestConfig } from './_config.js';
 function baseConfig(overrides: Partial<Config> = {}): Config {
   return makeTestConfig({
     DATABASE_URL: 'postgres://user:pw@localhost:5432/db',
+    RAW_DATABASE_URL: 'postgres://user:pw@localhost:5432/raw',
     REDIS_URL: 'redis://localhost:6379',
     SERVICE_NAME: 'test',
     ...overrides,
@@ -68,6 +69,47 @@ describe('assertDependenciesReady', () => {
     expect(exit).toHaveBeenCalledWith(1);
     expect(fatal.mock.calls[0]?.[0]).toMatchObject({ error_code: 'DATABASE_UNAVAILABLE' });
     expect(end).toHaveBeenCalledTimes(1);
+  });
+
+  it('exits DATABASE_UNAVAILABLE when RAW_DATABASE_URL is missing', async () => {
+    const exit = vi.fn((_c: number) => undefined as never);
+    const fatal = vi.fn();
+    const logger = { fatal, flush: vi.fn() } as unknown as Logger;
+    await assertDependenciesReady(baseConfig({ RAW_DATABASE_URL: undefined }), logger, {
+      createPg: () => okPg(),
+      createRedis: () => okRedis(),
+      exit,
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(fatal.mock.calls[0]?.[0]).toMatchObject({
+      error_code: 'DATABASE_UNAVAILABLE',
+      context: { missing: 'RAW_DATABASE_URL' },
+    });
+  });
+
+  it('exits DATABASE_UNAVAILABLE when the raw store connect fails', async () => {
+    const exit = vi.fn((_c: number) => undefined as never);
+    const fatal = vi.fn();
+    const logger = { fatal, flush: vi.fn() } as unknown as Logger;
+    const rawEnd = vi.fn(() => Promise.resolve());
+    // Same injected factory backs both probes; select by URL so the PRIMARY store
+    // is healthy and only the raw store (DB-B) fails its SELECT 1.
+    const createPg = (url: string): PgProbe =>
+      url.endsWith('/raw')
+        ? {
+            connect: vi.fn(() => Promise.resolve()),
+            query: vi.fn(() => Promise.reject(new Error('ECONNREFUSED'))),
+            end: rawEnd,
+          }
+        : okPg();
+    await assertDependenciesReady(baseConfig(), logger, {
+      createPg,
+      createRedis: () => okRedis(),
+      exit,
+    });
+    expect(exit).toHaveBeenCalledWith(1);
+    expect(fatal.mock.calls[0]?.[0]).toMatchObject({ error_code: 'DATABASE_UNAVAILABLE' });
+    expect(rawEnd).toHaveBeenCalledTimes(1);
   });
 
   it('exits REDIS_UNAVAILABLE when REDIS_URL is missing (worker QA)', async () => {
