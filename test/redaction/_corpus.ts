@@ -1,12 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { composeRedaction } from '../../src/redaction/compose.js';
 import { createDenyListDetector } from '../../src/redaction/deny-list.js';
 import { createNerDetector } from '../../src/redaction/ner-detector.js';
 import { createRegexDetector } from '../../src/redaction/regex-detectors.js';
-import { residualScan } from '../../src/redaction/residual-scan.js';
 import { deriveSpanSignals, scoreRisk, shouldHoldForRisk } from '../../src/redaction/risk.js';
-import { mergeDetections } from '../../src/redaction/spans.js';
-import { tokenize } from '../../src/redaction/tokenize.js';
 import type { Detector, RiskSignal } from '../../src/redaction/types.js';
 import { configSchema } from '../../src/config/schema.js';
 import { REQUIRED_ENV } from '../_config.js';
@@ -86,11 +84,9 @@ export async function runStack(
   riskThreshold: number,
 ): Promise<CaseOutcome> {
   const results = await Promise.all(detectors.map((d) => d.detect(text)));
-  const { spans, disagreement } = mergeDetections(results.flatMap((r) => [...r.detections]));
-  const tokenized = tokenize(text, spans);
-  const residual = residualScan({
-    redactedText: tokenized.redactedText,
-    vaultPlaintexts: tokenized.vaultEntries.map((e) => e.plaintext),
+  const { spans, disagreement, tokenized, residual } = composeRedaction({
+    text,
+    detectorResults: results,
     denyTerms,
   });
   const residualHit = residual.hits.length > 0;

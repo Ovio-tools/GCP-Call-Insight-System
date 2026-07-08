@@ -8,15 +8,14 @@ import { createAppPool } from '../db/index.js';
 import type { KeyProvider } from '../crypto/index.js';
 import { getTranscript } from '../db/repositories/raw-transcripts-repo.js';
 import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
+import { composeRedaction } from '../redaction/compose.js';
 import { requireRedactionConfig } from '../redaction/config.js';
 import { loadDenyList } from '../redaction/deny-list.js';
 import { createDenyListDetector } from '../redaction/deny-list.js';
 import { createNerDetector } from '../redaction/ner-detector.js';
 import { createRegexDetector } from '../redaction/regex-detectors.js';
-import { residualScan, isVaultValueReintroduced } from '../redaction/residual-scan.js';
+import { isVaultValueReintroduced } from '../redaction/residual-scan.js';
 import { transcriptToRedactableText } from '../redaction/transcript-text.js';
-import { mergeDetections } from '../redaction/spans.js';
-import { tokenize } from '../redaction/tokenize.js';
 import type { Detector } from '../redaction/types.js';
 import { assertStagingResources } from '../sample-validation/index.js';
 
@@ -149,14 +148,12 @@ export async function inspectCall(
 
   const transcript = transcriptToRedactableText(raw);
   const results = await Promise.all(deps.detectors.map((d) => d.detect(transcript)));
-  const { spans } = mergeDetections(results.flatMap((r) => [...r.detections]));
-  const tokenized = tokenize(transcript, spans);
-  const vaultValues = tokenized.vaultEntries.map((e) => e.plaintext);
-  const residual = residualScan({
-    redactedText: tokenized.redactedText,
-    vaultPlaintexts: vaultValues,
+  const { tokenized, residual } = composeRedaction({
+    text: transcript,
+    detectorResults: results,
     denyTerms: deps.denyTerms,
   });
+  const vaultValues = tokenized.vaultEntries.map((e) => e.plaintext);
 
   const reintroduced: Reintroduction[] = vaultValues
     .filter((v) => isVaultValueReintroduced(v, tokenized.redactedText))
