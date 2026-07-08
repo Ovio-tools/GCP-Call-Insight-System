@@ -65,11 +65,19 @@ export class RailwayApiSecretBackend implements SecretBackend {
   }
 
   async write(name: string, value: string): Promise<void> {
-    await this.#gql<{ variableUpsert: boolean }>(
-      `mutation($environmentId: String!, $serviceId: String!, $name: String!, $value: String!) {
-         variableUpsert(input: { environmentId: $environmentId, serviceId: $serviceId, name: $name, value: $value })
-       }`,
-      { environmentId: this.#environmentId, serviceId: this.#serviceId, name, value },
-    );
+    try {
+      await this.#gql<{ variableUpsert: boolean }>(
+        `mutation($environmentId: String!, $serviceId: String!, $name: String!, $value: String!) {
+           variableUpsert(input: { environmentId: $environmentId, serviceId: $serviceId, name: $name, value: $value })
+         }`,
+        { environmentId: this.#environmentId, serviceId: this.#serviceId, name, value },
+      );
+    } catch {
+      // Rethrow a GENERIC error: #gql folds the upstream GraphQL errors[].message in verbatim, and
+      // if Railway ever echoes the submitted value back in a validation error, propagating it would
+      // leak key material to the CLI's stderr (CLIs print String(err)). Never include the caught
+      // error, the name, or the value. read() keeps its detailed errors — it sends no key material.
+      throw new Error('Railway API: variable write failed');
+    }
   }
 }

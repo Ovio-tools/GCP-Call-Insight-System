@@ -150,17 +150,26 @@ export function keyStoreFromConfig(config: Config): KeyStore {
  */
 export function keyStoreForCli(config: Config): KeyStore {
   if (config.CRYPTO_KEY_PROVIDER === 'railway') {
-    if (!config.RAILWAY_API_TOKEN || !config.RAILWAY_ENVIRONMENT_ID || !config.RAILWAY_SERVICE_ID) {
-      throw new Error(
-        'railway key CLIs require RAILWAY_API_TOKEN, RAILWAY_ENVIRONMENT_ID, and RAILWAY_SERVICE_ID',
-      );
+    const token = config.RAILWAY_API_TOKEN;
+    const environmentId = config.RAILWAY_ENVIRONMENT_ID;
+    const serviceId = config.RAILWAY_SERVICE_ID;
+    // Name only the missing var(s), matching the loader's "names the missing value" convention.
+    const missing = (
+      [
+        ['RAILWAY_API_TOKEN', token],
+        ['RAILWAY_ENVIRONMENT_ID', environmentId],
+        ['RAILWAY_SERVICE_ID', serviceId],
+      ] as const
+    )
+      .filter(([, v]) => !v)
+      .map(([name]) => name);
+    // The `!token || ...` clause is equivalent to `missing.length > 0` but also narrows the locals
+    // to `string` for the backend constructor below.
+    if (missing.length > 0 || !token || !environmentId || !serviceId) {
+      throw new Error(`railway key CLIs require: ${missing.join(', ')}`);
     }
     return new RailwaySecretKeyStore({
-      backend: new RailwayApiSecretBackend({
-        token: config.RAILWAY_API_TOKEN,
-        environmentId: config.RAILWAY_ENVIRONMENT_ID,
-        serviceId: config.RAILWAY_SERVICE_ID,
-      }),
+      backend: new RailwayApiSecretBackend({ token, environmentId, serviceId }),
       kekSecretName: config.CRYPTO_KEK_SECRET_NAME,
       dekSecretName: config.CRYPTO_WRAPPED_DEK_SECRET_NAME,
       recoveryWindowDays: config.KEY_STORE_RECOVERY_WINDOW_DAYS,

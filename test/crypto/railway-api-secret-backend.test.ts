@@ -36,4 +36,16 @@ describe('RailwayApiSecretBackend', () => {
     const backend = new RailwayApiSecretBackend({ ...opts, fetch: fetchReturning({ errors: [{ message: 'nope' }] }) });
     await expect(backend.read('X')).rejects.toThrow(/Railway API/);
   });
+  it('write rethrows a GENERIC error that cannot contain the submitted value', async () => {
+    const value = '{"active":{"kek-1":{"bytes":"leaked-secret"}}}';
+    // Simulate Railway echoing the submitted value back in a validation error message.
+    const backend = new RailwayApiSecretBackend({
+      ...opts,
+      fetch: fetchReturning({ errors: [{ message: `invalid value: ${value}` }] }),
+    });
+    const err = await backend.write('CRYPTO_KEK_MATERIAL', value).catch((e: unknown) => e as Error);
+    const msg = (err as Error).message;
+    expect(msg).toMatch(/Railway API/);
+    expect(msg).not.toContain(value);
+  });
 });
