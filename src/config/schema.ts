@@ -92,9 +92,10 @@ export const configObjectSchema = z.object({
 
   /** Envelope-encryption key source. `local` derives DEKs from CRYPTO_LOCAL_MASTER_KEY
    * (dev/test only); `keystore` is the DB-sourced external {@link KeyStore} (Task 8.2,
-   * dev/staging via `LocalFileKeyStore`; refused in production pending Task 8.2b); `kms`
-   * is the production external key service (Task 8.2b — still throws). */
-  CRYPTO_KEY_PROVIDER: z.enum(['local', 'keystore', 'kms']).default('local'),
+   * dev/staging via `LocalFileKeyStore`; refused in production pending Task 8.2b); `railway`
+   * is the production-capable KeyStore backed by Railway Secrets (Task 8.2c, see ADR 0008);
+   * `kms` is the production external key service (Task 8.2b — still throws). */
+  CRYPTO_KEY_PROVIDER: z.enum(['local', 'keystore', 'railway', 'kms']).default('local'),
 
   /** Base64-encoded master secret for the local key provider (>= 32 bytes decoded).
    * Optional here — like DATABASE_URL, the consumer validates it: keyProviderFromConfig
@@ -144,6 +145,21 @@ export const configObjectSchema = z.object({
    * just-retired/destroy-requested key. MUST be >= the deployed active-version cache TTL across all
    * encrypting services (default TTL 5s). 0 disables the wait (single-node / no live workers). */
   KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: z.coerce.number().int().nonnegative().default(6_000),
+
+  // --- Railway-secret key store (production-capable; see ADR 0008) ---
+  /** Secret name holding the KEK document. Injected into services at boot; mutated by the CLIs. */
+  CRYPTO_KEK_SECRET_NAME: z.string().min(1).default('CRYPTO_KEK_MATERIAL'),
+  /** Secret name holding the wrapped-DEK document. */
+  CRYPTO_WRAPPED_DEK_SECRET_NAME: z.string().min(1).default('CRYPTO_WRAPPED_DEK_MATERIAL'),
+  /** KEK document value (JSON), injected at boot on services. Consumer validates presence. */
+  CRYPTO_KEK_MATERIAL: z.string().optional(),
+  /** Wrapped-DEK document value (JSON), injected at boot on services. */
+  CRYPTO_WRAPPED_DEK_MATERIAL: z.string().optional(),
+  /** Railway API token — CLIs only, to read/write the two secrets and trigger a redeploy. */
+  RAILWAY_API_TOKEN: z.string().optional(),
+  /** Railway environment + service the CLIs mutate secrets on. CLIs validate presence. */
+  RAILWAY_ENVIRONMENT_ID: z.string().optional(),
+  RAILWAY_SERVICE_ID: z.string().optional(),
 
   /** BullMQ queue name for the per-call pipeline (Task 2.1). */
   WORKER_QUEUE_NAME: z.string().min(1).default('call-pipeline'),
