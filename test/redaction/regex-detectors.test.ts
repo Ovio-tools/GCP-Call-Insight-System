@@ -61,6 +61,21 @@ describe('email detection', () => {
 
   it('does not flag ordinary "at"/"dot" prose', () => {
     expect(detectEmails('meet me at the shop dot your i')).toHaveLength(0);
+    expect(detectEmails('we will be at the house at noon')).toHaveLength(0);
+  });
+
+  it('detects unicode confusable at-signs', () => {
+    const text = 'Billing goes to accounts＠example.com with the little at sign';
+    const hits = detectEmails(text);
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(surface(text, hits[0]!)).toContain('accounts＠example.com');
+  });
+
+  it('detects the mixed spoken form (spoken at, literal dot)', () => {
+    const text = 'just email john at gmail.com whenever works';
+    const hits = detectEmails(text);
+    expect(hits).toHaveLength(1);
+    expect(surface(text, hits[0]!)).toBe('john at gmail.com');
   });
 });
 

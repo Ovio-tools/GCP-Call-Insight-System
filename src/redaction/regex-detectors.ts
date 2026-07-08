@@ -1,4 +1,9 @@
-import { findGreetingNames, findLongDigitRuns, findSpelledDigitRuns } from './mirror-finders.js';
+import {
+  findEmailLike,
+  findGreetingNames,
+  findLongDigitRuns,
+  findSpelledDigitRuns,
+} from './mirror-finders.js';
 import type { Detection, Detector, DetectorResult, EntityType, RiskSignal } from './types.js';
 
 /**
@@ -136,7 +141,14 @@ export function detectPhones(text: string): Detection[] {
 }
 
 export function detectEmails(text: string): Detection[] {
-  return dedupe([...scan(text, EMAIL_STANDARD, 'email'), ...scan(text, EMAIL_OBFUSCATED, 'email')]);
+  return dedupe([
+    ...scan(text, EMAIL_STANDARD, 'email'),
+    ...scan(text, EMAIL_OBFUSCATED, 'email'),
+    // ADR 0007: shapes only the residual email_like sub-scan accepted before —
+    // unicode confusable at-signs (accounts＠example.com) and the mixed spoken
+    // form ("john at gmail.com": spoken at, literal dot).
+    ...findEmailLike(text).map((s) => detection(s.start, s.end, 'email')),
+  ]);
 }
 
 export function detectStreetAddresses(text: string): Detection[] {

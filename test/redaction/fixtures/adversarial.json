@@ -47,8 +47,7 @@
     {
       "id": "adv-email-confusable",
       "text": "Billing goes to accounts＠example.com with the little at sign, our email system does something weird with the encoding.",
-      "entities": [{ "type": "email", "value": "accounts＠example.com" }],
-      "expectHold": true
+      "entities": [{ "type": "email", "value": "accounts＠example.com" }]
     },
     {
       "id": "adv-email-spaced-dots",
