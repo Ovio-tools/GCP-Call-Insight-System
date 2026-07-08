@@ -115,14 +115,12 @@
     {
       "id": "phone-07",
       "text": "The callback number is nine one six five five five zero one four eight, please read that back to me before we hang up.",
-      "entities": [{ "type": "phone", "value": "nine one six five five five zero one four eight" }],
-      "expectHold": true
+      "entities": [{ "type": "phone", "value": "nine one six five five five zero one four eight" }]
     },
     {
       "id": "phone-08",
       "text": "It is five five five, oh one, four nine, that is the short local number for the answering service we use after hours.",
-      "entities": [{ "type": "phone", "value": "five five five, oh one, four nine" }],
-      "expectHold": true
+      "entities": [{ "type": "phone", "value": "five five five, oh one, four nine" }]
     },
     {
       "id": "number-01",

@@ -32,14 +32,12 @@
       "text": "It is nine one six, five five five, zero one six three, sorry I always have to read it off my own business card.",
       "entities": [
         { "type": "phone", "value": "nine one six, five five five, zero one six three" }
-      ],
-      "expectHold": true
+      ]
     },
     {
       "id": "adv-phone-double",
       "text": "The after hours line is five five five double zero one six four, they pick up around the clock even on the holidays.",
-      "entities": [{ "type": "phone", "value": "five five five double zero one six four" }],
-      "expectHold": true
+      "entities": [{ "type": "phone", "value": "five five five double zero one six four" }]
     },
     {
       "id": "adv-phone-pauses",

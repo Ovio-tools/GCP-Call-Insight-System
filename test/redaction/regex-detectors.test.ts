@@ -8,6 +8,7 @@ import {
   detectCreditCards,
   detectGovernmentIds,
   detectLongNumbers,
+  detectSpelledDigits,
   luhnValid,
 } from '../../src/redaction/regex-detectors.js';
 import type { Detection } from '../../src/redaction/types.js';
@@ -174,6 +175,47 @@ describe('generic long-number detection', () => {
     const numbers = result.detections.filter((d) => d.entityType === 'number');
     expect(numbers).toHaveLength(1);
     expect(surface(text, numbers[0]!)).toBe('12345678');
+  });
+});
+
+describe('spelled-out digit detection', () => {
+  it('detects a full spoken phone number as phone', () => {
+    const text =
+      'The callback number is nine one six five five five zero one four eight, please read that back';
+    const hits = detectSpelledDigits(text);
+    expect(hits).toHaveLength(1);
+    expect(surface(text, hits[0]!)).toBe('nine one six five five five zero one four eight');
+    expect(hits[0]!.entityType).toBe('phone');
+  });
+
+  it('detects runs with oh and double/triple multipliers', () => {
+    const oh = 'It is five five five, oh one, four nine, that is the number';
+    expect(detectSpelledDigits(oh).map((h) => surface(oh, h))).toEqual([
+      'five five five, oh one, four nine',
+    ]);
+
+    const dbl = 'the after hours line is five five five double zero one six four, they pick up';
+    expect(detectSpelledDigits(dbl).map((h) => surface(dbl, h))).toEqual([
+      'five five five double zero one six four',
+    ]);
+  });
+
+  it('does not fire on ordinary number talk', () => {
+    for (const text of [
+      'it never gets below seventy eight degrees in the afternoon',
+      'give me ten minutes and a hundred bucks',
+      'the code is one two three four', // run of 4
+    ]) {
+      expect(detectSpelledDigits(text)).toHaveLength(0);
+    }
+  });
+
+  it('fires via the pooled detector', async () => {
+    const text = 'dial nine one six five five five zero one four eight now';
+    const result = await createRegexDetector().detect(text);
+    const spelled = result.detections.filter((d) => d.entityType === 'phone');
+    expect(spelled).toHaveLength(1);
+    expect(surface(text, spelled[0]!)).toBe('nine one six five five five zero one four eight');
   });
 });
 

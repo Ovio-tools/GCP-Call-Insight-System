@@ -1,4 +1,4 @@
-import { findLongDigitRuns } from './mirror-finders.js';
+import { findLongDigitRuns, findSpelledDigitRuns } from './mirror-finders.js';
 import type { Detection, Detector, DetectorResult, EntityType, RiskSignal } from './types.js';
 
 /**
@@ -188,6 +188,18 @@ export function detectLongNumbers(text: string): Detection[] {
   return findLongDigitRuns(text).map((s) => detection(s.start, s.end, 'number'));
 }
 
+/**
+ * Spelled-out digit runs (ADR 0007): >= 7 spoken digits ("nine one six five
+ * five five zero one four eight", with oh/double/triple), mirroring the
+ * residual scan's spelled_out_digits automaton but REDACTING the run as a
+ * phone (that is what a spoken digit run of this length is in a service call)
+ * instead of leaving it for a residual hold. Ordinary number talk ("seventy
+ * eight degrees", "ten minutes") has no run of 7 spoken digits and never fires.
+ */
+export function detectSpelledDigits(text: string): Detection[] {
+  return findSpelledDigitRuns(text).map((s) => detection(s.start, s.end, 'phone'));
+}
+
 // Address-like ambiguity: a number followed by capitalized words but NO street suffix.
 // Regexes cannot decide whether "4482 Kensington Meadows" is an address, so the near-miss
 // becomes a risk signal (fail closed) rather than a silent pass.
@@ -218,6 +230,7 @@ export function createRegexDetector(): Detector {
       );
       const detections = dedupe([
         ...phones,
+        ...detectSpelledDigits(text),
         ...detectEmails(text),
         ...addresses,
         ...detectCrossStreets(text),
