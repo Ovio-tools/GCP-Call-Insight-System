@@ -21,17 +21,19 @@ export interface LaunchGateResult {
  *   1. any `destroyed` DEK or KEK is still recoverable in the store (the shred is a lie);
  *   2. any destruction was requested, its recovery window elapsed, but it was never finalized
  *      (`destroyed_at` null) — drift the finalizer must resolve;
- *   3. production is running on anything but a verified external KMS (LocalFileKeyStore is
- *      dev/staging only — production is blocked pending Task 8.2b).
+ *   3. production is running on anything but the Railway-secret key store or a verified external
+ *      KMS (local/keystore are dev/staging only — see ADR 0008).
  */
 export async function checkLaunchGate(deps: LaunchGateDeps): Promise<LaunchGateResult> {
   const now = deps.now ?? (() => new Date());
   const failures: string[] = [];
 
-  // 3. Production must use a verified external KMS.
-  if (deps.config.NODE_ENV === 'production' && deps.config.CRYPTO_KEY_PROVIDER !== 'kms') {
+  // 3. Production must use the Railway-secret key store or a verified external KMS.
+  const productionOk =
+    deps.config.CRYPTO_KEY_PROVIDER === 'railway' || deps.config.CRYPTO_KEY_PROVIDER === 'kms';
+  if (deps.config.NODE_ENV === 'production' && !productionOk) {
     failures.push(
-      `production requires a verified external KMS (CRYPTO_KEY_PROVIDER=${deps.config.CRYPTO_KEY_PROVIDER}); LocalFileKeyStore is dev/staging only — Task 8.2b`,
+      `production requires the Railway-secret key store or a verified external KMS (CRYPTO_KEY_PROVIDER=${deps.config.CRYPTO_KEY_PROVIDER}); local/keystore are dev/staging only — ADR 0008`,
     );
   }
 

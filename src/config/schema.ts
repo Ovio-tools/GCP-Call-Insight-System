@@ -755,6 +755,20 @@ export const configSchema = configObjectSchema.superRefine((cfg, ctx) => {
     });
   }
 
+  // Railway-secret key store (ADR 0008): the KEK and wrapped-DEK secret names key the same
+  // EnvSecretBackend map, so identical names would silently overwrite one another. Require them
+  // to differ when that provider is active.
+  if (
+    cfg.CRYPTO_KEY_PROVIDER === 'railway' &&
+    cfg.CRYPTO_KEK_SECRET_NAME === cfg.CRYPTO_WRAPPED_DEK_SECRET_NAME
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['CRYPTO_WRAPPED_DEK_SECRET_NAME'],
+      message: `CRYPTO_KEK_SECRET_NAME and CRYPTO_WRAPPED_DEK_SECRET_NAME must differ (both are '${cfg.CRYPTO_KEK_SECRET_NAME}') — identical names would overwrite one another in the Railway-secret map`,
+    });
+  }
+
   // Knowledge view pagination (Task 10.1): the default page size must not exceed the max, else
   // the clamp `[1, MAX]` would silently shrink an unspecified request below its own default.
   if (cfg.KNOWLEDGE_PAGE_SIZE_DEFAULT > cfg.KNOWLEDGE_PAGE_SIZE_MAX) {
