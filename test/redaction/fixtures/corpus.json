@@ -125,6 +125,34 @@
       "expectHold": true
     },
     {
+      "id": "number-01",
+      "text": "The old work order number was 4471982 if that helps you pull up the history on the account.",
+      "entities": [{ "type": "number", "value": "4471982" }]
+    },
+    {
+      "id": "number-02",
+      "text": "My member number with the warranty company is 88231475, they said to give that to whoever comes out.",
+      "entities": [{ "type": "number", "value": "88231475" }]
+    },
+    {
+      "id": "number-03",
+      "text": "The serial on the compressor plate reads 90283317465, I am reading it straight off the sticker.",
+      "entities": [{ "type": "number", "value": "90283317465" }]
+    },
+    {
+      "id": "number-04",
+      "text": "The office line is just the local seven digits, 555-0146, no area code needed from around here.",
+      "entities": [{ "type": "number", "value": "555-0146" }]
+    },
+    {
+      "id": "number-05",
+      "text": "The first half of the confirmation is 4471.\n: 9820 is the rest of it, read the two together as one number.",
+      "entities": [
+        { "type": "number", "value": "4471" },
+        { "type": "number", "value": "9820" }
+      ]
+    },
+    {
       "id": "email-01",
       "text": "Send the invoice to mark.lee@example.com and copy the office manager so we can get it paid before the end of the month.",
       "entities": [{ "type": "email", "value": "mark.lee@example.com" }]

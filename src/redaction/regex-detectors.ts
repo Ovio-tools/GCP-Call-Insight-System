@@ -1,3 +1,4 @@
+import { findLongDigitRuns } from './mirror-finders.js';
 import type { Detection, Detector, DetectorResult, EntityType, RiskSignal } from './types.js';
 
 /**
@@ -173,6 +174,20 @@ export function detectGovernmentIds(text: string): Detection[] {
   return dedupe(out);
 }
 
+/**
+ * Generic long-number detection (ADR 0007): any run of >= 7 digits where only
+ * non-alphanumerics intervene, mirroring the residual scan's digit_run rule —
+ * the catch-all for real numbers that fit no specific shape (solid 7-, 8-, and
+ * 11+-digit runs, grouped pairs, mixed separators). Long non-PII numbers
+ * (order/invoice ids) are accepted over-redaction: any such run surviving to
+ * the output would residual-hold the call today. The pooled detector suppresses
+ * candidates a phone/card/gov-id detection already fully covers, so the common
+ * shapes keep their specific entity types and tokens.
+ */
+export function detectLongNumbers(text: string): Detection[] {
+  return findLongDigitRuns(text).map((s) => detection(s.start, s.end, 'number'));
+}
+
 // Address-like ambiguity: a number followed by capitalized words but NO street suffix.
 // Regexes cannot decide whether "4482 Kensington Meadows" is an address, so the near-miss
 // becomes a risk signal (fail closed) rather than a silent pass.
@@ -194,13 +209,21 @@ export function createRegexDetector(): Detector {
     name: 'regex',
     detect(text: string): Promise<DetectorResult> {
       const addresses = detectStreetAddresses(text);
+      const phones = detectPhones(text);
+      const cards = detectCreditCards(text);
+      const govIds = detectGovernmentIds(text);
+      const specificNumeric = [...phones, ...cards, ...govIds];
+      const numbers = detectLongNumbers(text).filter(
+        (n) => !specificNumeric.some((c) => c.start <= n.start && n.end <= c.end),
+      );
       const detections = dedupe([
-        ...detectPhones(text),
+        ...phones,
         ...detectEmails(text),
         ...addresses,
         ...detectCrossStreets(text),
-        ...detectCreditCards(text),
-        ...detectGovernmentIds(text),
+        ...cards,
+        ...govIds,
+        ...numbers,
       ]);
       return Promise.resolve({
         detections,

@@ -7,6 +7,7 @@ import {
   detectCrossStreets,
   detectCreditCards,
   detectGovernmentIds,
+  detectLongNumbers,
   luhnValid,
 } from '../../src/redaction/regex-detectors.js';
 import type { Detection } from '../../src/redaction/types.js';
@@ -135,6 +136,44 @@ describe('government id detection', () => {
     const hits = detectGovernmentIds(text);
     expect(hits.length).toBe(1);
     expect(surface(text, hits[0]!)).toBe('D1234567');
+  });
+});
+
+describe('generic long-number detection', () => {
+  it.each([
+    ['the account is 1234567 ok', '1234567'],
+    ['confirmation 12345678 received', '12345678'],
+    ['tracking 12345678901 arrived', '12345678901'],
+    ['it reads 43 81 99 2 4 on the tag', '43 81 99 2 4'],
+  ])('detects the >=7-digit run in %s as number', (text, expected) => {
+    const hits = detectLongNumbers(text);
+    expect(hits.length).toBe(1);
+    expect(surface(text, hits[0]!)).toBe(expected);
+    expect(hits[0]!.entityType).toBe('number');
+  });
+
+  it('does not fire under 7 digits', () => {
+    expect(detectLongNumbers('order 123456 shipped for 400 dollars')).toHaveLength(0);
+  });
+
+  it('is suppressed by the pooled detector when a phone/card/gov-id fully covers the run', async () => {
+    for (const text of [
+      'call me at (916) 555-1234 today',
+      'my social is 123-45-6789 ok',
+      'card 4111 1111 1111 1111 expiring',
+    ]) {
+      const result = await createRegexDetector().detect(text);
+      expect(result.detections.some((d) => d.entityType === 'number')).toBe(false);
+      expect(result.detections.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('fires via the pooled detector for an uncovered solid run', async () => {
+    const text = 'the invoice number was 12345678 from last spring';
+    const result = await createRegexDetector().detect(text);
+    const numbers = result.detections.filter((d) => d.entityType === 'number');
+    expect(numbers).toHaveLength(1);
+    expect(surface(text, numbers[0]!)).toBe('12345678');
   });
 });
 
