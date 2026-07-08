@@ -71,7 +71,14 @@ export class RailwaySecretKeyStore implements KeyStore {
   async #readKekDoc(): Promise<KekDoc> {
     const raw = await this.#backend.read(this.#kekName);
     if (!raw) return { active: {}, pending: {} };
-    const doc = JSON.parse(raw) as Partial<KekDoc>;
+    let doc: Partial<KekDoc>;
+    try {
+      doc = JSON.parse(raw) as Partial<KekDoc>;
+    } catch {
+      // Never surface the caught SyntaxError — its message embeds a fragment of the input,
+      // which is base64 key material.
+      throw new Error(`secret "${this.#kekName}" is not valid JSON`);
+    }
     return { active: doc.active ?? {}, pending: doc.pending ?? {} };
   }
   async #writeKekDoc(doc: KekDoc): Promise<void> {
@@ -80,7 +87,14 @@ export class RailwaySecretKeyStore implements KeyStore {
   async #readDekDoc(): Promise<DekDoc> {
     const raw = await this.#backend.read(this.#dekName);
     if (!raw) return { active: {}, pending: {} };
-    const doc = JSON.parse(raw) as Partial<DekDoc>;
+    let doc: Partial<DekDoc>;
+    try {
+      doc = JSON.parse(raw) as Partial<DekDoc>;
+    } catch {
+      // Never surface the caught SyntaxError — its message embeds a fragment of the input,
+      // which is base64-wrapped key material.
+      throw new Error(`secret "${this.#dekName}" is not valid JSON`);
+    }
     return { active: doc.active ?? {}, pending: doc.pending ?? {} };
   }
   async #writeDekDoc(doc: DekDoc): Promise<void> {
@@ -138,17 +152,31 @@ export class RailwaySecretKeyStore implements KeyStore {
       delete doc.active[kekVersion];
       doc.pending[kekVersion] = { bytes: active.bytes, recoveryWindowUntil: until };
     }
+    // Physically shred bytes once the window has elapsed. Covers the zero-day case AND a finalizer
+    // re-invocation after the window passes (active is absent, but the elapsed pending is purged) —
+    // the finalizer confirms via destroyKek + recoverability and never calls getKek, so this is the
+    // path that actually removes the raw bytes from the secret document.
+    const pending = doc.pending[kekVersion];
+    if (pending && this.#elapsed(pending.recoveryWindowUntil)) delete doc.pending[kekVersion];
     await this.#writeKekDoc(doc);
     this.#dekCache.clear();
   }
 
-  /** Readable DEK entry (active or in-window pending), or null if absent/elapsed. No write. */
+  /**
+   * Readable DEK entry (active or in-window pending), or null if absent/elapsed. An elapsed pending
+   * entry is best-effort physically purged (bytes removed) before returning null — mirroring
+   * LocalFileKeyStore.#resolveDek so a read path also shreds material a destroy never finalized.
+   */
   async #resolveDek(keyVersion: number): Promise<DekEntry | null> {
     const doc = await this.#readDekDoc();
     const active = doc.active[keyVersion];
     if (active) return active;
     const pending = doc.pending[keyVersion];
-    if (pending && !this.#elapsed(pending.recoveryWindowUntil)) return pending;
+    if (pending) {
+      if (!this.#elapsed(pending.recoveryWindowUntil)) return pending;
+      delete doc.pending[keyVersion];
+      await this.#tryWrite(() => this.#writeDekDoc(doc));
+    }
     return null;
   }
 
@@ -208,11 +236,19 @@ export class RailwaySecretKeyStore implements KeyStore {
       const doc = await this.#readKekDoc();
       if (doc.active[query.kekVersion]) return { recoverable: true, recoveryWindowUntil: null };
       const pending = doc.pending[query.kekVersion];
-      if (pending && !this.#elapsed(pending.recoveryWindowUntil)) {
-        return {
-          recoverable: true,
-          recoveryWindowUntil: this.#windowUntil(pending.recoveryWindowUntil),
-        };
+      if (pending) {
+        if (!this.#elapsed(pending.recoveryWindowUntil)) {
+          return {
+            recoverable: true,
+            recoveryWindowUntil: this.#windowUntil(pending.recoveryWindowUntil),
+          };
+        }
+        // Elapsed: best-effort physically purge the bytes before reporting unrecoverable. This is
+        // the path the finalizer (destroyKek + recoverability, never getKek) relies on to leave no
+        // raw KEK bytes behind in the secret document.
+        delete doc.pending[query.kekVersion];
+        await this.#tryWrite(() => this.#writeKekDoc(doc));
+        this.#dekCache.clear();
       }
       return { recoverable: false, recoveryWindowUntil: null };
     }

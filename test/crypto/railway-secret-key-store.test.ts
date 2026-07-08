@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
-import { InMemorySecretBackend } from '../../src/crypto/secret-backend.js';
+import { EnvSecretBackend, InMemorySecretBackend } from '../../src/crypto/secret-backend.js';
 import { RailwaySecretKeyStore } from '../../src/crypto/railway-secret-key-store.js';
 import { DEK_BYTES } from '../../src/crypto/key-provider.js';
 
@@ -70,7 +70,9 @@ describe('RailwaySecretKeyStore — KEK', () => {
     const immediate = makeStore(backend, clock, 0);
     await immediate.createKek({ kekVersion: 'kek-1' });
     await immediate.destroyKek('kek-1');
-    await expect(immediate.getKek('kek-1')).rejects.toThrow(/destroyed/);
+    // destroyKek physically purges the bytes at a zero-day window, so the entry is gone entirely
+    // (not merely marked destroyed) — matching LocalFileKeyStore.
+    await expect(immediate.getKek('kek-1')).rejects.toThrow(/not found/);
   });
 });
 
@@ -173,5 +175,127 @@ describe('RailwaySecretKeyStore — recoverability', () => {
       recoverable: false,
       recoveryWindowUntil: null,
     });
+  });
+});
+
+describe('RailwaySecretKeyStore — physical crypto-shred', () => {
+  let backend: InMemorySecretBackend;
+  let clock: FakeClock;
+  beforeEach(() => {
+    backend = new InMemorySecretBackend();
+    clock = new FakeClock(Date.UTC(2026, 0, 1));
+  });
+
+  it('a zero-day destroyKek leaves NO raw KEK bytes in the secret document', async () => {
+    const store = makeStore(backend, clock, 0);
+    await store.createKek({ kekVersion: 'kek-1' });
+    await store.createDek({ keyVersion: 1, kekVersion: 'kek-1' });
+    await store.destroyKek('kek-1');
+    const raw = await backend.read(KEK_SECRET);
+    expect(raw).toBeDefined();
+    const doc = JSON.parse(raw!) as {
+      active: Record<string, unknown>;
+      pending: Record<string, unknown>;
+    };
+    expect(doc.active['kek-1']).toBeUndefined();
+    expect(doc.pending['kek-1']).toBeUndefined();
+  });
+
+  it('a zero-day destroyDek leaves NO wrapped-DEK bytes in the secret document', async () => {
+    const store = makeStore(backend, clock, 0);
+    await store.createKek({ kekVersion: 'kek-1' });
+    await store.createDek({ keyVersion: 1, kekVersion: 'kek-1' });
+    await store.destroyDek(1);
+    const raw = await backend.read(DEK_SECRET);
+    expect(raw).toBeDefined();
+    const doc = JSON.parse(raw!) as {
+      active: Record<string, unknown>;
+      pending: Record<string, unknown>;
+    };
+    expect(doc.active[1]).toBeUndefined();
+    expect(doc.pending[1]).toBeUndefined();
+  });
+
+  it('the finalizer path (destroyKek + recoverability, no getKek) leaves no bytes after the window', async () => {
+    const store = makeStore(backend, clock, 7);
+    await store.createKek({ kekVersion: 'kek-1' });
+    await store.createDek({ keyVersion: 1, kekVersion: 'kek-1' });
+    await store.destroyKek('kek-1');
+    await store.destroyDek(1);
+    clock.advanceDays(8);
+    // Mirror the finalizer: it re-issues destroy then reads recoverability; it NEVER calls getKek.
+    await store.destroyKek('kek-1');
+    await store.destroyDek(1);
+    expect((await store.recoverability({ type: 'kek', kekVersion: 'kek-1' })).recoverable).toBe(
+      false,
+    );
+    expect((await store.recoverability({ type: 'dek', keyVersion: 1 })).recoverable).toBe(false);
+
+    const kekDoc = JSON.parse((await backend.read(KEK_SECRET))!) as {
+      active: Record<string, unknown>;
+      pending: Record<string, unknown>;
+    };
+    const dekDoc = JSON.parse((await backend.read(DEK_SECRET))!) as {
+      active: Record<string, unknown>;
+      pending: Record<string, unknown>;
+    };
+    expect(kekDoc.active['kek-1']).toBeUndefined();
+    expect(kekDoc.pending['kek-1']).toBeUndefined();
+    expect(dekDoc.active[1]).toBeUndefined();
+    expect(dekDoc.pending[1]).toBeUndefined();
+  });
+});
+
+describe('RailwaySecretKeyStore — read-only backend', () => {
+  let seed: InMemorySecretBackend;
+  let clock: FakeClock;
+  beforeEach(async () => {
+    seed = new InMemorySecretBackend();
+    clock = new FakeClock(Date.UTC(2026, 0, 1));
+    const writable = makeStore(seed, clock, 7);
+    await writable.createKek({ kekVersion: 'kek-1' });
+    await writable.createDek({ keyVersion: 1, kekVersion: 'kek-1' });
+  });
+
+  it('serves reads (getKek / unwrapDek) over a read-only EnvSecretBackend', async () => {
+    // Materialize the seeded docs into plain strings for the env backend.
+    const kekRaw = (await seed.read(KEK_SECRET))!;
+    const dekRaw = (await seed.read(DEK_SECRET))!;
+    const env = new EnvSecretBackend({ [KEK_SECRET]: kekRaw, [DEK_SECRET]: dekRaw });
+    const store = new RailwaySecretKeyStore({
+      backend: env,
+      kekSecretName: KEK_SECRET,
+      dekSecretName: DEK_SECRET,
+      recoveryWindowDays: 7,
+      clock,
+    });
+    expect(await store.getKek('kek-1')).toHaveLength(32);
+    expect(await store.unwrapDek(1)).toHaveLength(DEK_BYTES);
+  });
+
+  it('reading an elapsed-pending entry over a read-only backend does not surface ReadOnlySecretBackendError', async () => {
+    // Seed a store whose material is already pending-destroyed, then freeze that doc into env.
+    const writable = makeStore(seed, clock, 7);
+    await writable.destroyKek('kek-1');
+    await writable.destroyDek(1);
+    const kekRaw = (await seed.read(KEK_SECRET))!;
+    const dekRaw = (await seed.read(DEK_SECRET))!;
+    const env = new EnvSecretBackend({ [KEK_SECRET]: kekRaw, [DEK_SECRET]: dekRaw });
+    const store = new RailwaySecretKeyStore({
+      backend: env,
+      kekSecretName: KEK_SECRET,
+      dekSecretName: DEK_SECRET,
+      recoveryWindowDays: 7,
+      clock,
+    });
+    clock.advanceDays(8);
+    // getKek hits the lazy-purge branch; #tryWrite must swallow the read-only write attempt so the
+    // caller sees the normal /destroyed/ error, never a ReadOnlySecretBackendError.
+    await expect(store.getKek('kek-1')).rejects.toThrow(/destroyed/);
+    // recoverability also attempts a best-effort purge write; it must degrade gracefully.
+    expect((await store.recoverability({ type: 'kek', kekVersion: 'kek-1' })).recoverable).toBe(
+      false,
+    );
+    expect((await store.recoverability({ type: 'dek', keyVersion: 1 })).recoverable).toBe(false);
   });
 });
