@@ -1,14 +1,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { hasTestDb, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, migrate, migrateRaw } from '../db/_pg.js';
 import { makeReviewHarness, postReveal, type ReviewHarness } from './_harness.js';
 
 const PATTERN = 'test-rvreveal-%';
 const RAW = 'Hi this is Jane Doe at 555-123-4567, my heater is broken.';
 
-describe.skipIf(!hasTestDb)('review reveal-raw (Task 6.2)', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('review reveal-raw (Task 6.2)', () => {
   let h!: ReviewHarness;
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     h = await makeReviewHarness();
   });
   afterEach(() => h.cleanup(PATTERN));

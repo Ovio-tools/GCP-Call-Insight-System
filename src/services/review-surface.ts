@@ -1,7 +1,7 @@
 import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
-import { createAppPool } from '../db/index.js';
+import { createAppPool, createRawAppPool } from '../db/index.js';
 import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
 import { createRestrictedRunner } from '../db/restricted/restricted-context.js';
 import { loadDenyList } from '../redaction/deny-list.js';
@@ -33,14 +33,18 @@ async function main(): Promise<void> {
   await assertDependenciesReady(config, logger);
 
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
   if (!config.REDIS_URL) throw new Error('REDIS_URL is not set');
 
   const pool = createAppPool(config.DATABASE_URL);
+  // Raw transcripts + token vault live in the isolated raw store (DB-B). The raw presence check
+  // and reveal read from rawPool; the restricted vault reveal runs its role on the DB-B pool.
+  const rawPool = createRawAppPool(config.RAW_DATABASE_URL);
   const redis = createRedisClient(config.REDIS_URL);
   const queueConnection = createQueueConnectionFromConfig(config);
   const queue = createPipelineQueue(config, queueConnection);
   const keyProvider = await buildServiceKeyProvider({ config, pool });
-  const runner = createRestrictedRunner(pool);
+  const runner = createRestrictedRunner(rawPool);
   const denyTerms = loadDenyList(config.REDACTION_DENY_LIST_PATH);
 
   const app = await createInternalApp({
@@ -50,7 +54,16 @@ async function main(): Promise<void> {
     sessionStore: new RedisSessionStore(redis, config.SESSION_TTL_MS),
     logger,
   });
-  registerReviewRoutes(app, { pool, config, logger, keyProvider, runner, queue, denyTerms });
+  registerReviewRoutes(app, {
+    pool,
+    rawPool,
+    config,
+    logger,
+    keyProvider,
+    runner,
+    queue,
+    denyTerms,
+  });
 
   await app.listen({ host: '0.0.0.0', port: config.PORT });
   logger.info({ node_env: config.NODE_ENV, port: config.PORT }, 'review-surface listening');

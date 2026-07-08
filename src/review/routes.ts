@@ -30,9 +30,12 @@ import {
  */
 export interface ReviewRouteDeps {
   pool: Pool;
+  /** Raw-store (DB-B) app pool for raw_transcripts reads (presence check + reveal). */
+  rawPool: Pool;
   config: Config;
   logger: Logger;
   keyProvider: KeyProvider;
+  /** Restricted runner on the raw store (DB-B) — the vault reveal's only restricted use. */
   runner: RestrictedRunner;
   queue: ReprocessQueue;
   denyTerms: readonly string[];
@@ -78,7 +81,7 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
     request: FastifyRequest,
   ): Promise<ReturnType<typeof buildReviewDetail>> => {
     const { id } = request.params as { id: string };
-    return buildReviewDetail(deps.pool, deps.config, nowFn(), id, deps.denyTerms);
+    return buildReviewDetail(deps.pool, deps.rawPool, deps.config, nowFn(), id, deps.denyTerms);
   };
 
   app.get('/review/:id.json', async (request, reply) => {
@@ -132,6 +135,7 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
     try {
       const result = await performReviewAction({
         pool: deps.pool,
+        rawPool: deps.rawPool,
         queue: deps.queue,
         config: deps.config,
         now: nowFn(),
@@ -160,6 +164,7 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
     try {
       const result = await performReveal({
         pool: deps.pool,
+        rawPool: deps.rawPool,
         runner: deps.runner,
         keyProvider: deps.keyProvider,
         config: deps.config,

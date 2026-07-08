@@ -8,6 +8,7 @@ import { listByReview, recordOperatorAction } from '../db/repositories/operator-
 import { markUnresolvableByReviewId } from '../db/repositories/review-queue-repo.js';
 import { upsertExtractionCandidate } from '../db/repositories/extraction-candidates-repo.js';
 import { insertReprocessRequest } from '../db/repositories/reprocess-requests-repo.js';
+import { transcriptExists } from '../db/repositories/raw-transcripts-repo.js';
 import { enqueueReprocess, type ReprocessQueue } from '../queue/pipeline-queue.js';
 import { EXTRACT_SCHEMA_VERSION } from '../pipeline/extract/prompt.js';
 import type { PipelineStage } from '../pipeline/stages.js';
@@ -37,6 +38,8 @@ export type ReviewActionBody =
 
 export interface PerformReviewActionInput {
   pool: Pool;
+  /** Raw-store (DB-B) app pool — the reprocess/approve preflight's raw presence check reads here. */
+  rawPool: Pool;
   queue: ReprocessQueue;
   config: Config;
   now: Date;
@@ -92,15 +95,6 @@ function fingerprintFor(
   }
 }
 
-async function transcriptPresent(client: PoolClient, callId: string): Promise<boolean> {
-  const rows = await query(
-    client,
-    `SELECT 1 FROM raw_transcripts
-      WHERE call_id = $1 AND soft_deleted_at IS NULL AND hard_deleted_at IS NULL`,
-    [callId],
-  );
-  return rows.length > 0;
-}
 async function cleanTranscriptLive(client: PoolClient, callId: string): Promise<boolean> {
   const rows = await query(
     client,
@@ -133,9 +127,11 @@ async function preflight(
     review: LockedReview & { raw_purged_at: Date | null; created_at: Date };
     now: Date;
     config: Config;
+    /** Raw-store (DB-B) pool — the raw presence check reads here, off the DB-A review-lock tx. */
+    rawPool: Pool;
   },
 ): Promise<void> {
-  const { targetStage, review, now, config } = input;
+  const { targetStage, review, now, config, rawPool } = input;
   const callId = review.call_id;
   switch (targetStage) {
     case 'fetch-transcript':
@@ -144,8 +140,10 @@ async function preflight(
       return;
     case 'transcript-availability':
     case 'redact':
+      // raw_transcripts lives in the isolated raw store (DB-B): the presence check reads rawPool
+      // while the review row stays locked FOR UPDATE by this DB-A tx (mirrors reveal.ts).
       if (
-        !rawTranscriptRevealAllowed(review, now, config, await transcriptPresent(client, callId))
+        !rawTranscriptRevealAllowed(review, now, config, await transcriptExists(rawPool, callId))
       ) {
         throw new ReviewConflictError();
       }
@@ -213,7 +211,7 @@ async function moveCallState(
 export async function performReviewAction(
   input: PerformReviewActionInput,
 ): Promise<ReviewActionResult> {
-  const { pool, config, now, action, reviewId, body, actor } = input;
+  const { pool, rawPool, config, now, action, reviewId, body, actor } = input;
 
   const committed = await withTransaction(pool, async (client) => {
     const revRows = await query<LockedReview & { raw_purged_at: Date | null; created_at: Date }>(
@@ -288,7 +286,7 @@ export async function performReviewAction(
             ? requireApproveStage(reason)
             : 'verbatim-pii-scan';
 
-      await preflight(client, { action, targetStage, review, now, config });
+      await preflight(client, { action, targetStage, review, now, config, rawPool });
 
       if (action === 'approve' && reason === 'classifier_uncertain') {
         // extract's classify-guard passes only for a `customer` marker.

@@ -9,7 +9,7 @@ import { enqueueReview } from '../../src/db/repositories/review-queue-repo.js';
 import { recordHeartbeat } from '../../src/db/repositories/component-heartbeats-repo.js';
 import { recordAlert } from '../../src/db/repositories/alert-events-repo.js';
 import { registerStatusRoutes } from '../../src/status/routes.js';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, makePool, migrate, migrateRaw } from '../db/_pg.js';
 import { makeAppPool, cleanupCalls } from '../db/_dal.js';
 import { makeInternalApp, login, type InternalHarness } from '../http/_helpers.js';
 import {
@@ -240,12 +240,13 @@ describe.skipIf(!hasTestDb)('status surface (7.3) — security matrix', () => {
  * Review surface (6.2).
  * ============================================================================================== */
 
-describe.skipIf(!hasTestDb)('review surface (6.2) — security matrix', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('review surface (6.2) — security matrix', () => {
   let h: ReviewHarness;
   const PATTERN = 'test-sec-review-%';
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     h = await makeReviewHarness();
   });
   beforeEach(() => h.cleanup(PATTERN));
