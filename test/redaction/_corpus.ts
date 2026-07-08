@@ -91,7 +91,7 @@ export async function runStack(
   const residualHit = residual.hits.length > 0;
   const signals: RiskSignal[] = [
     ...results.flatMap((r) => [...r.riskSignals]),
-    ...deriveSpanSignals({ text, spans, disagreement, nerMinScore: 0.5 }),
+    ...deriveSpanSignals({ text, spans, disagreement }),
     ...(residualHit ? [{ reason: 'residual_scan_hit' as const }] : []),
   ];
   const risk = scoreRisk(signals);

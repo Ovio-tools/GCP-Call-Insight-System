@@ -95,14 +95,15 @@ describe('deriveSpanSignals', () => {
     expect(signals.some((s) => s.reason === 'high_entity_density')).toBe(true);
   });
 
-  it('raises ner_low_confidence when a redacted span sits below the min score', () => {
+  it('never derives ner_low_confidence from spans — the NER detector is its single source (ADR 0006)', () => {
+    // Post-gate, no surviving NER span can sit below the threshold; the detector
+    // raises the signal itself when it DROPS candidates.
     const signals = deriveSpanSignals({
       text: text200,
       spans: [d(0, 5, 0.3)],
       disagreement: false,
-      nerMinScore: 0.5,
     });
-    expect(signals.some((s) => s.reason === 'ner_low_confidence')).toBe(true);
+    expect(signals.some((s) => s.reason === 'ner_low_confidence')).toBe(false);
   });
 
   it('is quiet on a normal transcript', () => {
@@ -110,7 +111,6 @@ describe('deriveSpanSignals', () => {
       text: text200,
       spans: [d(0, 5, 0.99)],
       disagreement: false,
-      nerMinScore: 0.5,
     });
     expect(signals).toEqual([]);
   });

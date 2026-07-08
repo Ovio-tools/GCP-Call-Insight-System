@@ -17,6 +17,7 @@ export function makeNerConfig(overrides: Partial<NerConfig> = {}): NerConfig {
     minScore: 0.5,
     chunkChars: 1500,
     chunkOverlapChars: 250,
+    entityScope: new Set(['person', 'numbered_location']),
     ...overrides,
   };
 }

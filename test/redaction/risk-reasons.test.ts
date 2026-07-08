@@ -47,4 +47,9 @@ describe('risk reasons table', () => {
     expect(RISK_REASONS.ner_offset_alignment_failed.forcedHold).toBe(true);
     expect(RISK_REASONS.residual_scan_hit.forcedHold).toBe(true);
   });
+
+  it('ner_low_confidence is unsafe: a dropped candidate surface remains in the output (ADR 0006)', () => {
+    expect(RISK_REASONS.ner_low_confidence.forcedHold).toBe(false);
+    expect(RISK_REASONS.ner_low_confidence.safety).toBe('unsafe_uncertain_surface');
+  });
 });
