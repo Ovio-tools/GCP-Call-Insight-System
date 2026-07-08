@@ -66,6 +66,10 @@ const RETRY_FAILURE_DESCRIPTION: Record<string, string> = {
   non_json: 'it was not a single parseable JSON object',
   schema_invalid: 'it failed schema validation',
   unexpected_stop_reason: 'it ended with an unexpected stop reason',
+  verbatim_mismatch:
+    'one or more customer_language phrases were not exact word-for-word quotes from the ' +
+    'transcript. Quote each phrase EXACTLY as it appears (same words, same punctuation), ' +
+    'or return an empty customer_language array when nothing can be quoted exactly',
 };
 
 /**
@@ -82,9 +86,7 @@ export function buildExtractRetryUserMessage(
   const why = RETRY_FAILURE_DESCRIPTION[failure] ?? 'it could not be validated';
   const issues =
     issueSummary.length > 0
-      ? `\nThe schema violations were (field: violation code):\n${issueSummary
-          .map((s) => `- ${s}`)
-          .join('\n')}`
+      ? `\nSpecifically:\n${issueSummary.map((s) => `- ${s}`).join('\n')}`
       : '';
   return `${buildExtractUserMessage(redactedText)}
 

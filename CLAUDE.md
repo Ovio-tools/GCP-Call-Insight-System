@@ -191,9 +191,11 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
 - **classify** (Haiku) — sorts into customer, non-customer, spam, or held. Held and
   spam are set aside, never silently dropped.
 - **extract** (Sonnet) — returns a structured record against a fixed schema. A
-  schema-validation gate rejects malformed output; a retryable parse failure gets
-  ONE bounded re-attempt with content-free (zod path+code) feedback before holding
-  (ADR 0007 — per-attempt cost reservation, alert on final failure only). A
+  schema-validation gate rejects malformed output; a retryable parse failure OR a
+  verbatim-gate mismatch gets ONE bounded re-attempt (one retry total per call)
+  with content-free feedback (zod path+code / mismatch counts) before holding
+  (ADR 0007 — per-attempt cost reservation, alert on final failure only, PII hits
+  never retried). A
   deterministic rule sets the urgency flag. Sentiment is internal only.
 - **second PII scan** — over the verbatim `customer_language` phrases. A hit holds
   the record rather than storing leaked text.

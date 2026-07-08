@@ -598,7 +598,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     const callId = 'test-ext-verbatim';
     await seed(callId);
     const fabricated = { ...GOLDEN, customer_language: ['the sink is completely blocked up'] };
-    const { model } = fakeModel(() =>
+    const { model, spy } = fakeModel(() =>
       Promise.resolve(result({ text: JSON.stringify(fabricated) })),
     );
     const res = await handler(() => model)(ctx(callId));
@@ -606,10 +606,63 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     if (res.action === 'hold') {
       expect(res.reason).toBe('schema_invalid');
       expect(res.errorCode).toBe('MODEL_MALFORMED_RESPONSE');
-      expect(res.detail).toMatchObject({ gate: 'verbatim_mismatch', mismatch_count: 1 });
+      expect(res.detail).toMatchObject({
+        gate: 'verbatim_mismatch',
+        mismatch_count: 1,
+        retry_attempted: true,
+      });
     }
+    // The verbatim mismatch got the ONE bounded retry before holding; final failure alerts once.
+    expect(spy).toHaveBeenCalledTimes(2);
     expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(1);
     expect(await countRows('extraction_candidates', callId)).toBe(0);
+  });
+
+  it('retry: verbatim mismatch then corrected → continues; feedback carries counts, never the phrase', async () => {
+    const callId = 'test-ext-vbretry';
+    await seed(callId);
+    const fabricated = { ...GOLDEN, customer_language: ['the sink is completely blocked up'] };
+    let calls = 0;
+    const { model, spy } = fakeModel(() => {
+      calls += 1;
+      return Promise.resolve(calls === 1 ? result({ text: JSON.stringify(fabricated) }) : result());
+    });
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('continue');
+    expect(spy).toHaveBeenCalledTimes(2);
+    const retryReq = spy.mock.calls[1]?.[0] as { userText: string };
+    expect(retryReq.userText).toContain(REDACTED);
+    expect(retryReq.userText).toContain('could not be used');
+    // Content-free feedback: the fabricated phrase itself never goes back out or anywhere else.
+    expect(retryReq.userText).not.toContain('completely blocked up');
+    expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(0);
+    const invocations = await listInvocations(app, callId);
+    expect(invocations.map((i) => i.outcome)).toEqual(['success', 'success']);
+    expect(await countRows('extraction_candidates', callId)).toBe(1);
+  });
+
+  it('one retry TOTAL: a parse retry that returns a verbatim mismatch holds without a third attempt', async () => {
+    const callId = 'test-ext-oneretry';
+    await seed(callId);
+    const fabricated = { ...GOLDEN, customer_language: ['the sink is completely blocked up'] };
+    let calls = 0;
+    const { model, spy } = fakeModel(() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1
+          ? result({ text: 'this is not json' })
+          : result({ text: JSON.stringify(fabricated) }),
+      );
+    });
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('hold');
+    if (res.action === 'hold') {
+      expect(res.reason).toBe('schema_invalid');
+      expect(res.detail).toMatchObject({ gate: 'verbatim_mismatch', retry_attempted: true });
+    }
+    expect(spy).toHaveBeenCalledTimes(2);
   });
 
   // ---- residual PII gate (precedence + resilience) -----------------------------
@@ -619,7 +672,9 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     const { lines, logger } = collectingLogger();
     await seed(callId);
     const planted = { ...GOLDEN, customer_language: ['please call 5551234567 today'] };
-    const { model } = fakeModel(() => Promise.resolve(result({ text: JSON.stringify(planted) })));
+    const { model, spy } = fakeModel(() =>
+      Promise.resolve(result({ text: JSON.stringify(planted) })),
+    );
     const res = await handler(() => model)(ctx(callId, logger));
 
     expect(res.action).toBe('hold');
@@ -628,6 +683,8 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
       expect(res.errorCode).toBe('VERBATIM_PII_DETECTED');
       expect(res.detail).toMatchObject({ residual_categories: ['digit_run'] });
     }
+    // PII precedence: a residual hit is never retried or re-sent — one attempt only.
+    expect(spy).toHaveBeenCalledTimes(1);
     expect(await alertCount('VERBATIM_PII_DETECTED')).toBe(1);
     expect(await countRows('extraction_candidates', callId)).toBe(0);
 

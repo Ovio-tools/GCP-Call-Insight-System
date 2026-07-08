@@ -27,7 +27,7 @@ import {
 import { getLatestClassificationBucket } from '../classify/classification-marker.js';
 import { EXTRACT_PROMPT_VERSION, EXTRACT_SCHEMA_VERSION, EXTRACT_SYSTEM_PROMPT } from './prompt.js';
 import { buildExtractRetryUserMessage, buildExtractUserMessage } from './prompt.js';
-import { type ParseFailureKind, parseExtraction } from './parse.js';
+import { type ExtractionRecord, type ParseFailureKind, parseExtraction } from './parse.js';
 import { emergencyRule, scanPhrasesForResidual, tokenGate, verbatimGate } from './gates.js';
 import type { StageContext, StageHandler, StageResult } from '../stages.js';
 
@@ -201,21 +201,17 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
 
     let { result, parsed } = await attempt(userText, reservation);
 
-    // 9b. ADR 0007 bounded retry: exactly ONE re-attempt, only for retryable parse
-    //     failures with usage present, with the content-free validation feedback
-    //     appended to a fresh copy of the original user message. Each attempt has its
-    //     own reserve/record/settle cycle; a second reservation the cap rejects skips
-    //     the retry (the model-badness hold below remains the reviewable outcome —
-    //     never a spurious cost_cap_held conversion). The issue summary appears ONLY
-    //     in the outbound request.
+    // 9b. ADR 0007 bounded retry: exactly ONE re-attempt TOTAL per call, shared
+    //     between the parse-failure path here and the verbatim-gate path below, with
+    //     content-free feedback (fixed kind descriptions; zod path+code lines;
+    //     mismatch counts — never model text) appended to a fresh copy of the
+    //     original user message. Each attempt has its own reserve/record/settle
+    //     cycle; a second reservation the cap rejects skips the retry (the
+    //     model-badness hold below remains the reviewable outcome — never a spurious
+    //     cost_cap_held conversion). The feedback appears ONLY in the outbound request.
     let retryAttempted = false;
     let retrySkipped: 'cost_cap' | undefined;
-    if (!parsed.ok && result.usagePresent && RETRYABLE_PARSE_FAILURES.has(parsed.failure)) {
-      const retryUserText = buildExtractRetryUserMessage(
-        row.redacted_text,
-        parsed.failure,
-        parsed.issueSummary ?? [],
-      );
+    const tryRetry = async (retryUserText: string): Promise<boolean> => {
       const retryReservation = await reserveModelBudget(pool, {
         config,
         now: new Date(now()),
@@ -236,93 +232,118 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
       if (retryReservation === null) {
         retrySkipped = 'cost_cap';
         logger.info({ stage }, 'extract retry skipped — daily cost cap would be exceeded');
-      } else {
-        retryAttempted = true;
-        ({ result, parsed } = await attempt(retryUserText, retryReservation));
+        return false;
       }
+      retryAttempted = true;
+      ({ result, parsed } = await attempt(retryUserText, retryReservation));
+      return true;
+    };
+
+    if (!parsed.ok && result.usagePresent && RETRYABLE_PARSE_FAILURES.has(parsed.failure)) {
+      await tryRetry(
+        buildExtractRetryUserMessage(row.redacted_text, parsed.failure, parsed.issueSummary ?? []),
+      );
     }
 
-    // 10. Malformed route — on the FINAL attempt only (one actionable alert per failure
-    //     path; a retried-then-valid response alerts nothing). A valid parse WITH usage
-    //     present is required to trust the answer; a missing usage block (even with a
-    //     valid parse) is treated as malformed.
-    //     DIVERGENCE FROM CLASSIFY: extract holds with reason `schema_invalid` (classify uses
-    //     `malformed_model_output`) — Task 5.2 routes ALL extract model-output badness to
-    //     `schema_invalid`. The alert shape (MODEL_MALFORMED_RESPONSE, continuing) is identical.
-    if (!parsed.ok || !result.usagePresent) {
-      const failure = createFailure('MODEL_MALFORMED_RESPONSE', {
-        processingState: 'continuing',
-        context: { call_id: callId, stage, environment: config.NODE_ENV },
-      });
-      await recordAlert(pool, {
-        errorCode: failure.error_code,
-        rootCauseCategory: failure.root_cause_category,
-        severity: failure.severity,
-        dedupKey: dedupKey(failure),
-        failureSnapshot: {
-          ...failureSnapshot(failure),
-          call_id: callId,
+    // 10-12. Gate loop, evaluated on the CURRENT (possibly retried) result. A verbatim
+    //     mismatch may consume the one remaining retry, after which ALL gates re-run
+    //     once on the new output (malformed → residual → verbatim, PII precedence
+    //     preserved). The loop exits by `break` (record accepted) or a hold `return`;
+    //     with the retry consumed it cannot iterate a third time.
+    let record!: ExtractionRecord;
+    for (;;) {
+      // 10. Malformed route — on the FINAL attempt only (one actionable alert per failure
+      //     path; a retried-then-valid response alerts nothing). A valid parse WITH usage
+      //     present is required to trust the answer; a missing usage block (even with a
+      //     valid parse) is treated as malformed.
+      //     DIVERGENCE FROM CLASSIFY: extract holds with reason `schema_invalid` (classify uses
+      //     `malformed_model_output`) — Task 5.2 routes ALL extract model-output badness to
+      //     `schema_invalid`. The alert shape (MODEL_MALFORMED_RESPONSE, continuing) is identical.
+      if (!parsed.ok || !result.usagePresent) {
+        const failure = createFailure('MODEL_MALFORMED_RESPONSE', {
+          processingState: 'continuing',
+          context: { call_id: callId, stage, environment: config.NODE_ENV },
+        });
+        await recordAlert(pool, {
+          errorCode: failure.error_code,
+          rootCauseCategory: failure.root_cause_category,
+          severity: failure.severity,
+          dedupKey: dedupKey(failure),
+          failureSnapshot: {
+            ...failureSnapshot(failure),
+            call_id: callId,
+            stage,
+            ...(result.usagePresent ? {} : { usage_missing: true }),
+            ...(parsed.ok ? {} : { parse_failure: parsed.failure }),
+            ...(retryAttempted ? { retry_attempted: true } : {}),
+            ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
+          },
+        });
+        logger.info(
+          {
+            stage,
+            usage_present: result.usagePresent,
+            ...(parsed.ok ? {} : { parse_failure: parsed.failure }),
+            ...(retryAttempted ? { retry_attempted: true } : {}),
+            ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
+          },
+          'extract produced malformed model output — holding schema_invalid',
+        );
+        return {
+          action: 'hold',
+          reason: 'schema_invalid',
+          errorCode: 'MODEL_MALFORMED_RESPONSE',
+          detail: {
+            ...(result.usagePresent ? {} : { usage_missing: true }),
+            ...(parsed.ok ? {} : { parse_failure: parsed.failure }),
+            ...(retryAttempted ? { retry_attempted: true } : {}),
+            ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
+          },
+        };
+      }
+      record = parsed.record;
+
+      // 11. Residual-PII gate — the FIRST content gate, before ANY persist. Runs BEFORE the
+      //     verbatim gate so a fabricated phrase containing PII holds as a PII detection, not as
+      //     output badness (PII precedence) — and a PII hit is NEVER retried or re-sent. The
+      //     alert is resilient: its failure must not block or convert the hold. Persist
+      //     NOTHING. Snapshot/detail carry COUNTS + category ids only.
+      const scan = scanPhrasesForResidual(record.customer_language, denyTerms);
+      if (scan.hit) {
+        await recordVerbatimPiiDetectedAlertResilient(
+          pool,
+          callId,
           stage,
-          ...(result.usagePresent ? {} : { usage_missing: true }),
-          ...(parsed.ok ? {} : { parse_failure: parsed.failure }),
-          ...(retryAttempted ? { retry_attempted: true } : {}),
-          ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
-        },
-      });
-      logger.info(
-        {
-          stage,
-          usage_present: result.usagePresent,
-          ...(parsed.ok ? {} : { parse_failure: parsed.failure }),
-          ...(retryAttempted ? { retry_attempted: true } : {}),
-          ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
-        },
-        'extract produced malformed model output — holding schema_invalid',
-      );
-      return {
-        action: 'hold',
-        reason: 'schema_invalid',
-        errorCode: 'MODEL_MALFORMED_RESPONSE',
-        detail: {
-          ...(result.usagePresent ? {} : { usage_missing: true }),
-          ...(parsed.ok ? {} : { parse_failure: parsed.failure }),
-          ...(retryAttempted ? { retry_attempted: true } : {}),
-          ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
-        },
-      };
-    }
-    const record = parsed.record;
+          config,
+          scan.counts,
+          logger,
+        );
+        logger.info(
+          { stage, residual_categories: Object.keys(scan.counts) },
+          'extract residual-PII hit in customer_language — holding residual_pii_detected',
+        );
+        return {
+          action: 'hold',
+          reason: 'residual_pii_detected',
+          errorCode: 'VERBATIM_PII_DETECTED',
+          detail: { residual_categories: Object.keys(scan.counts), counts: scan.counts },
+        };
+      }
 
-    // 11. Residual-PII gate — the FIRST content gate, before ANY persist. Runs BEFORE the
-    //     verbatim gate so a fabricated phrase containing PII holds as a PII detection, not as
-    //     output badness (PII precedence). The alert is resilient: its failure must not block
-    //     or convert the hold. Persist NOTHING. Snapshot/detail carry COUNTS + category ids only.
-    const scan = scanPhrasesForResidual(record.customer_language, denyTerms);
-    if (scan.hit) {
-      await recordVerbatimPiiDetectedAlertResilient(
-        pool,
-        callId,
-        stage,
-        config,
-        scan.counts,
-        logger,
-      );
-      logger.info(
-        { stage, residual_categories: Object.keys(scan.counts) },
-        'extract residual-PII hit in customer_language — holding residual_pii_detected',
-      );
-      return {
-        action: 'hold',
-        reason: 'residual_pii_detected',
-        errorCode: 'VERBATIM_PII_DETECTED',
-        detail: { residual_categories: Object.keys(scan.counts), counts: scan.counts },
-      };
-    }
-
-    // 12. Verbatim gate — every phrase must appear (light-normalized) in the redacted text.
-    //     A reconstructed/paraphrased phrase is output badness → schema_invalid. Persist NOTHING.
-    const vb = verbatimGate(record.customer_language, row.redacted_text);
-    if (!vb.ok) {
+      // 12. Verbatim gate — every phrase must appear (light-normalized) in the redacted text.
+      //     A reconstructed/paraphrased phrase is output badness; it gets the one bounded
+      //     retry (ADR 0007, count-only feedback) if still available, else → schema_invalid.
+      //     Persist NOTHING.
+      const vb = verbatimGate(record.customer_language, row.redacted_text);
+      if (vb.ok) break;
+      if (!retryAttempted && !retrySkipped) {
+        const performed = await tryRetry(
+          buildExtractRetryUserMessage(row.redacted_text, 'verbatim_mismatch', [
+            `${String(vb.mismatchCount)} of ${String(vb.phraseCount)} customer_language phrases are not exact quotes`,
+          ]),
+        );
+        if (performed) continue;
+      }
       await recordStageAlert(
         pool,
         callId,
@@ -334,6 +355,8 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
           gate: 'verbatim_mismatch',
           mismatch_count: vb.mismatchCount,
           phrase_count: vb.phraseCount,
+          ...(retryAttempted ? { retry_attempted: true } : {}),
+          ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
         },
       );
       logger.info(
@@ -348,6 +371,8 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
           gate: 'verbatim_mismatch',
           mismatch_count: vb.mismatchCount,
           phrase_count: vb.phraseCount,
+          ...(retryAttempted ? { retry_attempted: true } : {}),
+          ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
         },
       };
     }

@@ -156,11 +156,17 @@ the outcome is strictly better; documented rather than suppressed. NER is
 never re-run inside the loop — iterations are regex/string work plus
 re-tokenization.
 
-## Decision 4 — bounded extract schema-failure retry
+## Decision 4 — bounded extract output-badness retry
 
 On a retryable parse failure — `empty`, `non_json`, `schema_invalid`,
-`unexpected_stop_reason`, with usage present — the extract stage makes exactly
-ONE re-attempt before holding `schema_invalid`. Excluded on purpose:
+`unexpected_stop_reason`, with usage present — **or a verbatim-gate mismatch**
+(schema-valid output whose `customer_language` phrases are not exact quotes;
+staging showed this is the dominant real-world `MODEL_MALFORMED_RESPONSE`
+shape, including the original 4957646123024384 hold), the extract stage makes
+exactly ONE re-attempt TOTAL per call before holding `schema_invalid`. After a
+verbatim-triggered retry, ALL gates re-evaluate once on the new output with
+PII precedence preserved (a residual-PII hit in phrases is never retried or
+re-sent). Excluded on purpose:
 `refusal` (deliberate model behavior; a "fix your JSON" nudge is wrong),
 `truncated` (identical params give a near-identical result; the retry burns a
 full reservation for nothing), and usage-missing (a billing anomaly, not
@@ -169,7 +175,8 @@ output badness — the kept reservation is the remedy).
 - **Feedback is content-free**: the retry user message is the ORIGINAL message
   (transcript included) plus a fixed per-kind description and, for
   `schema_invalid`, a summary built from zod issue `path` + `code` ONLY —
-  never `message`, which can embed received values. The summary exists solely
+  never `message`, which can embed received values; for a verbatim mismatch,
+  mismatch/phrase COUNTS only — never the phrases. The summary exists solely
   in the outbound request (egress-safe: it derives from the model's own
   response to already-redacted input) and is never logged, alerted, or
   persisted.
