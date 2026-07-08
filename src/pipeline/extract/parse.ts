@@ -41,10 +41,23 @@ export type ParseFailureKind =
 /** The only stop reasons a well-formed extract completion may carry. */
 const NORMAL_STOP_REASONS = new Set(['end_turn', 'stop_sequence']);
 
+export type ParseOutcome =
+  | { ok: true; record: ExtractionRecord }
+  | {
+      ok: false;
+      failure: ParseFailureKind;
+      /**
+       * schema_invalid only: one line per zod issue, built from `path` + `code`
+       * ONLY — never `message`, which can embed the received value. Fed back to
+       * the model on the ADR 0007 retry; NEVER logged, alerted, or persisted.
+       */
+      issueSummary?: string[];
+    };
+
 export function parseExtraction(result: {
   text: string | null;
   stopReason: string | null;
-}): { ok: true; record: ExtractionRecord } | { ok: false; failure: ParseFailureKind } {
+}): ParseOutcome {
   const { text, stopReason } = result;
 
   // Precedence is deliberate (identical to classify) — stop-reason checks run FIRST
@@ -68,7 +81,13 @@ export function parseExtraction(result: {
   }
 
   const validated = extractionRecordSchema.safeParse(parsed);
-  if (!validated.success) return { ok: false, failure: 'schema_invalid' };
+  if (!validated.success) {
+    return {
+      ok: false,
+      failure: 'schema_invalid',
+      issueSummary: validated.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.code}`),
+    };
+  }
 
   return { ok: true, record: validated.data };
 }

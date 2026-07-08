@@ -1,12 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { composeRedaction } from '../../src/redaction/compose.js';
 import { createDenyListDetector } from '../../src/redaction/deny-list.js';
 import { createNerDetector } from '../../src/redaction/ner-detector.js';
 import { createRegexDetector } from '../../src/redaction/regex-detectors.js';
-import { residualScan } from '../../src/redaction/residual-scan.js';
 import { deriveSpanSignals, scoreRisk, shouldHoldForRisk } from '../../src/redaction/risk.js';
-import { mergeDetections } from '../../src/redaction/spans.js';
-import { tokenize } from '../../src/redaction/tokenize.js';
 import type { Detector, RiskSignal } from '../../src/redaction/types.js';
 import { configSchema } from '../../src/config/schema.js';
 import { REQUIRED_ENV } from '../_config.js';
@@ -69,7 +67,25 @@ export interface CaseOutcome {
   redactedText: string;
   held: boolean;
   reasons: string[];
+  /** Residual categories → counts over the FINAL output (superset gate input). */
+  residualCounts: Record<string, number>;
 }
+
+/**
+ * The residual categories the primary layers dominate by construction
+ * (ADR 0007). The superset gate asserts none of these ever appears in a case's
+ * final residual counts — the ONLY remaining residual_pii_detected path is
+ * repair-cap exhaustion.
+ */
+export const DOMINATED_RESIDUAL_CATEGORIES = [
+  'vault_value_reintroduced',
+  'digit_run',
+  'spelled_out_digits',
+  'email_like',
+  'name_like_after_greeting',
+  'deny_list_term',
+  'address_like',
+] as const;
 
 export function buildFullStack(denyTerms: string[]): Detector[] {
   return [
@@ -86,11 +102,9 @@ export async function runStack(
   riskThreshold: number,
 ): Promise<CaseOutcome> {
   const results = await Promise.all(detectors.map((d) => d.detect(text)));
-  const { spans, disagreement } = mergeDetections(results.flatMap((r) => [...r.detections]));
-  const tokenized = tokenize(text, spans);
-  const residual = residualScan({
-    redactedText: tokenized.redactedText,
-    vaultPlaintexts: tokenized.vaultEntries.map((e) => e.plaintext),
+  const { spans, disagreement, tokenized, residual } = composeRedaction({
+    text,
+    detectorResults: results,
     denyTerms,
   });
   const residualHit = residual.hits.length > 0;
@@ -104,6 +118,7 @@ export async function runStack(
     redactedText: tokenized.redactedText,
     held: residualHit || shouldHoldForRisk(risk, riskThreshold),
     reasons: risk.reasons,
+    residualCounts: residual.counts,
   };
 }
 

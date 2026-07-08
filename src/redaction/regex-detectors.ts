@@ -1,3 +1,9 @@
+import {
+  findEmailLike,
+  findGreetingNames,
+  findLongDigitRuns,
+  findSpelledDigitRuns,
+} from './mirror-finders.js';
 import type { Detection, Detector, DetectorResult, EntityType, RiskSignal } from './types.js';
 
 /**
@@ -135,7 +141,14 @@ export function detectPhones(text: string): Detection[] {
 }
 
 export function detectEmails(text: string): Detection[] {
-  return dedupe([...scan(text, EMAIL_STANDARD, 'email'), ...scan(text, EMAIL_OBFUSCATED, 'email')]);
+  return dedupe([
+    ...scan(text, EMAIL_STANDARD, 'email'),
+    ...scan(text, EMAIL_OBFUSCATED, 'email'),
+    // ADR 0007: shapes only the residual email_like sub-scan accepted before —
+    // unicode confusable at-signs (accounts＠example.com) and the mixed spoken
+    // form ("john at gmail.com": spoken at, literal dot).
+    ...findEmailLike(text).map((s) => detection(s.start, s.end, 'email')),
+  ]);
 }
 
 export function detectStreetAddresses(text: string): Detection[] {
@@ -173,6 +186,44 @@ export function detectGovernmentIds(text: string): Detection[] {
   return dedupe(out);
 }
 
+/**
+ * Generic long-number detection (ADR 0007): any run of >= 7 digits where only
+ * non-alphanumerics intervene, mirroring the residual scan's digit_run rule —
+ * the catch-all for real numbers that fit no specific shape (solid 7-, 8-, and
+ * 11+-digit runs, grouped pairs, mixed separators). Long non-PII numbers
+ * (order/invoice ids) are accepted over-redaction: any such run surviving to
+ * the output would residual-hold the call today. The pooled detector suppresses
+ * candidates a phone/card/gov-id detection already fully covers, so the common
+ * shapes keep their specific entity types and tokens.
+ */
+export function detectLongNumbers(text: string): Detection[] {
+  return findLongDigitRuns(text).map((s) => detection(s.start, s.end, 'number'));
+}
+
+/**
+ * Spelled-out digit runs (ADR 0007): >= 7 spoken digits ("nine one six five
+ * five five zero one four eight", with oh/double/triple), mirroring the
+ * residual scan's spelled_out_digits automaton but REDACTING the run as a
+ * phone (that is what a spoken digit run of this length is in a service call)
+ * instead of leaving it for a residual hold. Ordinary number talk ("seventy
+ * eight degrees", "ten minutes") has no run of 7 spoken digits and never fires.
+ */
+export function detectSpelledDigits(text: string): Detection[] {
+  return findSpelledDigitRuns(text).map((s) => detection(s.start, s.end, 'phone'));
+}
+
+/**
+ * Greeting-cue names (ADR 0007): the capitalized run after "my name is" /
+ * "ask for" / "speaking with" (or a capitalized bigram after "this is" /
+ * "it's") is redacted as a name — the deterministic backstop for names the
+ * NER confidence gate drops (ADR 0006 accepted that gap; this closes the
+ * greeting-shaped part of it and dominates the residual scan's
+ * name_like_after_greeting hold). Lowercase after the cue never fires.
+ */
+export function detectGreetingNames(text: string): Detection[] {
+  return findGreetingNames(text).map((s) => detection(s.start, s.end, 'name'));
+}
+
 // Address-like ambiguity: a number followed by capitalized words but NO street suffix.
 // Regexes cannot decide whether "4482 Kensington Meadows" is an address, so the near-miss
 // becomes a risk signal (fail closed) rather than a silent pass.
@@ -194,13 +245,23 @@ export function createRegexDetector(): Detector {
     name: 'regex',
     detect(text: string): Promise<DetectorResult> {
       const addresses = detectStreetAddresses(text);
+      const phones = detectPhones(text);
+      const cards = detectCreditCards(text);
+      const govIds = detectGovernmentIds(text);
+      const specificNumeric = [...phones, ...cards, ...govIds];
+      const numbers = detectLongNumbers(text).filter(
+        (n) => !specificNumeric.some((c) => c.start <= n.start && n.end <= c.end),
+      );
       const detections = dedupe([
-        ...detectPhones(text),
+        ...phones,
+        ...detectSpelledDigits(text),
+        ...detectGreetingNames(text),
         ...detectEmails(text),
         ...addresses,
         ...detectCrossStreets(text),
-        ...detectCreditCards(text),
-        ...detectGovernmentIds(text),
+        ...cards,
+        ...govIds,
+        ...numbers,
       ]);
       return Promise.resolve({
         detections,

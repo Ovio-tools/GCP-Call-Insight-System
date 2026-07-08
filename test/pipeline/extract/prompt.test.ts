@@ -8,7 +8,7 @@ import {
 
 describe('extract prompt versions', () => {
   it('pins the prompt and schema versions', () => {
-    expect(EXTRACT_PROMPT_VERSION).toBe('extract-v1');
+    expect(EXTRACT_PROMPT_VERSION).toBe('extract-v2');
     expect(EXTRACT_SCHEMA_VERSION).toBe(1);
   });
 });

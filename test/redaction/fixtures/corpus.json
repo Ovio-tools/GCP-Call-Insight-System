@@ -115,14 +115,40 @@
     {
       "id": "phone-07",
       "text": "The callback number is nine one six five five five zero one four eight, please read that back to me before we hang up.",
-      "entities": [{ "type": "phone", "value": "nine one six five five five zero one four eight" }],
-      "expectHold": true
+      "entities": [{ "type": "phone", "value": "nine one six five five five zero one four eight" }]
     },
     {
       "id": "phone-08",
       "text": "It is five five five, oh one, four nine, that is the short local number for the answering service we use after hours.",
-      "entities": [{ "type": "phone", "value": "five five five, oh one, four nine" }],
-      "expectHold": true
+      "entities": [{ "type": "phone", "value": "five five five, oh one, four nine" }]
+    },
+    {
+      "id": "number-01",
+      "text": "The old work order number was 4471982 if that helps you pull up the history on the account.",
+      "entities": [{ "type": "number", "value": "4471982" }]
+    },
+    {
+      "id": "number-02",
+      "text": "My member number with the warranty company is 88231475, they said to give that to whoever comes out.",
+      "entities": [{ "type": "number", "value": "88231475" }]
+    },
+    {
+      "id": "number-03",
+      "text": "The serial on the compressor plate reads 90283317465, I am reading it straight off the sticker.",
+      "entities": [{ "type": "number", "value": "90283317465" }]
+    },
+    {
+      "id": "number-04",
+      "text": "The office line is just the local seven digits, 555-0146, no area code needed from around here.",
+      "entities": [{ "type": "number", "value": "555-0146" }]
+    },
+    {
+      "id": "number-05",
+      "text": "The first half of the confirmation is 4471.\n: 9820 is the rest of it, read the two together as one number.",
+      "entities": [
+        { "type": "number", "value": "4471" },
+        { "type": "number", "value": "9820" }
+      ]
     },
     {
       "id": "email-01",

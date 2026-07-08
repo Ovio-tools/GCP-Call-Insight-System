@@ -30,16 +30,12 @@
     {
       "id": "adv-phone-spoken-mixed",
       "text": "It is nine one six, five five five, zero one six three, sorry I always have to read it off my own business card.",
-      "entities": [
-        { "type": "phone", "value": "nine one six, five five five, zero one six three" }
-      ],
-      "expectHold": true
+      "entities": [{ "type": "phone", "value": "nine one six, five five five, zero one six three" }]
     },
     {
       "id": "adv-phone-double",
       "text": "The after hours line is five five five double zero one six four, they pick up around the clock even on the holidays.",
-      "entities": [{ "type": "phone", "value": "five five five double zero one six four" }],
-      "expectHold": true
+      "entities": [{ "type": "phone", "value": "five five five double zero one six four" }]
     },
     {
       "id": "adv-phone-pauses",
@@ -49,8 +45,7 @@
     {
       "id": "adv-email-confusable",
       "text": "Billing goes to accounts＠example.com with the little at sign, our email system does something weird with the encoding.",
-      "entities": [{ "type": "email", "value": "accounts＠example.com" }],
-      "expectHold": true
+      "entities": [{ "type": "email", "value": "accounts＠example.com" }]
     },
     {
       "id": "adv-email-spaced-dots",
@@ -96,8 +91,7 @@
     {
       "id": "adv-biz-dashes",
       "text": "Look under A-c-m-e P-l-u-m-b-i-n-g, the intake system put dashes between every letter for some reason, it is one word.",
-      "entities": [{ "type": "deny_list", "value": "A-c-m-e P-l-u-m-b-i-n-g" }],
-      "expectHold": true
+      "entities": [{ "type": "deny_list", "value": "A-c-m-e P-l-u-m-b-i-n-g" }]
     },
     {
       "id": "adv-card-dashes",

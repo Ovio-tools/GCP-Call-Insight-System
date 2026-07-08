@@ -7,6 +7,9 @@ import {
   detectCrossStreets,
   detectCreditCards,
   detectGovernmentIds,
+  detectGreetingNames,
+  detectLongNumbers,
+  detectSpelledDigits,
   luhnValid,
 } from '../../src/redaction/regex-detectors.js';
 import type { Detection } from '../../src/redaction/types.js';
@@ -58,6 +61,21 @@ describe('email detection', () => {
 
   it('does not flag ordinary "at"/"dot" prose', () => {
     expect(detectEmails('meet me at the shop dot your i')).toHaveLength(0);
+    expect(detectEmails('we will be at the house at noon')).toHaveLength(0);
+  });
+
+  it('detects unicode confusable at-signs', () => {
+    const text = 'Billing goes to accounts＠example.com with the little at sign';
+    const hits = detectEmails(text);
+    expect(hits.length).toBeGreaterThanOrEqual(1);
+    expect(surface(text, hits[0]!)).toContain('accounts＠example.com');
+  });
+
+  it('detects the mixed spoken form (spoken at, literal dot)', () => {
+    const text = 'just email john at gmail.com whenever works';
+    const hits = detectEmails(text);
+    expect(hits).toHaveLength(1);
+    expect(surface(text, hits[0]!)).toBe('john at gmail.com');
   });
 });
 
@@ -135,6 +153,128 @@ describe('government id detection', () => {
     const hits = detectGovernmentIds(text);
     expect(hits.length).toBe(1);
     expect(surface(text, hits[0]!)).toBe('D1234567');
+  });
+});
+
+describe('generic long-number detection', () => {
+  it.each([
+    ['the account is 1234567 ok', '1234567'],
+    ['confirmation 12345678 received', '12345678'],
+    ['tracking 12345678901 arrived', '12345678901'],
+    ['it reads 43 81 99 2 4 on the tag', '43 81 99 2 4'],
+  ])('detects the >=7-digit run in %s as number', (text, expected) => {
+    const hits = detectLongNumbers(text);
+    expect(hits.length).toBe(1);
+    expect(surface(text, hits[0]!)).toBe(expected);
+    expect(hits[0]!.entityType).toBe('number');
+  });
+
+  it('does not fire under 7 digits', () => {
+    expect(detectLongNumbers('order 123456 shipped for 400 dollars')).toHaveLength(0);
+  });
+
+  it('is suppressed by the pooled detector when a phone/card/gov-id fully covers the run', async () => {
+    for (const text of [
+      'call me at (916) 555-1234 today',
+      'my social is 123-45-6789 ok',
+      'card 4111 1111 1111 1111 expiring',
+    ]) {
+      const result = await createRegexDetector().detect(text);
+      expect(result.detections.some((d) => d.entityType === 'number')).toBe(false);
+      expect(result.detections.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('fires via the pooled detector for an uncovered solid run', async () => {
+    const text = 'the invoice number was 12345678 from last spring';
+    const result = await createRegexDetector().detect(text);
+    const numbers = result.detections.filter((d) => d.entityType === 'number');
+    expect(numbers).toHaveLength(1);
+    expect(surface(text, numbers[0]!)).toBe('12345678');
+  });
+});
+
+describe('spelled-out digit detection', () => {
+  it('detects a full spoken phone number as phone', () => {
+    const text =
+      'The callback number is nine one six five five five zero one four eight, please read that back';
+    const hits = detectSpelledDigits(text);
+    expect(hits).toHaveLength(1);
+    expect(surface(text, hits[0]!)).toBe('nine one six five five five zero one four eight');
+    expect(hits[0]!.entityType).toBe('phone');
+  });
+
+  it('detects runs with oh and double/triple multipliers', () => {
+    const oh = 'It is five five five, oh one, four nine, that is the number';
+    expect(detectSpelledDigits(oh).map((h) => surface(oh, h))).toEqual([
+      'five five five, oh one, four nine',
+    ]);
+
+    const dbl = 'the after hours line is five five five double zero one six four, they pick up';
+    expect(detectSpelledDigits(dbl).map((h) => surface(dbl, h))).toEqual([
+      'five five five double zero one six four',
+    ]);
+  });
+
+  it('does not fire on ordinary number talk', () => {
+    for (const text of [
+      'it never gets below seventy eight degrees in the afternoon',
+      'give me ten minutes and a hundred bucks',
+      'the code is one two three four', // run of 4
+    ]) {
+      expect(detectSpelledDigits(text)).toHaveLength(0);
+    }
+  });
+
+  it('fires via the pooled detector', async () => {
+    const text = 'dial nine one six five five five zero one four eight now';
+    const result = await createRegexDetector().detect(text);
+    const spelled = result.detections.filter((d) => d.entityType === 'phone');
+    expect(spelled).toHaveLength(1);
+    expect(surface(text, spelled[0]!)).toBe('nine one six five five five zero one four eight');
+  });
+});
+
+describe('greeting-cue name detection', () => {
+  it('detects the capitalized run after strong cues as name (cue not included)', () => {
+    for (const [text, expected] of [
+      ['Hi, my name is Rosalind Nakamura and my heater is broken', 'Rosalind Nakamura'],
+      ['you can ask for Deshawn at the desk', 'Deshawn'],
+      ['I was speaking with Tobias Eriksen earlier', 'Tobias Eriksen'],
+      ['my name is Jean Claude Van Damme thanks', 'Jean Claude Van Damme'],
+    ] as const) {
+      const hits = detectGreetingNames(text);
+      expect(hits).toHaveLength(1);
+      expect(surface(text, hits[0]!)).toBe(expected);
+      expect(hits[0]!.entityType).toBe('name');
+    }
+  });
+
+  it('weak cues require a capitalized bigram', () => {
+    const text = 'hello this is David Smith calling about the furnace';
+    const hits = detectGreetingNames(text);
+    expect(hits).toHaveLength(1);
+    expect(surface(text, hits[0]!)).toBe('David Smith');
+
+    expect(detectGreetingNames('this is Bob speaking')).toHaveLength(0);
+  });
+
+  it('does not fire on lowercase after the cue', () => {
+    for (const text of [
+      'this is regarding the invoice from last month',
+      'ask for the manager on duty',
+      'my name is on the account already',
+    ]) {
+      expect(detectGreetingNames(text)).toHaveLength(0);
+    }
+  });
+
+  it('fires via the pooled detector', async () => {
+    const text = 'yes my name is Rosalind Nakamura, about the estimate';
+    const result = await createRegexDetector().detect(text);
+    const names = result.detections.filter((d) => d.entityType === 'name');
+    expect(names).toHaveLength(1);
+    expect(surface(text, names[0]!)).toBe('Rosalind Nakamura');
   });
 });
 

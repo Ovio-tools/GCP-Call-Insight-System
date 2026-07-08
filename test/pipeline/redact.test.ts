@@ -18,6 +18,10 @@ import { getToken } from '../../src/db/restricted/token-vault-repo.js';
 import { ConfigError } from '../../src/config/index.js';
 import { assertNoContentFields } from '../../src/logging/redaction.js';
 import { createRootLogger } from '../../src/logging/logger.js';
+import type { composeRedaction } from '../../src/redaction/compose.js';
+import { residualScan } from '../../src/redaction/residual-scan.js';
+import { mergeDetections } from '../../src/redaction/spans.js';
+import { tokenize } from '../../src/redaction/tokenize.js';
 import type { Detector, DetectorResult } from '../../src/redaction/types.js';
 import { makeTestConfig } from '../_config.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
@@ -33,6 +37,25 @@ function fakeDetector(name: string, result: Partial<DetectorResult>): Detector {
     detect: () => Promise.resolve({ detections: [], riskSignals: [], ...result }),
   };
 }
+
+/**
+ * Composition WITHOUT the ADR 0007 repair fixpoint — merge → tokenize →
+ * residual only. In production the residual-hold disposition is reachable only
+ * through repair-cap exhaustion (converged:false); injecting this stub is the
+ * deterministic way to drive that disposition in stage tests.
+ */
+const noRepairCompose: typeof composeRedaction = ({ text, detectorResults, denyTerms }) => {
+  const { spans, disagreement } = mergeDetections(
+    detectorResults.flatMap((r) => [...r.detections]),
+  );
+  const tokenized = tokenize(text, spans);
+  const residual = residualScan({
+    redactedText: tokenized.redactedText,
+    vaultPlaintexts: tokenized.vaultEntries.map((e) => e.plaintext),
+    denyTerms,
+  });
+  return { spans, disagreement, tokenized, residual };
+};
 
 function collectingLogger(): { lines: string[]; logger: ReturnType<typeof createRootLogger> } {
   const lines: string[] = [];
@@ -81,12 +104,17 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     await putTranscript(app, keyProvider, { callId, transcript });
   };
 
-  const makeHandler = (detectors: Detector[], overrides: Partial<typeof config> = {}) =>
+  const makeHandler = (
+    detectors: Detector[],
+    overrides: Partial<typeof config> = {},
+    compose?: typeof composeRedaction,
+  ) =>
     createRedactionHandler({
       keyProvider,
       config: { ...config, ...overrides },
       detectors,
       denyTerms: [],
+      ...(compose ? { compose } : {}),
     });
 
   const ctx = (callId: string, logger = collectingLogger().logger): StageContext => ({
@@ -218,12 +246,32 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     }
   });
 
-  it('residual bypass: an email layer-1 missed is caught, held residual_pii_detected, no clean row, residual finding persisted', async () => {
-    const callId = 'test-rd-residual';
-    // Layer-1 (fake) misses the confusable-@ email entirely — it is NOT in the vault.
+  it('repair (ADR 0007): PII layer-1 missed is redacted by the repair fixpoint — call continues, nothing egresses', async () => {
+    const callId = 'test-rd-repair';
+    // Layer-1 (fake) misses the confusable-@ email entirely; before ADR 0007 this
+    // held residual_pii_detected — now the repair loop redacts it and the call flows.
     const planted = 'contact me at john＠example.com for the invoice';
     await seedProcessing(callId, planted);
     const result = await makeHandler([fakeDetector('fake', {})])(ctx(callId));
+    expect(result).toEqual({ action: 'continue' });
+
+    const clean = await getCleanTranscript(app, callId);
+    expect(clean?.redacted_text).toContain('[EMAIL_1]');
+    expect(clean?.redacted_text).not.toContain('john');
+    expect(clean?.redacted_text).not.toContain('example.com');
+
+    // The repaired value is vaulted like any detector hit.
+    const runner = createRestrictedRunner(app);
+    const vaulted = await getToken(runner, keyProvider, { callId, token: '[EMAIL_1]' });
+    expect(vaulted?.toString('utf8')).toBe('john＠example.com');
+  });
+
+  it('residual hold (repair-cap exhaustion disposition): held residual_pii_detected, no clean row, residual finding persisted', async () => {
+    const callId = 'test-rd-residual';
+    // noRepairCompose simulates converged:false — the residual scan sees the miss.
+    const planted = 'contact me at john＠example.com for the invoice';
+    await seedProcessing(callId, planted);
+    const result = await makeHandler([fakeDetector('fake', {})], {}, noRepairCompose)(ctx(callId));
 
     expect(result).toMatchObject({
       action: 'hold',
@@ -258,10 +306,9 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     await makeHandler([happyDetector()])(ctx(callId));
     expect(await getCleanTranscript(app, callId)).toBeDefined();
 
-    // 2. Rerun with a residual-tripping fake (vault recheck: detector "finds" the name
-    //    but the tokenizer output is sabotaged by leaving the phone undetected as a
-    //    digit run). Simplest: no detections at all — the raw digits trip digit_run.
-    const rerun = await makeHandler([fakeDetector('fake', {})])(ctx(callId));
+    // 2. Rerun with a residual-tripping fake: no detections + no repair (cap-exhaustion
+    //    disposition), so the raw phone digits trip digit_run.
+    const rerun = await makeHandler([fakeDetector('fake', {})], {}, noRepairCompose)(ctx(callId));
     expect(rerun).toMatchObject({ action: 'hold', reason: 'residual_pii_detected' });
     expect(await getCleanTranscript(app, callId)).toBeUndefined();
 
@@ -377,7 +424,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
   it('alerts: repeat holds dedupe onto one active alert', async () => {
     const callId = 'test-rd-alertdedupe';
     await seedProcessing(callId, 'contact me at john＠example.com please');
-    const handler = makeHandler([fakeDetector('fake', {})]);
+    const handler = makeHandler([fakeDetector('fake', {})], {}, noRepairCompose);
     await handler(ctx(callId));
     await handler(ctx(callId));
     expect(await alertCount()).toBe(1);
@@ -414,7 +461,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     const classifySpy = vi.fn(() => Promise.resolve({ action: 'continue' as const }));
     const handlers: StageHandlers = {
       ...defaultStageHandlers,
-      redact: makeHandler([fakeDetector('fake', {})]),
+      redact: makeHandler([fakeDetector('fake', {})], {}, noRepairCompose),
       classify: classifySpy,
     };
 
@@ -492,7 +539,10 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     const callId = 'test-rd-logs';
     await seedProcessing(callId, 'contact me at john＠example.com please');
     const { lines, logger } = collectingLogger();
-    const result = await run(makeHandler([fakeDetector('fake', {})]), ctx(callId, logger));
+    const result = await run(
+      makeHandler([fakeDetector('fake', {})], {}, noRepairCompose),
+      ctx(callId, logger),
+    );
 
     expect(result.action).toBe('hold');
     if (result.action === 'hold' && result.detail) {

@@ -20,6 +20,7 @@ export const ENTITY_TYPES = [
   'cross_street',
   'credit_card',
   'government_id',
+  'number',
   'deny_list',
   'other',
 ] as const;

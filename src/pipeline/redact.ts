@@ -18,15 +18,13 @@ import {
   createRestrictedRunner,
 } from '../db/restricted/restricted-context.js';
 import { putToken } from '../db/restricted/token-vault-repo.js';
+import { composeRedaction } from '../redaction/compose.js';
 import { requireRedactionConfig } from '../redaction/config.js';
 import { createDenyListDetector, loadDenyList } from '../redaction/deny-list.js';
 import { createNerDetector } from '../redaction/ner-detector.js';
 import { createRegexDetector } from '../redaction/regex-detectors.js';
-import { residualScan } from '../redaction/residual-scan.js';
 import { transcriptToRedactableText } from '../redaction/transcript-text.js';
 import { deriveSpanSignals, scoreRisk, shouldHoldForRisk } from '../redaction/risk.js';
-import { mergeDetections } from '../redaction/spans.js';
-import { tokenize } from '../redaction/tokenize.js';
 import type { Detector, RiskSignal } from '../redaction/types.js';
 import { valueHash } from '../redaction/value-hash.js';
 import type { StageContext, StageHandler, StageResult } from './stages.js';
@@ -62,6 +60,10 @@ export interface RedactionDeps {
   makeRestrictedRunner?: (pool: Pool) => RestrictedRunner;
   /** Test injection. Default: loadDenyList(config.REDACTION_DENY_LIST_PATH). */
   denyTerms?: readonly string[];
+  /** Test injection. Default: composeRedaction (merge → ADR 0007 repair fixpoint →
+   * tokenize → residual). Lets tests drive the residual-hold disposition, which in
+   * production is reachable only through repair-cap exhaustion. */
+  compose?: typeof composeRedaction;
 }
 
 type HoldReason = 'residual_pii_detected' | 'redaction_failed';
@@ -116,6 +118,7 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     createDenyListDetector(denyTerms),
   ];
   const makeRunner = deps.makeRestrictedRunner ?? createRestrictedRunner;
+  const compose = deps.compose ?? composeRedaction;
 
   return async (ctx: StageContext): Promise<StageResult> => {
     const { callId, stage, logger, pool } = ctx;
@@ -162,12 +165,12 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     const results = await Promise.all(detectors.map((d) => d.detect(transcript)));
     const detectorSignals: RiskSignal[] = results.flatMap((r) => [...r.riskSignals]);
 
-    // 3. Merge → tokenize → residual → score (all in memory, before any write).
-    const { spans, disagreement } = mergeDetections(results.flatMap((r) => [...r.detections]));
-    const tokenized = tokenize(transcript, spans);
-    const residual = residualScan({
-      redactedText: tokenized.redactedText,
-      vaultPlaintexts: tokenized.vaultEntries.map((e) => e.plaintext),
+    // 3. Merge → tokenize → residual → score (all in memory, before any write),
+    //    via the ONE shared composition (ADR 0007) the test harness and the
+    //    inspection tool also use.
+    const { spans, disagreement, tokenized, residual } = compose({
+      text: transcript,
+      detectorResults: results,
       denyTerms,
     });
     const residualHit = residual.hits.length > 0;
