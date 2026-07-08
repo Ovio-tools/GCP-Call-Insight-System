@@ -7,9 +7,10 @@ import {
   rmSync,
   writeFileSync,
 } from 'node:fs';
-import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 import { DEK_BYTES } from './key-provider.js';
+import { wrapDek, unwrapDek as unwrapDekBytes } from './dek-wrap.js';
 
 /**
  * External key store (KEK + wrapped DEKs) — the seam a real KMS implements later (Task 8.2b).
@@ -70,10 +71,6 @@ export interface LocalFileKeyStoreOptions {
   unwrapCacheTtlMs?: number;
 }
 
-/** AES-256-GCM wrap parameters (mirror src/crypto/envelope.ts). */
-const IV_BYTES = 12;
-const TAG_BYTES = 16;
-const ALGORITHM = 'aes-256-gcm';
 const KEK_BYTES = 32;
 const DEFAULT_UNWRAP_TTL_MS = 5 * 60 * 1000;
 
@@ -182,7 +179,7 @@ export class LocalFileKeyStore implements KeyStore {
     }
     const kek = await this.getKek(kekVersion);
     const dek = randomBytes(DEK_BYTES);
-    const wrapped = this.#wrap(dek, kek, keyVersion);
+    const wrapped = wrapDek(dek, kek, keyVersion);
     writeFileSync(this.#dekPath(keyVersion), wrapped, { mode: 0o600 });
     const meta: DekMeta = { kekVersion };
     writeFileSync(this.#dekMetaPath(keyVersion), JSON.stringify(meta), { mode: 0o600 });
@@ -197,7 +194,7 @@ export class LocalFileKeyStore implements KeyStore {
     if (!resolved) throw new Error(`key store: DEK v${keyVersion} is not recoverable`);
     const meta = JSON.parse(readFileSync(resolved.metaPath, 'utf8')) as DekMeta;
     const kek = await this.getKek(meta.kekVersion); // throws if the KEK was destroyed
-    const dek = this.#unwrap(readFileSync(resolved.wrappedPath), kek, keyVersion);
+    const dek = unwrapDekBytes(readFileSync(resolved.wrappedPath), kek, keyVersion);
     this.#dekCache.set(keyVersion, {
       dek,
       expiresMs: this.#clock.now().getTime() + this.#ttlMs,
@@ -291,25 +288,5 @@ export class LocalFileKeyStore implements KeyStore {
     rmSync(this.#kekPath(v, true), { force: true });
     rmSync(this.#kekMetaPath(v, true), { force: true });
     this.#dekCache.clear();
-  }
-
-  #wrap(dek: Buffer, kek: Buffer, keyVersion: number): Buffer {
-    const iv = randomBytes(IV_BYTES);
-    const cipher = createCipheriv(ALGORITHM, kek, iv);
-    cipher.setAAD(Buffer.from(`dek:v${keyVersion}`, 'utf8'));
-    const body = Buffer.concat([cipher.update(dek), cipher.final()]);
-    return Buffer.concat([iv, cipher.getAuthTag(), body]);
-  }
-  #unwrap(wrapped: Buffer, kek: Buffer, keyVersion: number): Buffer {
-    if (wrapped.length < IV_BYTES + TAG_BYTES) {
-      throw new Error('key store: wrapped DEK too short');
-    }
-    const iv = wrapped.subarray(0, IV_BYTES);
-    const tag = wrapped.subarray(IV_BYTES, IV_BYTES + TAG_BYTES);
-    const body = wrapped.subarray(IV_BYTES + TAG_BYTES);
-    const decipher = createDecipheriv(ALGORITHM, kek, iv);
-    decipher.setAAD(Buffer.from(`dek:v${keyVersion}`, 'utf8'));
-    decipher.setAuthTag(tag);
-    return Buffer.concat([decipher.update(body), decipher.final()]);
   }
 }
