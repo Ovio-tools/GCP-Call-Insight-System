@@ -18,3 +18,4 @@ export * as componentHeartbeats from './component-heartbeats-repo.js';
 export * as rawWebhookEvents from './raw-webhook-events-repo.js';
 export * as keyVersions from './key-versions-repo.js';
 export * as rawTranscripts from './raw-transcripts-repo.js';
+export * as rawPurgeTombstone from './raw-purge-tombstone-repo.js';
