@@ -14,7 +14,7 @@ export function makeNerConfig(overrides: Partial<NerConfig> = {}): NerConfig {
   return {
     modelId: 'Xenova/bert-base-NER',
     modelDir: nerModelDir ?? 'models',
-    minScore: 0.5,
+    minScore: 0.7,
     chunkChars: 1500,
     chunkOverlapChars: 250,
     entityScope: new Set(['person', 'numbered_location']),

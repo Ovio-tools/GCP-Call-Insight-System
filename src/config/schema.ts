@@ -431,9 +431,11 @@ export const configObjectSchema = z.object({
   REDACTION_NER_MODEL_DIR: z.string().min(1).default('models'),
 
   /** NER spans below this confidence are DROPPED (not redacted) and raise the
-   * ner_low_confidence risk reason — the ADR 0006 precision gate. Tuned against the
-   * corpus recall gate; raising it trades recall margin for precision. */
-  REDACTION_NER_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
+   * ner_low_confidence risk reason — the ADR 0006 precision gate. Default tuned
+   * empirically (2026-07): weakest corpus-needed name span scores 0.7614, so 0.7 is
+   * the highest round value keeping >= 0.05 recall margin. Raising it further trades
+   * name recall for precision. */
+  REDACTION_NER_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.7),
 
   /** CSV of NER entity scopes actually redacted (ADR 0006). `person` = PER spans;
    * `numbered_location` = LOC spans only when a house-style number is directly
