@@ -48,6 +48,43 @@ describe('verbatimGate', () => {
   it('passes an empty list', () => {
     expect(verbatimGate([], transcript)).toEqual({ ok: true });
   });
+
+  // Issue #61: benign punctuation differences between the model's quote and the
+  // source are faithful and must PASS; only WORD differences may fail.
+  describe('punctuation tolerance (issue #61)', () => {
+    const src = 'Caller: it stopped working, and now there is no hot water at all.';
+
+    // Source spells the apostrophe curly (typical ASR); the model quotes it straight.
+    const withApos = 'Also there’s no hot water right now.';
+
+    it.each([
+      ['dropped comma', 'stopped working and now'],
+      ['added comma', 'no, hot water'],
+      ['added trailing period', 'no hot water at all.'],
+      ['hyphen vs space', 'hot-water'],
+      ['straight vs curly apostrophe', "there's no hot water"],
+    ])('passes a phrase differing only by %s', (_label, phrase) => {
+      expect(verbatimGate([phrase], `${src} ${withApos}`)).toEqual({ ok: true });
+    });
+
+    it('still fails a changed word', () => {
+      expect(verbatimGate(['stopped leaking'], src)).toMatchObject({ ok: false });
+    });
+
+    it('still fails an added word that breaks the contiguous run', () => {
+      // Source says "no hot water"; an inserted "really" is not a faithful quote.
+      expect(verbatimGate(['no really hot water'], src)).toMatchObject({ ok: false });
+    });
+
+    it('still fails a dropped middle word that breaks the contiguous run', () => {
+      // "stopped now" skips "working, and" — not a contiguous quote.
+      expect(verbatimGate(['stopped now'], src)).toMatchObject({ ok: false });
+    });
+
+    it('still fails a fully fabricated phrase', () => {
+      expect(verbatimGate(['the furnace exploded'], src)).toMatchObject({ ok: false });
+    });
+  });
 });
 
 describe('scanPhrasesForResidual (residual PII)', () => {
