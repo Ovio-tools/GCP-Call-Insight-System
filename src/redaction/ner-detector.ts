@@ -83,6 +83,25 @@ export function titleCase(text: string): string {
   return text.replace(/(?<![A-Za-z'])[a-z]/g, (c) => c.toUpperCase());
 }
 
+/** ADR 0006 numbered-LOC adjacency: "4482 Kensington Meadows" — 1-6 digits, not
+ * the tail of a longer digit run, separated from the span start by horizontal
+ * whitespace only. Anchoring on the SPAN START (not "a number within N chars")
+ * is what keeps "we have 2 units in Roseville" from firing. */
+const HOUSE_NUMBER_BEFORE = /(?<!\d)\d{1,6}[ \t]+$/;
+/** 6 digits + generous horizontal whitespace. */
+const HOUSE_NUMBER_WINDOW = 12;
+
+/**
+ * Does a house-style number immediately precede the location span at
+ * `spanStart`? Returns the widened span start (covering the number, so it is
+ * vaulted with the location and can never leak beside the token) or null.
+ */
+export function numberedLocationPrefix(text: string, spanStart: number): number | null {
+  const windowStart = Math.max(0, spanStart - HOUSE_NUMBER_WINDOW);
+  const m = HOUSE_NUMBER_BEFORE.exec(text.slice(windowStart, spanStart));
+  return m ? windowStart + m.index : null;
+}
+
 interface AlignResult {
   spans: Detection[];
   alignmentFailed: boolean;
