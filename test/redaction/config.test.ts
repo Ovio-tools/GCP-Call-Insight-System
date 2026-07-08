@@ -58,6 +58,52 @@ describe('redaction config schema', () => {
     );
   });
 
+  it('defaults REDACTION_NER_ENTITY_SCOPE to person + numbered_location', () => {
+    const result = validateEnv({ NODE_ENV: 'test', ...REQUIRED_ENV });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.REDACTION_NER_ENTITY_SCOPE).toEqual(['person', 'numbered_location']);
+  });
+
+  it('parses a CSV entity scope with whitespace and accepts every known member', () => {
+    const result = validateEnv({
+      NODE_ENV: 'test',
+      ...REQUIRED_ENV,
+      REDACTION_NER_ENTITY_SCOPE: ' person, numbered_location , location,organization,misc ',
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.config.REDACTION_NER_ENTITY_SCOPE).toEqual([
+      'person',
+      'numbered_location',
+      'location',
+      'organization',
+      'misc',
+    ]);
+  });
+
+  it('rejects an unknown entity-scope member, naming the variable', () => {
+    const result = validateEnv({
+      NODE_ENV: 'test',
+      ...REQUIRED_ENV,
+      REDACTION_NER_ENTITY_SCOPE: 'person,cities',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REDACTION_NER_ENTITY_SCOPE');
+  });
+
+  it('rejects an empty entity scope, naming the variable', () => {
+    const result = validateEnv({
+      NODE_ENV: 'test',
+      ...REQUIRED_ENV,
+      REDACTION_NER_ENTITY_SCOPE: '',
+    });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.invalid).toContain('REDACTION_NER_ENTITY_SCOPE');
+  });
+
   it('rejects an out-of-range risk threshold', () => {
     const result = validateEnv({
       NODE_ENV: 'test',

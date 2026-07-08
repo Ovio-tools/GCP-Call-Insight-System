@@ -27,6 +27,25 @@ export const ENTITY_TYPES = [
 export type EntityType = (typeof ENTITY_TYPES)[number];
 
 /**
+ * NER entity-scope policy vocabulary (ADR 0006): which NER detection types are
+ * actually redacted. `person` = PER spans; `numbered_location` = LOC spans only
+ * when a house-style number is directly adjacent (suffix-less addresses);
+ * `location` / `organization` / `misc` opt back in to bare places, business
+ * names, and MISC — i.e. the pre-ADR-0006 redact-everything behavior. Lives
+ * here (not in the detector) so the config schema can import it without
+ * touching the transformers.js module.
+ */
+export const NER_ENTITY_SCOPES = [
+  'person',
+  'numbered_location',
+  'location',
+  'organization',
+  'misc',
+] as const;
+
+export type NerEntityScope = (typeof NER_ENTITY_SCOPES)[number];
+
+/**
  * `redaction_findings.entity_type` vocabulary: every detection type plus the
  * call-level residual-scan record the stage always writes (one per call, carrying
  * categories/counts only). Typed here so building that row needs no casts.
@@ -41,7 +60,7 @@ export interface Detection {
   end: number;
   entityType: EntityType;
   detector: 'ner' | 'regex' | 'deny_list';
-  /** NER only — min wordpiece score across the span. */
+  /** NER only — mean wordpiece score across the span. */
   confidence?: number;
 }
 
