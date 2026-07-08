@@ -7,6 +7,7 @@ import {
   detectCrossStreets,
   detectCreditCards,
   detectGovernmentIds,
+  detectGreetingNames,
   detectLongNumbers,
   detectSpelledDigits,
   luhnValid,
@@ -216,6 +217,49 @@ describe('spelled-out digit detection', () => {
     const spelled = result.detections.filter((d) => d.entityType === 'phone');
     expect(spelled).toHaveLength(1);
     expect(surface(text, spelled[0]!)).toBe('nine one six five five five zero one four eight');
+  });
+});
+
+describe('greeting-cue name detection', () => {
+  it('detects the capitalized run after strong cues as name (cue not included)', () => {
+    for (const [text, expected] of [
+      ['Hi, my name is Rosalind Nakamura and my heater is broken', 'Rosalind Nakamura'],
+      ['you can ask for Deshawn at the desk', 'Deshawn'],
+      ['I was speaking with Tobias Eriksen earlier', 'Tobias Eriksen'],
+      ['my name is Jean Claude Van Damme thanks', 'Jean Claude Van Damme'],
+    ] as const) {
+      const hits = detectGreetingNames(text);
+      expect(hits).toHaveLength(1);
+      expect(surface(text, hits[0]!)).toBe(expected);
+      expect(hits[0]!.entityType).toBe('name');
+    }
+  });
+
+  it('weak cues require a capitalized bigram', () => {
+    const text = 'hello this is David Smith calling about the furnace';
+    const hits = detectGreetingNames(text);
+    expect(hits).toHaveLength(1);
+    expect(surface(text, hits[0]!)).toBe('David Smith');
+
+    expect(detectGreetingNames('this is Bob speaking')).toHaveLength(0);
+  });
+
+  it('does not fire on lowercase after the cue', () => {
+    for (const text of [
+      'this is regarding the invoice from last month',
+      'ask for the manager on duty',
+      'my name is on the account already',
+    ]) {
+      expect(detectGreetingNames(text)).toHaveLength(0);
+    }
+  });
+
+  it('fires via the pooled detector', async () => {
+    const text = 'yes my name is Rosalind Nakamura, about the estimate';
+    const result = await createRegexDetector().detect(text);
+    const names = result.detections.filter((d) => d.entityType === 'name');
+    expect(names).toHaveLength(1);
+    expect(surface(text, names[0]!)).toBe('Rosalind Nakamura');
   });
 });
 

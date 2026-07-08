@@ -1,4 +1,4 @@
-import { findLongDigitRuns, findSpelledDigitRuns } from './mirror-finders.js';
+import { findGreetingNames, findLongDigitRuns, findSpelledDigitRuns } from './mirror-finders.js';
 import type { Detection, Detector, DetectorResult, EntityType, RiskSignal } from './types.js';
 
 /**
@@ -200,6 +200,18 @@ export function detectSpelledDigits(text: string): Detection[] {
   return findSpelledDigitRuns(text).map((s) => detection(s.start, s.end, 'phone'));
 }
 
+/**
+ * Greeting-cue names (ADR 0007): the capitalized run after "my name is" /
+ * "ask for" / "speaking with" (or a capitalized bigram after "this is" /
+ * "it's") is redacted as a name — the deterministic backstop for names the
+ * NER confidence gate drops (ADR 0006 accepted that gap; this closes the
+ * greeting-shaped part of it and dominates the residual scan's
+ * name_like_after_greeting hold). Lowercase after the cue never fires.
+ */
+export function detectGreetingNames(text: string): Detection[] {
+  return findGreetingNames(text).map((s) => detection(s.start, s.end, 'name'));
+}
+
 // Address-like ambiguity: a number followed by capitalized words but NO street suffix.
 // Regexes cannot decide whether "4482 Kensington Meadows" is an address, so the near-miss
 // becomes a risk signal (fail closed) rather than a silent pass.
@@ -231,6 +243,7 @@ export function createRegexDetector(): Detector {
       const detections = dedupe([
         ...phones,
         ...detectSpelledDigits(text),
+        ...detectGreetingNames(text),
         ...detectEmails(text),
         ...addresses,
         ...detectCrossStreets(text),

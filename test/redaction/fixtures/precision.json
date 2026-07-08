@@ -53,6 +53,18 @@
       "survivingValues": ["Elite Roofing LLC"]
     },
     {
+      "id": "cue-01",
+      "text": "Yes hello, this is regarding the invoice from last month, we were charged for a filter that was never installed.",
+      "entities": [],
+      "survivingValues": ["this is regarding the invoice"]
+    },
+    {
+      "id": "cue-02",
+      "text": "When you get to the front office just ask for the manager on duty and they will walk you back to the utility room.",
+      "entities": [],
+      "survivingValues": ["ask for the manager on duty"]
+    },
+    {
       "id": "trade-01",
       "text": "The bathroom sink is leaking and the kitchen faucet drips near the pool gate, please send someone out to the house this week.",
       "entities": [],
