@@ -57,7 +57,29 @@ function normalizeLight(s: string): string {
 }
 
 /**
- * Every phrase must appear (after light normalization) in `redactedText`. Returns
+ * Verbatim-gate normalization (issue #61): lowercase, drop apostrophes (so
+ * won't/won’t/wont coincide), then map EVERY other non-alphanumeric run to a
+ * single space and trim. Deliberately more aggressive than {@link normalizeLight}
+ * and PRIVATE to the verbatim gate — the emergency SAFETY gate keeps normalizeLight
+ * unchanged.
+ *
+ * The point is to tolerate the benign punctuation/whitespace differences a faithful
+ * model quote picks up against ASR text (an added/dropped comma, hyphen-vs-space)
+ * WITHOUT loosening word matching: the gate still asks for the phrase's words as a
+ * contiguous substring, so a changed word, an inserted word, or a skipped middle
+ * word all break contiguity and still fail. Only punctuation, case, apostrophes,
+ * and whitespace are ignored.
+ */
+function normalizeForVerbatim(s: string): string {
+  return s
+    .toLowerCase()
+    .replace(/['‘’]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim();
+}
+
+/**
+ * Every phrase must appear (after verbatim normalization) in `redactedText`. Returns
  * the count of phrases that do NOT appear — never the phrase text. The handler runs
  * this on ORIGINAL phrases for the in-memory gate.
  */
@@ -65,10 +87,10 @@ export function verbatimGate(
   phrases: readonly string[],
   redactedText: string,
 ): { ok: true } | { ok: false; mismatchCount: number; phraseCount: number } {
-  const haystack = normalizeLight(redactedText);
+  const haystack = normalizeForVerbatim(redactedText);
   let mismatchCount = 0;
   for (const phrase of phrases) {
-    if (!haystack.includes(normalizeLight(phrase))) mismatchCount += 1;
+    if (!haystack.includes(normalizeForVerbatim(phrase))) mismatchCount += 1;
   }
   return mismatchCount === 0
     ? { ok: true }
