@@ -326,9 +326,11 @@ CLIs, the shared advisory lock + queue-safe maintenance pause (backstop `moveToD
 the recovery window; Phase B finalizer confirms `store.recoverability`), the column-scoped
 `key_admin_role` (never raw/vault), and the crypto-shred launch gate. See
 `docs/key-hierarchy.md`, `docs/backup-retention.md`, `docs/restore-drill.md`, and ADR
-`0005`. **Production live-processing is NOT unblocked**: the production KMS provider is the named
-blocking follow-up **Task 8.2b** (`docs/task-8-2b-production-kms.md`) — `keystore` is refused in
-production, `kms` still throws, and the launch gate fails in production without a verified KMS.
+`0005`. **Production key custody is now the Railway-secret key store**
+(`CRYPTO_KEY_PROVIDER=railway`, ADR 0008 `docs/adr/0008-railway-secret-key-store-and-raw-store-isolation.md`):
+`local`/`keystore` remain dev/staging only; a dedicated external KMS (**Task 8.2b**,
+`docs/task-8-2b-production-kms.md`) is now an optional future upgrade via the same seam, not a
+launch blocker.
 
 **Model calls** — model IDs are configurable, never hardcoded. Every invocation
 records model ID and prompt version in `model_invocations`.

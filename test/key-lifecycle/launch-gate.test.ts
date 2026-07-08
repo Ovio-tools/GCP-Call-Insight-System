@@ -113,4 +113,40 @@ describe.skipIf(!hasTestDb)('checkLaunchGate', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   });
+
+  it('passes in production when the provider is railway (no destroyed drift)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-'));
+    try {
+      seq += 1;
+      const { store } = makeStoreProvider(dir, owner);
+      await seedIsolatedActiveKey(owner, store, `${KL_KEK_PREFIX}${seq}`);
+      const res = await checkLaunchGate({
+        pool: owner,
+        keyStore: store,
+        config: makeTestConfig({ NODE_ENV: 'production', CRYPTO_KEY_PROVIDER: 'railway' }),
+      });
+      expect(res.failures.join('\n')).not.toMatch(/requires a verified|requires the Railway/);
+      expect(res.ok).toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails in production when the provider is keystore', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gate-'));
+    try {
+      seq += 1;
+      const { store } = makeStoreProvider(dir, owner);
+      await seedIsolatedActiveKey(owner, store, `${KL_KEK_PREFIX}${seq}`);
+      const res = await checkLaunchGate({
+        pool: owner,
+        keyStore: store,
+        config: makeTestConfig({ NODE_ENV: 'production', CRYPTO_KEY_PROVIDER: 'keystore' }),
+      });
+      expect(res.ok).toBe(false);
+      expect(res.failures.join('\n')).toMatch(/production requires/);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });

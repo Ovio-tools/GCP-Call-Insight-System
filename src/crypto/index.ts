@@ -11,7 +11,9 @@ export {
   LocalKeyProvider,
   keyProviderFromConfig,
   keyStoreFromConfig,
+  keyStoreForCli,
   buildKeyProvider,
+  isKeyStoreProvider,
   type KeyProvider,
   type LocalKeyProviderOptions,
 } from './key-provider.js';
@@ -25,3 +27,11 @@ export {
   type CreateDekResult,
 } from './key-store.js';
 export { KeyStoreProvider, type KeyStoreProviderOptions } from './key-store-provider.js';
+export { RailwaySecretKeyStore } from './railway-secret-key-store.js';
+export { RailwayApiSecretBackend } from './railway-api-secret-backend.js';
+export {
+  EnvSecretBackend,
+  InMemorySecretBackend,
+  ReadOnlySecretBackendError,
+  type SecretBackend,
+} from './secret-backend.js';

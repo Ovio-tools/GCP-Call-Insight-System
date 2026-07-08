@@ -1,7 +1,7 @@
 import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
-import { buildKeyProvider } from '../crypto/index.js';
+import { buildKeyProvider, isKeyStoreProvider } from '../crypto/index.js';
 import { query } from '../db/sql.js';
 import type { Queryable } from '../db/types.js';
 
@@ -34,15 +34,16 @@ export async function assertKeyLifecycleReady(db: Queryable): Promise<void> {
 }
 
 /**
- * Build the key provider a service uses, enforcing the keystore boot guard first. In `keystore`
- * mode it verifies the bootstrap invariant then returns the DB-sourced provider; otherwise it
- * returns the config-only provider (local dev/test).
+ * Build the key provider a service uses, enforcing the keystore boot guard first. In any
+ * DB-sourced-active-version mode (`keystore` or `railway`) it verifies the bootstrap invariant
+ * then returns the DB-sourced provider; otherwise it returns the config-only provider (local
+ * dev/test).
  */
 export async function buildServiceKeyProvider(deps: {
   config: Config;
   pool: Pool;
 }): Promise<KeyProvider> {
-  if (deps.config.CRYPTO_KEY_PROVIDER === 'keystore') {
+  if (isKeyStoreProvider(deps.config.CRYPTO_KEY_PROVIDER)) {
     await assertKeyLifecycleReady(deps.pool);
   }
   return buildKeyProvider({ config: deps.config, pool: deps.pool });
