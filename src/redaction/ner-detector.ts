@@ -89,27 +89,52 @@ interface AlignResult {
   truncated: boolean;
 }
 
+/** A char that belongs to the same spoken word: letters, digits, apostrophes,
+ * hyphens — so snapped spans cover `D'Angelo`, `Gonzalez-Ruiz`, `Raley's` whole. */
+const WORD_CHAR = /[A-Za-z0-9'’-]/;
+
 /**
  * Cursor-based wordpiece → char-offset alignment. Walks EVERY token (including
  * `O`) to keep the cursor synchronized with the source text; emits spans for
- * contiguous `B-X`/`I-X` runs. Alignment failure on an ENTITY token is fatal for
- * trust in the output (`alignmentFailed`); failure on an `O` token is benign.
+ * contiguous `B-X`/`I-X` runs, SNAPPED outward to whole-word boundaries so a
+ * partial-wordpiece run ("Bathroom Tu" of "Bathroom Turned") never yields a
+ * fragment redaction that leaves the rest of the word behind. Snapping only
+ * ever widens (fail-safe) and never moves the cursor. Per-span confidence is
+ * the MEAN of the wordpiece scores — one weak `##` piece must not sink a real
+ * multi-word name now that sub-minScore spans are dropped. Alignment failure
+ * on an ENTITY token is fatal for trust in the output (`alignmentFailed`);
+ * failure on an `O` token is benign.
+ *
+ * Exported for direct unit tests (`align-tokens.test.ts`); not part of the
+ * module's public surface otherwise.
  */
-function alignTokens(text: string, tokens: readonly TokenHit[], offset: number): AlignResult {
+export function alignTokens(
+  text: string,
+  tokens: readonly TokenHit[],
+  offset: number,
+): AlignResult {
   const spans: Detection[] = [];
   let alignmentFailed = false;
   let cursor = 0;
-  let current: { start: number; end: number; entityType: EntityType; confidence: number } | null =
-    null;
+  let current: {
+    start: number;
+    end: number;
+    entityType: EntityType;
+    scoreSum: number;
+    pieceCount: number;
+  } | null = null;
 
   const flush = (): void => {
     if (current) {
+      let { start, end } = current;
+      while (start > 0 && WORD_CHAR.test(text[start - 1] ?? '')) start -= 1;
+      while (end < text.length && WORD_CHAR.test(text[end] ?? '')) end += 1;
       spans.push({
-        start: current.start + offset,
-        end: current.end + offset,
+        start: start + offset,
+        end: end + offset,
         entityType: current.entityType,
         detector: 'ner',
-        confidence: current.confidence,
+        confidence: current.scoreSum / current.pieceCount,
       });
       current = null;
     }
@@ -152,10 +177,11 @@ function alignTokens(text: string, tokens: readonly TokenHit[], offset: number):
     const contiguous = current !== null && (isContinuation || start - current.end <= 1);
     if (current && current.entityType === entityType && contiguous) {
       current.end = end;
-      current.confidence = Math.min(current.confidence, t.score);
+      current.scoreSum += t.score;
+      current.pieceCount += 1;
     } else {
       flush();
-      current = { start, end, entityType, confidence: t.score };
+      current = { start, end, entityType, scoreSum: t.score, pieceCount: 1 };
     }
   }
   flush();
