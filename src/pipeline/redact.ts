@@ -147,6 +147,14 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     }
 
     // 1. Input: raw transcript only, via envelope decryption. Absent ⇒ fail closed.
+    //    FAIL-CLOSED ON A RAW-STORE (DB-B) OUTAGE (Task 8.2d): raw_transcripts and
+    //    token_vault live in a SEPARATE Postgres (DB-B) reached via deps.rawPool. If DB-B
+    //    is unreachable this read — or the vault write at 4a — THROWS before any DB-A
+    //    findings/clean-transcript write happens, so the handler rejects, the call never
+    //    advances, and no redacted text is ever egressed. The error propagates as a
+    //    retryable stage failure (runner → BullMQ retry → dead-letter + alert), IDENTICAL
+    //    to a mid-stage DB-A outage — never a silent skip, never a partial egress, never a
+    //    per-call hold (a DB-B outage is an operational failure, not a review-queue case).
     const rawTranscript = await getTranscript(deps.rawPool, deps.keyProvider, callId);
     if (rawTranscript === undefined) {
       logger.info({ stage }, 'raw transcript absent at redact — holding');
@@ -187,9 +195,12 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     const risk = scoreRisk(signals);
     const holdForRisk = shouldHoldForRisk(risk, deps.config.REDACTION_RISK_THRESHOLD);
 
-    // 4a. Vault first: no finding/clean row may ever reference an unvaulted token.
-    //     Stale rows from a prior detector version are harmless (highest-security
-    //     table, purged with raw).
+    // 4a. Vault first (DB-B): no finding/clean row may ever reference an unvaulted token.
+    //     This ordering is ALSO the fail-closed guarantee for a raw-store outage — a DB-B
+    //     failure here throws before the findings/clean writes at 4b/4c ever run, so a
+    //     partially-vaulted call can never leak a clean row on DB-A (see step 1). Stale
+    //     rows from a prior detector version are harmless (highest-security table, purged
+    //     with raw).
     const runner = makeRunner(deps.rawPool);
     for (const entry of tokenized.vaultEntries) {
       await putToken(runner, deps.keyProvider, {

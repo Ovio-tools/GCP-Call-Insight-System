@@ -13,7 +13,10 @@ import {
 } from '../../src/db/repositories/clean-transcripts-repo.js';
 import { getFindings } from '../../src/db/repositories/redaction-findings-repo.js';
 import { putTranscript } from '../../src/db/repositories/raw-transcripts-repo.js';
-import { createRestrictedRunner } from '../../src/db/restricted/restricted-context.js';
+import {
+  type RestrictedRunner,
+  createRestrictedRunner,
+} from '../../src/db/restricted/restricted-context.js';
 import { getToken } from '../../src/db/restricted/token-vault-repo.js';
 import { ConfigError } from '../../src/config/index.js';
 import { assertNoContentFields } from '../../src/logging/redaction.js';
@@ -574,5 +577,89 @@ describe.skipIf(!hasTestDb || !hasRawTestDb)('redact stage', () => {
         denyTerms: [],
       }),
     ).toThrow(ConfigError);
+  });
+
+  /**
+   * Task 8.2d — the raw store (DB-B, raw_transcripts + token_vault) is now a
+   * SEPARATE Postgres. A DB-B outage during redact must be FAIL-CLOSED: the raw
+   * read (step 1) or the vault write (step 4a) throws BEFORE any DB-A findings /
+   * clean-transcript write, so the handler rejects, the call never advances, and
+   * no redacted (clean) text is ever written or egressed. The rejection is a
+   * retryable stage failure (runner → BullMQ retry → dead-letter + alert),
+   * identical to a mid-stage DB-A outage — never a partial egress, never a hold.
+   */
+  describe('fail-closed on a raw-store (DB-B) outage', () => {
+    /** Count active-or-not rows on DB-A for a call (owner pool — app_role has no such reach). */
+    const dbACount = async (table: string, callId: string): Promise<number> => {
+      const r = await owner.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM ${table} WHERE call_id = $1`,
+        [callId],
+      );
+      return Number(r.rows[0]?.n);
+    };
+
+    it('raw read (step 1) fails: rejects, zero clean/findings egress on DB-A', async () => {
+      const callId = 'test-rd-dbb-read';
+      // call_state on DB-A so the retention preflight passes; no raw row needed — the
+      // fake DB-B pool rejects the read as if the raw store were unreachable.
+      await upsertCallState(app, {
+        callId,
+        source: 'test',
+        currentStage: 'redact',
+        status: 'processing',
+      });
+
+      const connErr = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), {
+        code: 'ECONNREFUSED',
+      });
+      // A pg-Pool stand-in whose every query/connect rejects with a connection-style error.
+      const downRawPool = {
+        query: () => Promise.reject(connErr),
+        connect: () => Promise.reject(connErr),
+      } as unknown as Pool;
+
+      const handler = createRedactionHandler({
+        keyProvider,
+        config,
+        rawPool: downRawPool,
+        detectors: [happyDetector()],
+        denyTerms: [],
+      });
+
+      await expect(handler(ctx(callId))).rejects.toThrow(/ECONNREFUSED/);
+
+      // Zero egress: getTranscript threw before any DB-A write ran.
+      expect(await dbACount('clean_transcripts', callId)).toBe(0);
+      expect(await dbACount('redaction_findings', callId)).toBe(0);
+    });
+
+    it('vault write (step 4a) fails: rejects, zero clean/findings egress on DB-A', async () => {
+      const callId = 'test-rd-dbb-vault';
+      // Raw transcript IS readable on DB-B — the failure is the vault write, exercising
+      // the vault-FIRST ordering: putToken must run (and here throw) before any findings
+      // or clean-transcript write on DB-A.
+      await seedProcessing(callId);
+
+      const connErr = Object.assign(new Error('Connection terminated unexpectedly'), {
+        code: '08006', // pg connection_failure SQLSTATE
+      });
+      const downRunner: RestrictedRunner = { run: () => Promise.reject(connErr) };
+
+      const handler = createRedactionHandler({
+        keyProvider,
+        config,
+        rawPool: rawApp,
+        detectors: [happyDetector()], // yields vault entries, so putToken is reached
+        denyTerms: [],
+        makeRestrictedRunner: () => downRunner,
+      });
+
+      await expect(handler(ctx(callId))).rejects.toThrow(/Connection terminated/);
+
+      // The key privacy property: a DB-B failure mid-vault cannot leak a partially
+      // redacted clean row, because vault precedes and gates the DB-A writes.
+      expect(await dbACount('clean_transcripts', callId)).toBe(0);
+      expect(await dbACount('redaction_findings', callId)).toBe(0);
+    });
   });
 });
