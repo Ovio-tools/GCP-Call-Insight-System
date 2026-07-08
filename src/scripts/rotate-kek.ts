@@ -4,7 +4,7 @@ import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { createAppPool } from '../db/index.js';
-import { keyStoreFromConfig } from '../crypto/index.js';
+import { isKeyStoreProvider, keyStoreForCli } from '../crypto/index.js';
 import { rotateKek } from '../key-lifecycle/rotate-kek.js';
 
 /**
@@ -26,8 +26,8 @@ export async function main(): Promise<void> {
 
   const config = loadConfig();
   const logger = createBootLogger({ level: config.LOG_LEVEL, name: 'rotate-kek' });
-  if (config.CRYPTO_KEY_PROVIDER !== 'keystore') {
-    throw new Error('rotate-kek requires CRYPTO_KEY_PROVIDER=keystore');
+  if (!isKeyStoreProvider(config.CRYPTO_KEY_PROVIDER)) {
+    throw new Error('rotate-kek requires CRYPTO_KEY_PROVIDER=keystore or railway');
   }
   await assertDependenciesReady(config, logger);
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
@@ -35,7 +35,7 @@ export async function main(): Promise<void> {
   const newKekVersion = values['new-kek-version'];
   if (!newKekVersion) throw new Error('rotate-kek: --new-kek-version is required');
 
-  const keyStore = keyStoreFromConfig(config);
+  const keyStore = keyStoreForCli(config);
   const pool = createAppPool(config.DATABASE_URL, 'key_admin_role');
   const client = await pool.connect();
   try {

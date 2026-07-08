@@ -4,7 +4,7 @@ import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
 import { createOwnerPool } from '../db/index.js';
-import { keyStoreFromConfig } from '../crypto/index.js';
+import { isKeyStoreProvider, keyStoreForCli } from '../crypto/index.js';
 import { createRestrictedRunner } from '../db/restricted/restricted-context.js';
 import { revokeDek, revokeKek, type RevokeDeps } from '../key-lifecycle/revoke.js';
 
@@ -30,8 +30,8 @@ export async function main(): Promise<void> {
 
   const config = loadConfig();
   const logger = createBootLogger({ level: config.LOG_LEVEL, name: 'revoke-key' });
-  if (config.CRYPTO_KEY_PROVIDER !== 'keystore') {
-    throw new Error('revoke-key requires CRYPTO_KEY_PROVIDER=keystore');
+  if (!isKeyStoreProvider(config.CRYPTO_KEY_PROVIDER)) {
+    throw new Error('revoke-key requires CRYPTO_KEY_PROVIDER=keystore or railway');
   }
   if ((values.dek && values.kek) || (!values.dek && !values.kek)) {
     throw new Error('revoke-key: pass exactly one of --dek <version> or --kek <kek-version>');
@@ -44,7 +44,7 @@ export async function main(): Promise<void> {
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
 
   const pool = createOwnerPool(config.DATABASE_URL);
-  const keyStore = keyStoreFromConfig(config);
+  const keyStore = keyStoreForCli(config);
   const deps: RevokeDeps = {
     pool,
     restrictedRunner: createRestrictedRunner(pool),

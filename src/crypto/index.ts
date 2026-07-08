@@ -11,6 +11,7 @@ export {
   LocalKeyProvider,
   keyProviderFromConfig,
   keyStoreFromConfig,
+  keyStoreForCli,
   buildKeyProvider,
   isKeyStoreProvider,
   type KeyProvider,

@@ -4,6 +4,7 @@ import type { Config } from '../config/schema.js';
 import { getActiveKeyVersion } from '../db/repositories/key-versions-repo.js';
 import { KeyStoreProvider } from './key-store-provider.js';
 import { LocalFileKeyStore, type KeyStore } from './key-store.js';
+import { RailwayApiSecretBackend } from './railway-api-secret-backend.js';
 import { RailwaySecretKeyStore } from './railway-secret-key-store.js';
 import { EnvSecretBackend } from './secret-backend.js';
 
@@ -138,6 +139,34 @@ export function keyStoreFromConfig(config: Config): KeyStore {
     dir: config.CRYPTO_KEY_STORE_DIR,
     recoveryWindowDays: config.KEY_STORE_RECOVERY_WINDOW_DAYS,
   });
+}
+
+/**
+ * Build a write-capable {@link KeyStore} for the key-lifecycle CLIs
+ * (bootstrap/rotate/revoke/confirm-destruction), which MUTATE key material. For `railway` this
+ * talks to the Railway GraphQL API (needs RAILWAY_API_TOKEN + env/service ids) via
+ * {@link RailwayApiSecretBackend}; running services instead read through the read-only
+ * EnvSecretBackend built by {@link keyStoreFromConfig}. For `keystore` it reuses the file store.
+ */
+export function keyStoreForCli(config: Config): KeyStore {
+  if (config.CRYPTO_KEY_PROVIDER === 'railway') {
+    if (!config.RAILWAY_API_TOKEN || !config.RAILWAY_ENVIRONMENT_ID || !config.RAILWAY_SERVICE_ID) {
+      throw new Error(
+        'railway key CLIs require RAILWAY_API_TOKEN, RAILWAY_ENVIRONMENT_ID, and RAILWAY_SERVICE_ID',
+      );
+    }
+    return new RailwaySecretKeyStore({
+      backend: new RailwayApiSecretBackend({
+        token: config.RAILWAY_API_TOKEN,
+        environmentId: config.RAILWAY_ENVIRONMENT_ID,
+        serviceId: config.RAILWAY_SERVICE_ID,
+      }),
+      kekSecretName: config.CRYPTO_KEK_SECRET_NAME,
+      dekSecretName: config.CRYPTO_WRAPPED_DEK_SECRET_NAME,
+      recoveryWindowDays: config.KEY_STORE_RECOVERY_WINDOW_DAYS,
+    });
+  }
+  return keyStoreFromConfig(config);
 }
 
 /**
