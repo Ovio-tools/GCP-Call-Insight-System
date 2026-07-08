@@ -28,8 +28,10 @@ import { KeyLifecycleError } from './errors.js';
 type InvalidatableKeyProvider = KeyProvider & { invalidateActiveVersion?: () => void };
 
 export interface RotateKeyDeps {
-  /** App+key-admin capable pool: advisory lock, key_versions/kek_versions/events, and raw_transcripts. */
+  /** App+key-admin capable pool: advisory lock, key_versions/kek_versions/events. */
   pool: Pool;
+  /** DB-B owner pool — raw_transcripts + token_vault re-encryption (ADR 0008 Move 2). */
+  rawPool: Pool;
   /** Restricted runner for token_vault ciphertext (key-admin is never granted vault access). */
   restrictedRunner: RestrictedRunner;
   keyStore: KeyStore;
@@ -192,7 +194,7 @@ async function runRotation(
         'rotateKey: in-flight jobs did not drain within KEY_ROTATION_DRAIN_TIMEOUT_MS',
       );
     }
-    const rawN = await reencryptRawTranscripts(deps.pool, {
+    const rawN = await reencryptRawTranscripts(deps.rawPool, {
       oldVersion,
       newVersion,
       keyProvider: deps.keyProvider,
@@ -207,7 +209,7 @@ async function runRotation(
     rowsReencrypted = rawN + vaultN;
 
     // Verify: no recoverable ciphertext left at the old version, BEFORE we commit the swap/destroy.
-    const counts = await countRecoverableAtVersion(deps.pool, deps.restrictedRunner, oldVersion);
+    const counts = await countRecoverableAtVersion(deps.rawPool, deps.restrictedRunner, oldVersion);
     if (counts.total > 0) {
       throw new KeyLifecycleError(
         'KEY_ROTATION_FAILED',

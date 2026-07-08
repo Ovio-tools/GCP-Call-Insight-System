@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
-import { createOwnerPool } from '../db/index.js';
+import { createOwnerPool, createRawOwnerPool } from '../db/index.js';
 import { isKeyStoreProvider, keyStoreForCli } from '../crypto/index.js';
 import { KeyStoreProvider } from '../crypto/key-store-provider.js';
 import { createRestrictedRunner } from '../db/restricted/restricted-context.js';
@@ -50,8 +50,10 @@ export async function main(): Promise<void> {
   }
   await assertDependenciesReady(config, logger);
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
 
   const pool = createOwnerPool(config.DATABASE_URL);
+  const rawPool = createRawOwnerPool(config.RAW_DATABASE_URL);
   const keyStore = keyStoreForCli(config);
   const keyProvider = new KeyStoreProvider({
     keyStore,
@@ -64,7 +66,8 @@ export async function main(): Promise<void> {
   try {
     const result = await rotateKey({
       pool,
-      restrictedRunner: createRestrictedRunner(pool),
+      rawPool,
+      restrictedRunner: createRestrictedRunner(rawPool),
       keyStore,
       keyProvider,
       maintenance,
@@ -89,6 +92,7 @@ export async function main(): Promise<void> {
     await queue.close();
     await queueConnection.quit();
     await pool.end();
+    await rawPool.end();
   }
 }
 

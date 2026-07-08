@@ -1,9 +1,9 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
 import { makeTestConfig } from '../_config.js';
 import { createRestrictedRunner } from '../../src/db/restricted/restricted-context.js';
 import { rotateKey } from '../../src/key-lifecycle/rotate.js';
@@ -27,18 +27,25 @@ const drainTimesOut: MaintenanceController = {
 
 const FAKE_PII = 'SSN 123-45-6789 caller Jane Doe';
 
-describe.skipIf(!hasTestDb)('key-lifecycle privacy (no PII / key bytes on abort)', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('key-lifecycle privacy (no PII / key bytes on abort)', () => {
   let owner!: Pool;
+  let rawOwner!: Pool;
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
+    rawOwner = makeRawPool();
+  });
+  afterAll(async () => {
+    await owner.end();
+    await rawOwner.end();
   });
   beforeEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
   afterEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
 
   it('a failed rotation leaks no PII or key bytes into errors or lifecycle events', async () => {
@@ -48,15 +55,16 @@ describe.skipIf(!hasTestDb)('key-lifecycle privacy (no PII / key bytes on abort)
       const call = `${KL_CALL}priv`;
       const { store, provider } = makeStoreProvider(dir, owner);
       const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
-      await insertEncryptedRaw(owner, provider, call, oldVersion, FAKE_PII);
-      await insertEncryptedVaultToken(owner, provider, call, '[NAME_1]', oldVersion, 'Jane Doe');
+      await insertEncryptedRaw(owner, rawOwner, provider, call, oldVersion, FAKE_PII);
+      await insertEncryptedVaultToken(rawOwner, provider, call, '[NAME_1]', oldVersion, 'Jane Doe');
       const dekBytes = (await store.unwrapDek(oldVersion)).toString('hex');
 
       let message = '';
       await expect(
         rotateKey({
           pool: owner,
-          restrictedRunner: createRestrictedRunner(owner),
+          rawPool: rawOwner,
+          restrictedRunner: createRestrictedRunner(rawOwner),
           keyStore: store,
           keyProvider: provider,
           maintenance: drainTimesOut,

@@ -1,10 +1,11 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
 import { makeTestConfig } from '../_config.js';
+import { decrypt } from '../../src/crypto/index.js';
 import { LocalFileKeyStore } from '../../src/crypto/key-store.js';
 import { KeyStoreProvider } from '../../src/crypto/key-store-provider.js';
 import { createRestrictedRunner } from '../../src/db/restricted/restricted-context.js';
@@ -25,6 +26,22 @@ import {
   seedIsolatedActiveKey,
 } from './_helpers.js';
 
+// Flag-gated stub of the DB-B re-encryption. Default OFF, so every other test uses the REAL
+// re-encryption; the residual-gate test flips it ON to make `reencryptRawTranscripts` a no-op,
+// leaving a seeded old-version row on DB-B so the real `countRecoverableAtVersion` verify gate
+// (which reads DB-B) fires KEY_ROTATION_FAILED before any destroy.
+const reencryptStub = vi.hoisted(() => ({ skipRaw: false }));
+vi.mock('../../src/key-lifecycle/reencrypt.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/key-lifecycle/reencrypt.js')>();
+  return {
+    ...actual,
+    reencryptRawTranscripts: (
+      pool: Parameters<typeof actual.reencryptRawTranscripts>[0],
+      opts: Parameters<typeof actual.reencryptRawTranscripts>[1],
+    ) => (reencryptStub.skipRaw ? Promise.resolve(0) : actual.reencryptRawTranscripts(pool, opts)),
+  };
+});
+
 class FakeClock {
   #ms: number;
   constructor(ms: number) {
@@ -43,18 +60,25 @@ class FakeClock {
 
 let seq = 0;
 
-describe.skipIf(!hasTestDb)('rotateKey', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('rotateKey', () => {
   let owner!: Pool;
+  let rawOwner!: Pool;
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
+    rawOwner = makeRawPool();
+  });
+  afterAll(async () => {
+    await owner.end();
+    await rawOwner.end();
   });
   beforeEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
   afterEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
 
   it('re-encrypts raw+vault to the new version and crypto-shreds the old (window=0)', async () => {
@@ -65,12 +89,13 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
       const call = `${KL_CALL}${seq}`;
       const { store, provider } = makeStoreProvider(dir, owner);
       const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
-      await insertEncryptedRaw(owner, provider, call, oldVersion, 'raw transcript body');
-      await insertEncryptedVaultToken(owner, provider, call, '[NAME_1]', oldVersion, 'Jane Doe');
+      await insertEncryptedRaw(owner, rawOwner, provider, call, oldVersion, 'raw transcript body');
+      await insertEncryptedVaultToken(rawOwner, provider, call, '[NAME_1]', oldVersion, 'Jane Doe');
 
       const result = await rotateKey({
         pool: owner,
-        restrictedRunner: createRestrictedRunner(owner),
+        rawPool: rawOwner,
+        restrictedRunner: createRestrictedRunner(rawOwner),
         keyStore: store,
         keyProvider: provider,
         maintenance: noopMaintenance,
@@ -87,13 +112,27 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
       expect(result.rowsReencrypted).toBe(2);
       expect(result.finalizedInline).toBe(true);
 
-      // Rows moved to the new version and still decrypt under it.
-      const raw = await owner.query<{ key_version: number }>(
+      // Raw rows moved to the new version and still decrypt under it (all on DB-B).
+      const raw = await rawOwner.query<{ key_version: number }>(
         `SELECT key_version FROM raw_transcripts WHERE call_id=$1`,
         [call],
       );
       expect(raw.rows[0]!.key_version).toBe(result.newVersion);
       await expect(store.unwrapDek(result.newVersion)).resolves.toHaveLength(32);
+
+      // Vault re-encryption is explicit: the token bumped to the new version on DB-B and still
+      // decrypts to its plaintext under it (guards against silently skipping vault re-encryption).
+      const vault = await rawOwner.query<{ key_version: number; ciphertext: Buffer }>(
+        `SELECT key_version, ciphertext FROM token_vault WHERE call_id=$1 AND token=$2`,
+        [call, '[NAME_1]'],
+      );
+      expect(vault.rows[0]!.key_version).toBe(result.newVersion);
+      const decryptedToken = await decrypt(
+        { ciphertext: vault.rows[0]!.ciphertext, keyVersion: result.newVersion },
+        provider,
+        Buffer.from(call, 'utf8'),
+      );
+      expect(decryptedToken.toString('utf8')).toBe('Jane Doe');
 
       // Old DEK crypto-shredded.
       expect(
@@ -127,6 +166,57 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
     }
   });
 
+  it('the verify gate rejects a residual DB-B row at the old version and does NOT destroy the old key', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'rot-'));
+    try {
+      // Make raw re-encryption a no-op so a recoverable old-version row survives on DB-B.
+      reencryptStub.skipRaw = true;
+      seq += 1;
+      const kek = `${KL_KEK_PREFIX}${seq}`;
+      const call = `${KL_CALL}${seq}`;
+      const { store, provider } = makeStoreProvider(dir, owner);
+      const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
+      // A recoverable raw row at the OLD version that the stubbed re-encryption WON'T move.
+      await insertEncryptedRaw(owner, rawOwner, provider, call, oldVersion, 'unswept body');
+      const destroySpy = vi.spyOn(store, 'destroyDek');
+
+      await expect(
+        rotateKey({
+          pool: owner,
+          rawPool: rawOwner,
+          restrictedRunner: createRestrictedRunner(rawOwner),
+          keyStore: store,
+          keyProvider: provider,
+          maintenance: noopMaintenance,
+          config: makeTestConfig({
+            KEY_STORE_RECOVERY_WINDOW_DAYS: 0,
+            KEY_ROTATION_ACTIVE_VERSION_SETTLE_MS: 0,
+          }),
+          actor: 'kl-actor',
+          approvalRef: 'JIRA-residual',
+          now: () => new Date('2026-03-01T00:00:00Z'),
+        }),
+      ).rejects.toThrow(/recoverable rows still at key_version|KEY_ROTATION_FAILED/i);
+
+      // The verify gate fired BEFORE any destruction: no destroyDek, no destroy-request, and the
+      // old version is still active + recoverable in the store (crypto-shred was NOT performed).
+      expect(destroySpy).not.toHaveBeenCalled();
+      const row = await owner.query<{ status: string; destroy_requested_at: Date | null }>(
+        `SELECT status, destroy_requested_at FROM key_versions WHERE key_version=$1`,
+        [oldVersion],
+      );
+      expect(row.rows[0]!.status).toBe('active');
+      expect(row.rows[0]!.destroy_requested_at).toBeNull();
+      expect(
+        (await store.recoverability({ type: 'dek', keyVersion: oldVersion })).recoverable,
+      ).toBe(true);
+    } finally {
+      reencryptStub.skipRaw = false;
+      vi.restoreAllMocks();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('a tombstone (empty ciphertext) at the old version does not block rotation', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'rot-'));
     try {
@@ -141,7 +231,7 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
          VALUES ($1,'test','store','completed') ON CONFLICT (call_id) DO NOTHING`,
         [call],
       );
-      await owner.query(
+      await rawOwner.query(
         `INSERT INTO raw_transcripts (call_id, ciphertext, key_version, hard_deleted_at)
          VALUES ($1, ''::bytea, $2, now())`,
         [call, oldVersion],
@@ -149,7 +239,8 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
 
       const result = await rotateKey({
         pool: owner,
-        restrictedRunner: createRestrictedRunner(owner),
+        rawPool: rawOwner,
+        restrictedRunner: createRestrictedRunner(rawOwner),
         keyStore: store,
         keyProvider: provider,
         maintenance: noopMaintenance,
@@ -177,7 +268,7 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
       const call = `${KL_CALL}${seq}`;
       const { store, provider } = makeStoreProvider(dir, owner);
       const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
-      await insertEncryptedRaw(owner, provider, call, oldVersion, 'body');
+      await insertEncryptedRaw(owner, rawOwner, provider, call, oldVersion, 'body');
 
       // The drain runs after the pause but before the sweep. Capturing the active version here
       // proves the swap has NOT yet happened: if it had, a crash now would strand the old rows
@@ -193,7 +284,8 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
 
       const result = await rotateKey({
         pool: owner,
-        restrictedRunner: createRestrictedRunner(owner),
+        rawPool: rawOwner,
+        restrictedRunner: createRestrictedRunner(rawOwner),
         keyStore: store,
         keyProvider: provider,
         maintenance: spy,
@@ -226,7 +318,7 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
       const call = `${KL_CALL}${seq}`;
       const { store, provider } = makeStoreProvider(dir, owner);
       const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
-      await insertEncryptedRaw(owner, provider, call, oldVersion, 'body');
+      await insertEncryptedRaw(owner, rawOwner, provider, call, oldVersion, 'body');
 
       // `end()` resumes the queue. At that instant the old key's destruction MUST already be
       // requested; otherwise a worker resuming with a stale active-version cache could write fresh
@@ -245,7 +337,8 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
 
       await rotateKey({
         pool: owner,
-        restrictedRunner: createRestrictedRunner(owner),
+        rawPool: rawOwner,
+        restrictedRunner: createRestrictedRunner(rawOwner),
         keyStore: store,
         keyProvider: provider,
         maintenance: spy,
@@ -316,7 +409,7 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
         activeVersionTtlMs: 0,
       });
       const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
-      await insertEncryptedRaw(owner, rotationProvider, call, oldVersion, 'body');
+      await insertEncryptedRaw(owner, rawOwner, rotationProvider, call, oldVersion, 'body');
 
       // A separate "worker" provider that caches the active version with a 5s TTL on the same clock.
       const workerProvider = new KeyStoreProvider({
@@ -330,7 +423,8 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
 
       await rotateKey({
         pool: owner,
-        restrictedRunner: createRestrictedRunner(owner),
+        rawPool: rawOwner,
+        restrictedRunner: createRestrictedRunner(rawOwner),
         keyStore: store,
         keyProvider: rotationProvider,
         maintenance: noopMaintenance,
@@ -372,11 +466,12 @@ describe.skipIf(!hasTestDb)('rotateKey', () => {
         activeVersionTtlMs: 0,
       });
       const oldVersion = await seedIsolatedActiveKey(owner, store, kek);
-      await insertEncryptedRaw(owner, provider, call, oldVersion, 'body');
+      await insertEncryptedRaw(owner, rawOwner, provider, call, oldVersion, 'body');
 
       const result = await rotateKey({
         pool: owner,
-        restrictedRunner: createRestrictedRunner(owner),
+        rawPool: rawOwner,
+        restrictedRunner: createRestrictedRunner(rawOwner),
         keyStore: store,
         keyProvider: provider,
         maintenance: noopMaintenance,

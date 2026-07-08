@@ -5,8 +5,9 @@ import { query, withTransaction } from '../db/sql.js';
 import type { RestrictedRunner } from '../db/restricted/restricted-context.js';
 
 /**
- * Rotation re-encryption + verify (Task 8.2). Re-encrypts recoverable `raw_transcripts` (app pool)
- * and `token_vault` (restricted runner) ciphertext from the old `key_version` onto the new one,
+ * Rotation re-encryption + verify (Task 8.2). Re-encrypts recoverable `raw_transcripts` (the DB-B
+ * raw-store pool — ADR 0008 Move 2) and `token_vault` (restricted runner on DB-B) ciphertext from
+ * the old `key_version` onto the new one,
  * preserving the exact `call_id` AAD. The verify predicate targets RECOVERABLE ciphertext, not a raw
  * count: tombstones keep the old `key_version` forever but with `hard_deleted_at` set and an empty
  * ciphertext, so they must NOT block a rotation. Soft-deleted rows (`soft_deleted_at` set,
@@ -100,7 +101,8 @@ export interface RecoverableCounts {
 
 /**
  * The verify predicate: count rows with RECOVERABLE ciphertext still at `oldVersion`, across
- * raw_transcripts (app pool) + token_vault (restricted runner). Zero means the rotation/revocation
+ * raw_transcripts (the DB-B raw-store pool — ADR 0008 Move 2) + token_vault (restricted runner on
+ * DB-B). Zero means the rotation/revocation
  * swept everything and it is safe to destroy the old DEK. Runs at least twice per destruction
  * (before destroy-request, and again in the finalizer before markDestroyed).
  */

@@ -18,6 +18,8 @@ import { KeyLifecycleError } from './errors.js';
 
 export interface RevokeDeps {
   pool: Pool;
+  /** DB-B owner pool — raw_transcripts + token_vault recoverable-count reads (ADR 0008 Move 2). */
+  rawPool: Pool;
   restrictedRunner: RestrictedRunner;
   keyStore: KeyStore;
   config: Config;
@@ -124,7 +126,7 @@ export async function revokeDek(deps: RevokeDeps, keyVersion: number): Promise<R
       }
 
       const affected = await countRecoverableAtVersion(
-        deps.pool,
+        deps.rawPool,
         deps.restrictedRunner,
         keyVersion,
       );
@@ -189,7 +191,7 @@ export async function revokeKek(deps: RevokeDeps, kekVersion: string): Promise<R
       for (const v of versions) {
         if (v.status === 'destroyed') continue;
         const affected = await countRecoverableAtVersion(
-          deps.pool,
+          deps.rawPool,
           deps.restrictedRunner,
           v.key_version,
         );

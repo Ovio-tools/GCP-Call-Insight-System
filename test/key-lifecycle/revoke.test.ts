@@ -1,9 +1,9 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
 import { makeTestConfig } from '../_config.js';
 import { createRestrictedRunner } from '../../src/db/restricted/restricted-context.js';
 import { getActiveKeyVersion } from '../../src/db/repositories/key-versions-repo.js';
@@ -33,8 +33,9 @@ async function seedRetiredKey(owner: Pool, store: LocalFileKeyStore, kek: string
   return v;
 }
 
-describe.skipIf(!hasTestDb)('revoke', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('revoke', () => {
   let owner!: Pool;
+  let rawOwner!: Pool;
   const enabled = makeTestConfig({
     KEY_STORE_RECOVERY_WINDOW_DAYS: 0,
     CRYPTO_KEY_DESTROY_COMMANDS_ENABLED: true,
@@ -42,13 +43,19 @@ describe.skipIf(!hasTestDb)('revoke', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
+    rawOwner = makeRawPool();
+  });
+  afterAll(async () => {
+    await owner.end();
+    await rawOwner.end();
   });
   beforeEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
   afterEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
 
   it('revokeDek crypto-shreds one retired version and records the blast radius', async () => {
@@ -60,12 +67,13 @@ describe.skipIf(!hasTestDb)('revoke', () => {
       const { store, provider } = makeStoreProvider(dir, owner);
       await seedIsolatedActiveKey(owner, store, kek);
       const target = await seedRetiredKey(owner, store, kek);
-      await insertEncryptedRaw(owner, provider, call, target, 'secret body');
+      await insertEncryptedRaw(owner, rawOwner, provider, call, target, 'secret body');
 
       const result = await revokeDek(
         {
           pool: owner,
-          restrictedRunner: createRestrictedRunner(owner),
+          rawPool: rawOwner,
+          restrictedRunner: createRestrictedRunner(rawOwner),
           keyStore: store,
           config: enabled,
           actor: 'kl-actor',
@@ -111,7 +119,8 @@ describe.skipIf(!hasTestDb)('revoke', () => {
         revokeDek(
           {
             pool: owner,
-            restrictedRunner: createRestrictedRunner(owner),
+            rawPool: rawOwner,
+            restrictedRunner: createRestrictedRunner(rawOwner),
             keyStore: store,
             config: enabled,
             actor: 'kl-actor',
@@ -126,7 +135,8 @@ describe.skipIf(!hasTestDb)('revoke', () => {
         revokeDek(
           {
             pool: owner,
-            restrictedRunner: createRestrictedRunner(owner),
+            rawPool: rawOwner,
+            restrictedRunner: createRestrictedRunner(rawOwner),
             keyStore: store,
             config: makeTestConfig({ CRYPTO_KEY_DESTROY_COMMANDS_ENABLED: false }),
             actor: 'kl-actor',
@@ -158,13 +168,14 @@ describe.skipIf(!hasTestDb)('revoke', () => {
       );
       const vB1 = await seedRetiredKey(owner, store, kekTarget);
       const vB2 = await seedRetiredKey(owner, store, kekTarget);
-      await insertEncryptedRaw(owner, provider, call1, vB1, 'body1');
-      await insertEncryptedRaw(owner, provider, call2, vB2, 'body2');
+      await insertEncryptedRaw(owner, rawOwner, provider, call1, vB1, 'body1');
+      await insertEncryptedRaw(owner, rawOwner, provider, call2, vB2, 'body2');
 
       const result = await revokeKek(
         {
           pool: owner,
-          restrictedRunner: createRestrictedRunner(owner),
+          rawPool: rawOwner,
+          restrictedRunner: createRestrictedRunner(rawOwner),
           keyStore: store,
           config: enabled,
           actor: 'kl-actor',
