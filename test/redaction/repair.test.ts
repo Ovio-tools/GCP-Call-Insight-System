@@ -24,8 +24,7 @@ const finalScan = (
   redactedText: string,
   vaultPlaintexts: string[],
   denyTerms: string[] = [],
-): Record<string, number> =>
-  residualScan({ redactedText, vaultPlaintexts, denyTerms }).counts;
+): Record<string, number> => residualScan({ redactedText, vaultPlaintexts, denyTerms }).counts;
 
 describe('repairToResidualClean', () => {
   it('propagates a vaulted name to a punctuation-split reintroduction with the SAME token', () => {
@@ -112,7 +111,11 @@ describe('repairToResidualClean', () => {
   it('converges across multiple iterations (vault fill exposes a digit concat)', () => {
     const text = 'David read 123 David 4567 to me';
     const first = text.indexOf('David');
-    const repaired = repairToResidualClean({ text, spans: [name(first, first + 5)], denyTerms: [] });
+    const repaired = repairToResidualClean({
+      text,
+      spans: [name(first, first + 5)],
+      denyTerms: [],
+    });
 
     expect(repaired.converged).toBe(true);
     expect(repaired.iterations).toBeGreaterThanOrEqual(2);

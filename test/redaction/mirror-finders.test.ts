@@ -256,7 +256,9 @@ describe('findAddressWindowDigits', () => {
   });
 
   it('does not fire on non-keyword words near digits', () => {
-    expect(findAddressWindowDigits('the unit is 12 years old and the drive is 45 minutes')).toHaveLength(0);
+    expect(
+      findAddressWindowDigits('the unit is 12 years old and the drive is 45 minutes'),
+    ).toHaveLength(0);
   });
 });
 
@@ -268,7 +270,11 @@ describe('mirror/residual parity', () => {
   const categoryOf = (text: string): Record<string, number> =>
     residualScan({ redactedText: text, vaultPlaintexts: [], denyTerms: [] }).counts;
 
-  const CASES: { text: string; finder: (t: string) => { start: number; end: number }[]; category: string }[] = [
+  const CASES: {
+    text: string;
+    finder: (t: string) => { start: number; end: number }[];
+    category: string;
+  }[] = [
     // digit_run
     { text: 'ref 1234567 end', finder: findLongDigitRuns, category: 'digit_run' },
     { text: 'ref 12 34 56 7 end', finder: findLongDigitRuns, category: 'digit_run' },
@@ -286,18 +292,62 @@ describe('mirror/residual parity', () => {
       finder: findSpelledDigitRuns,
       category: 'spelled_out_digits',
     },
-    { text: 'seventy eight degrees today', finder: findSpelledDigitRuns, category: 'spelled_out_digits' },
-    { text: 'one two three four five six', finder: findSpelledDigitRuns, category: 'spelled_out_digits' },
-    { text: 'triple five one two three four', finder: findSpelledDigitRuns, category: 'spelled_out_digits' },
+    {
+      text: 'seventy eight degrees today',
+      finder: findSpelledDigitRuns,
+      category: 'spelled_out_digits',
+    },
+    {
+      text: 'one two three four five six',
+      finder: findSpelledDigitRuns,
+      category: 'spelled_out_digits',
+    },
+    {
+      text: 'triple five one two three four',
+      finder: findSpelledDigitRuns,
+      category: 'spelled_out_digits',
+    },
     // name_like_after_greeting
-    { text: 'my name is Rosalind Nakamura', finder: findGreetingNames, category: 'name_like_after_greeting' },
-    { text: 'ask for Deshawn at the desk', finder: findGreetingNames, category: 'name_like_after_greeting' },
-    { text: 'this is David Smith calling', finder: findGreetingNames, category: 'name_like_after_greeting' },
-    { text: 'this is Bob speaking', finder: findGreetingNames, category: 'name_like_after_greeting' },
-    { text: 'this is regarding the invoice', finder: findGreetingNames, category: 'name_like_after_greeting' },
-    { text: 'ask for the manager on duty', finder: findGreetingNames, category: 'name_like_after_greeting' },
-    { text: "it's Wanda Okafor here", finder: findGreetingNames, category: 'name_like_after_greeting' },
-    { text: 'speaking with Priya today', finder: findGreetingNames, category: 'name_like_after_greeting' },
+    {
+      text: 'my name is Rosalind Nakamura',
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
+    {
+      text: 'ask for Deshawn at the desk',
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
+    {
+      text: 'this is David Smith calling',
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
+    {
+      text: 'this is Bob speaking',
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
+    {
+      text: 'this is regarding the invoice',
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
+    {
+      text: 'ask for the manager on duty',
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
+    {
+      text: "it's Wanda Okafor here",
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
+    {
+      text: 'speaking with Priya today',
+      finder: findGreetingNames,
+      category: 'name_like_after_greeting',
+    },
     // email_like
     { text: 'send to accounts＠example.com now', finder: findEmailLike, category: 'email_like' },
     { text: 'email john at gmail.com today', finder: findEmailLike, category: 'email_like' },
@@ -305,11 +355,23 @@ describe('mirror/residual parity', () => {
     { text: 'we will be at the house at noon', finder: findEmailLike, category: 'email_like' },
     { text: 'meet me at the corner store', finder: findEmailLike, category: 'email_like' },
     // address_like
-    { text: 'the zip code is 95814 there', finder: findAddressWindowDigits, category: 'address_like' },
+    {
+      text: 'the zip code is 95814 there',
+      finder: findAddressWindowDigits,
+      category: 'address_like',
+    },
     { text: 'apartment 4 on the left', finder: findAddressWindowDigits, category: 'address_like' },
-    { text: 'the street sweeper never comes', finder: findAddressWindowDigits, category: 'address_like' },
+    {
+      text: 'the street sweeper never comes',
+      finder: findAddressWindowDigits,
+      category: 'address_like',
+    },
     { text: 'the unit is 12 years old', finder: findAddressWindowDigits, category: 'address_like' },
-    { text: 'my suite has a leak in it', finder: findAddressWindowDigits, category: 'address_like' },
+    {
+      text: 'my suite has a leak in it',
+      finder: findAddressWindowDigits,
+      category: 'address_like',
+    },
   ];
 
   it.each(CASES)('$category parity: "$text"', ({ text, finder, category }) => {

@@ -128,46 +128,49 @@ export function repairToResidualClean(input: RepairInput): RepairResult {
       tokenized.findings.map((f) => [f.tokenRef, f.entityType]),
     );
 
-    const candidates: { span: MirrorSpan; entityType: EntityType; detector: Detection['detector'] }[] =
-      [
-        ...findLongDigitRuns(eff.text).map((span) => ({
+    const candidates: {
+      span: MirrorSpan;
+      entityType: EntityType;
+      detector: Detection['detector'];
+    }[] = [
+      ...findLongDigitRuns(eff.text).map((span) => ({
+        span,
+        entityType: 'number' as const,
+        detector: 'regex' as const,
+      })),
+      ...findSpelledDigitRuns(eff.text).map((span) => ({
+        span,
+        entityType: 'phone' as const,
+        detector: 'regex' as const,
+      })),
+      ...findGreetingNames(eff.text).map((span) => ({
+        span,
+        entityType: 'name' as const,
+        detector: 'regex' as const,
+      })),
+      ...findEmailLike(eff.text).map((span) => ({
+        span,
+        entityType: 'email' as const,
+        detector: 'regex' as const,
+      })),
+      ...findAddressWindowDigits(eff.text).map((span) => ({
+        span,
+        entityType: 'number' as const,
+        detector: 'regex' as const,
+      })),
+      ...findDenyTermOccurrences(eff.text, input.denyTerms).map((span) => ({
+        span,
+        entityType: 'deny_list' as const,
+        detector: 'deny_list' as const,
+      })),
+      ...tokenized.vaultEntries.flatMap((entry) =>
+        findVaultOccurrences(eff.text, entry.plaintext).map((span) => ({
           span,
-          entityType: 'number' as const,
+          entityType: typeByToken.get(entry.token) ?? ('other' as const),
           detector: 'regex' as const,
         })),
-        ...findSpelledDigitRuns(eff.text).map((span) => ({
-          span,
-          entityType: 'phone' as const,
-          detector: 'regex' as const,
-        })),
-        ...findGreetingNames(eff.text).map((span) => ({
-          span,
-          entityType: 'name' as const,
-          detector: 'regex' as const,
-        })),
-        ...findEmailLike(eff.text).map((span) => ({
-          span,
-          entityType: 'email' as const,
-          detector: 'regex' as const,
-        })),
-        ...findAddressWindowDigits(eff.text).map((span) => ({
-          span,
-          entityType: 'number' as const,
-          detector: 'regex' as const,
-        })),
-        ...findDenyTermOccurrences(eff.text, input.denyTerms).map((span) => ({
-          span,
-          entityType: 'deny_list' as const,
-          detector: 'deny_list' as const,
-        })),
-        ...tokenized.vaultEntries.flatMap((entry) =>
-          findVaultOccurrences(eff.text, entry.plaintext).map((span) => ({
-            span,
-            entityType: typeByToken.get(entry.token) ?? ('other' as const),
-            detector: 'regex' as const,
-          })),
-        ),
-      ];
+      ),
+    ];
 
     const additions: Detection[] = [];
     for (const c of candidates) {

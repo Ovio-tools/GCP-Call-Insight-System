@@ -45,7 +45,9 @@ function fakeDetector(name: string, result: Partial<DetectorResult>): Detector {
  * deterministic way to drive that disposition in stage tests.
  */
 const noRepairCompose: typeof composeRedaction = ({ text, detectorResults, denyTerms }) => {
-  const { spans, disagreement } = mergeDetections(detectorResults.flatMap((r) => [...r.detections]));
+  const { spans, disagreement } = mergeDetections(
+    detectorResults.flatMap((r) => [...r.detections]),
+  );
   const tokenized = tokenize(text, spans);
   const residual = residualScan({
     redactedText: tokenized.redactedText,

@@ -30,9 +30,7 @@
     {
       "id": "adv-phone-spoken-mixed",
       "text": "It is nine one six, five five five, zero one six three, sorry I always have to read it off my own business card.",
-      "entities": [
-        { "type": "phone", "value": "nine one six, five five five, zero one six three" }
-      ]
+      "entities": [{ "type": "phone", "value": "nine one six, five five five, zero one six three" }]
     },
     {
       "id": "adv-phone-double",

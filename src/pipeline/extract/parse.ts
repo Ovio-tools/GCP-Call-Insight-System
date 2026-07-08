@@ -85,9 +85,7 @@ export function parseExtraction(result: {
     return {
       ok: false,
       failure: 'schema_invalid',
-      issueSummary: validated.error.issues.map(
-        (i) => `${i.path.join('.') || '(root)'}: ${i.code}`,
-      ),
+      issueSummary: validated.error.issues.map((i) => `${i.path.join('.') || '(root)'}: ${i.code}`),
     };
   }
 

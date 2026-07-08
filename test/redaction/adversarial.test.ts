@@ -59,9 +59,7 @@ describe.skipIf(!hasNerModel)('adversarial redaction gate', () => {
       const fired = Object.keys(outcome.residualCounts).filter((k) =>
         (DOMINATED_RESIDUAL_CATEGORIES as readonly string[]).includes(k),
       );
-      expect(fired, `${c.id}: dominated residual categories fired: ${fired.join(',')}`).toEqual(
-        [],
-      );
+      expect(fired, `${c.id}: dominated residual categories fired: ${fired.join(',')}`).toEqual([]);
     }
   });
 });

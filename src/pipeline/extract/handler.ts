@@ -167,7 +167,10 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
     const attempt = async (
       attemptUserText: string,
       attemptReservation: typeof reservation,
-    ): Promise<{ result: Awaited<ReturnType<ExtractModelClient['extract']>>; parsed: ReturnType<typeof parseExtraction> }> => {
+    ): Promise<{
+      result: Awaited<ReturnType<ExtractModelClient['extract']>>;
+      parsed: ReturnType<typeof parseExtraction>;
+    }> => {
       let result;
       try {
         const model = deps.getModel();

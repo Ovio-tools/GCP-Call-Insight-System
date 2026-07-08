@@ -442,9 +442,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
   it('bad JSON twice → ONE retry, held schema_invalid, ONE final alert, BOTH invocations recorded, both settled', async () => {
     const callId = 'test-ext-malformed';
     await seed(callId);
-    const { model, spy } = fakeModel(() =>
-      Promise.resolve(result({ text: 'this is not json' })),
-    );
+    const { model, spy } = fakeModel(() => Promise.resolve(result({ text: 'this is not json' })));
     const res = await handler(() => model)(ctx(callId));
     expect(res.action).toBe('hold');
     if (res.action === 'hold') {
@@ -457,10 +455,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(1);
     const invocations = await listInvocations(app, callId);
     expect(invocations).toHaveLength(2);
-    expect(invocations.map((i) => i.outcome)).toEqual([
-      'malformed_response',
-      'malformed_response',
-    ]);
+    expect(invocations.map((i) => i.outcome)).toEqual(['malformed_response', 'malformed_response']);
     expect(await countRows('extraction_candidates', callId)).toBe(0);
     expect(await dayCost()).toBeCloseTo(settledCost(2000, 300) * 2, 10);
   });
@@ -473,9 +468,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     let calls = 0;
     const { model, spy } = fakeModel(() => {
       calls += 1;
-      return Promise.resolve(
-        calls === 1 ? result({ text: 'this is not json' }) : result(),
-      );
+      return Promise.resolve(calls === 1 ? result({ text: 'this is not json' }) : result());
     });
     const res = await handler(() => model)(ctx(callId));
 
@@ -495,9 +488,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     let calls = 0;
     const { model, spy } = fakeModel(() => {
       calls += 1;
-      return Promise.resolve(
-        calls === 1 ? result({ text: JSON.stringify(smuggled) }) : result(),
-      );
+      return Promise.resolve(calls === 1 ? result({ text: JSON.stringify(smuggled) }) : result());
     });
     const { lines, logger } = collectingLogger();
     const res = await handler(() => model)(ctx(callId, logger));
@@ -538,9 +529,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     const callId = 'test-ext-retrycap';
     await seed(callId);
     // Cap fits ONE reservation (~0.1515 USD at test rates) but not a second.
-    const { model, spy } = fakeModel(() =>
-      Promise.resolve(result({ text: 'this is not json' })),
-    );
+    const { model, spy } = fakeModel(() => Promise.resolve(result({ text: 'this is not json' })));
     const res = await handler(() => model, { DAILY_MODEL_COST_CAP_USD: 0.16 })(ctx(callId));
 
     expect(res.action).toBe('hold');
