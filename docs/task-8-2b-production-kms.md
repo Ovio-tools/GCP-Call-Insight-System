@@ -1,9 +1,13 @@
 # Task 8.2b — Production KMS provider + real-KMS deletion-semantics verification
 
-Status: **OPEN — blocking follow-up to Task 8.2.** Task 8.2 delivers the key hierarchy, lifecycle,
-launch gate, restore drill, and tests for **dev + staging only**, backed by the reference
-`LocalFileKeyStore`. This task makes production live-processing ready. **The §6.1 launch gates for
-live processing MUST NOT pass until 8.2b lands.**
+Status: **OPTIONAL FUTURE UPGRADE (no longer a launch blocker).** Production key custody is now
+provided by the Railway-secret key store (ADR 0008 / `CRYPTO_KEY_PROVIDER=railway`). A dedicated
+external KMS remains a supported drop-in upgrade via the same `KeyStore` seam, but is not required
+to go live. The launch gate now passes on `railway`.
+
+The rest of this document is retained as implementation guidance for that future upgrade: what a
+production `KeyStore` needs to satisfy, and the deletion-semantics checklist to verify against a
+real KMS if/when one is adopted.
 
 ## Why this is separate
 
