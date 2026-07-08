@@ -67,7 +67,25 @@ export interface CaseOutcome {
   redactedText: string;
   held: boolean;
   reasons: string[];
+  /** Residual categories → counts over the FINAL output (superset gate input). */
+  residualCounts: Record<string, number>;
 }
+
+/**
+ * The residual categories the primary layers dominate by construction
+ * (ADR 0007). The superset gate asserts none of these ever appears in a case's
+ * final residual counts — the ONLY remaining residual_pii_detected path is
+ * repair-cap exhaustion.
+ */
+export const DOMINATED_RESIDUAL_CATEGORIES = [
+  'vault_value_reintroduced',
+  'digit_run',
+  'spelled_out_digits',
+  'email_like',
+  'name_like_after_greeting',
+  'deny_list_term',
+  'address_like',
+] as const;
 
 export function buildFullStack(denyTerms: string[]): Detector[] {
   return [
@@ -100,6 +118,7 @@ export async function runStack(
     redactedText: tokenized.redactedText,
     held: residualHit || shouldHoldForRisk(risk, riskThreshold),
     reasons: risk.reasons,
+    residualCounts: residual.counts,
   };
 }
 

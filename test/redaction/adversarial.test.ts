@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import {
   type CaseOutcome,
+  DOMINATED_RESIDUAL_CATEGORIES,
   buildFullStack,
   corpusConfig,
   isCaught,
@@ -48,6 +49,18 @@ describe.skipIf(!hasNerModel)('adversarial redaction gate', () => {
       const outcome = outcomes.get(c.id)!;
       expect(outcome.held, `${c.id} should hold (reasons: ${outcome.reasons.join(',')})`).toBe(
         true,
+      );
+    }
+  });
+
+  it('superset gate (ADR 0007): no dominated residual category fires on ANY case', () => {
+    for (const c of corpus.cases) {
+      const outcome = outcomes.get(c.id)!;
+      const fired = Object.keys(outcome.residualCounts).filter((k) =>
+        (DOMINATED_RESIDUAL_CATEGORIES as readonly string[]).includes(k),
+      );
+      expect(fired, `${c.id}: dominated residual categories fired: ${fired.join(',')}`).toEqual(
+        [],
       );
     }
   });

@@ -93,8 +93,7 @@
     {
       "id": "adv-biz-dashes",
       "text": "Look under A-c-m-e P-l-u-m-b-i-n-g, the intake system put dashes between every letter for some reason, it is one word.",
-      "entities": [{ "type": "deny_list", "value": "A-c-m-e P-l-u-m-b-i-n-g" }],
-      "expectHold": true
+      "entities": [{ "type": "deny_list", "value": "A-c-m-e P-l-u-m-b-i-n-g" }]
     },
     {
       "id": "adv-card-dashes",

@@ -1,6 +1,7 @@
+import { repairToResidualClean } from './repair.js';
 import { residualScan, type ResidualScanResult } from './residual-scan.js';
 import { mergeDetections } from './spans.js';
-import { tokenize, type TokenizedResult } from './tokenize.js';
+import type { TokenizedResult } from './tokenize.js';
 import type { Detection, DetectorResult } from './types.js';
 
 /**
@@ -33,14 +34,24 @@ export interface ComposedRedaction {
 }
 
 export function composeRedaction(input: ComposeInput): ComposedRedaction {
-  const { spans, disagreement } = mergeDetections(
-    input.detectorResults.flatMap((r) => [...r.detections]),
-  );
-  const tokenized = tokenize(input.text, spans);
-  const residual = residualScan({
-    redactedText: tokenized.redactedText,
-    vaultPlaintexts: tokenized.vaultEntries.map((e) => e.plaintext),
+  const merged = mergeDetections(input.detectorResults.flatMap((r) => [...r.detections]));
+  // The ADR 0007 repair fixpoint: re-run the residual mirrors over the
+  // effective text until nothing the residual could hold on remains (or the
+  // cap trips — then the unchanged residual scan below holds, fail closed).
+  const repaired = repairToResidualClean({
+    text: input.text,
+    spans: merged.spans,
     denyTerms: input.denyTerms,
   });
-  return { spans, disagreement, tokenized, residual };
+  const residual = residualScan({
+    redactedText: repaired.tokenized.redactedText,
+    vaultPlaintexts: repaired.tokenized.vaultEntries.map((e) => e.plaintext),
+    denyTerms: input.denyTerms,
+  });
+  return {
+    spans: repaired.spans,
+    disagreement: merged.disagreement || repaired.disagreement,
+    tokenized: repaired.tokenized,
+    residual,
+  };
 }

@@ -60,6 +60,10 @@ export interface RedactionDeps {
   makeRestrictedRunner?: (pool: Pool) => RestrictedRunner;
   /** Test injection. Default: loadDenyList(config.REDACTION_DENY_LIST_PATH). */
   denyTerms?: readonly string[];
+  /** Test injection. Default: composeRedaction (merge → ADR 0007 repair fixpoint →
+   * tokenize → residual). Lets tests drive the residual-hold disposition, which in
+   * production is reachable only through repair-cap exhaustion. */
+  compose?: typeof composeRedaction;
 }
 
 type HoldReason = 'residual_pii_detected' | 'redaction_failed';
@@ -114,6 +118,7 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     createDenyListDetector(denyTerms),
   ];
   const makeRunner = deps.makeRestrictedRunner ?? createRestrictedRunner;
+  const compose = deps.compose ?? composeRedaction;
 
   return async (ctx: StageContext): Promise<StageResult> => {
     const { callId, stage, logger, pool } = ctx;
@@ -163,7 +168,7 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     // 3. Merge → tokenize → residual → score (all in memory, before any write),
     //    via the ONE shared composition (ADR 0007) the test harness and the
     //    inspection tool also use.
-    const { spans, disagreement, tokenized, residual } = composeRedaction({
+    const { spans, disagreement, tokenized, residual } = compose({
       text: transcript,
       detectorResults: results,
       denyTerms,

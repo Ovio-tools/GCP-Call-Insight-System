@@ -32,15 +32,17 @@ describe('composeRedaction', () => {
     expect(composed.spans).toHaveLength(2);
   });
 
-  it('reports a residual hit when a vaulted value survives elsewhere in the output', () => {
-    // Only the first "Rosalind Nakamura" is covered by a span; the second survives.
+  it('repairs a vaulted value surviving elsewhere instead of leaving a residual hit', () => {
+    // Only the first "Rosalind Nakamura" is covered by a detector span; the
+    // repair fixpoint (ADR 0007) must redact the second with the same token.
     const text = 'Rosalind Nakamura called; give Rosalind Nakamura the estimate';
     const composed = composeRedaction({
       text,
       detectorResults: [result([{ start: 0, end: 17, entityType: 'name', detector: 'ner' }])],
       denyTerms: [],
     });
-    expect(composed.residual.counts.vault_value_reintroduced).toBeGreaterThanOrEqual(1);
+    expect(composed.residual.hits).toHaveLength(0);
+    expect(composed.tokenized.redactedText).toBe('[NAME_1] called; give [NAME_1] the estimate');
   });
 
   it('flags cross-type overlap as disagreement', () => {
