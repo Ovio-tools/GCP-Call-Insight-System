@@ -4,6 +4,8 @@ import type { Config } from '../config/schema.js';
 import { getActiveKeyVersion } from '../db/repositories/key-versions-repo.js';
 import { KeyStoreProvider } from './key-store-provider.js';
 import { LocalFileKeyStore, type KeyStore } from './key-store.js';
+import { RailwaySecretKeyStore } from './railway-secret-key-store.js';
+import { EnvSecretBackend } from './secret-backend.js';
 
 /** Length of an AES-256 data-encryption key (DEK), in bytes. */
 export const DEK_BYTES = 32;
@@ -74,6 +76,11 @@ export class LocalKeyProvider implements KeyProvider {
 /** Environments where the local (KMS-less) provider must never be used. */
 const NON_LOCAL_ENVS = new Set<Config['NODE_ENV']>(['staging', 'production']);
 
+/** True for providers backed by the external {@link KeyStore} seam (keystore or railway). */
+export function isKeyStoreProvider(provider: Config['CRYPTO_KEY_PROVIDER']): boolean {
+  return provider === 'keystore' || provider === 'railway';
+}
+
 /**
  * Build the configured {@link KeyProvider}. `local` derives keys from
  * `CRYPTO_LOCAL_MASTER_KEY` and is refused in staging/production; `kms` is Task 8.2.
@@ -101,11 +108,24 @@ export function keyProviderFromConfig(config: Config): KeyProvider {
 }
 
 /**
- * Build the reference {@link KeyStore} (`LocalFileKeyStore`) from config. Dev/staging ONLY — the
- * directory IS the external secret store (KEK bytes + wrapped DEK files). Production is refused
- * here (no override): the production external KMS is the blocking follow-up Task 8.2b.
+ * Build the configured {@link KeyStore} from config. `railway` (`RailwaySecretKeyStore`,
+ * Railway-Secrets-backed) is the ONE provider usable in production. `keystore`
+ * (`LocalFileKeyStore`) is dev/staging ONLY — the directory IS the external secret store (KEK
+ * bytes + wrapped DEK files) — and is refused in production here (no override): the production
+ * external KMS beyond `railway` is the blocking follow-up Task 8.2b.
  */
 export function keyStoreFromConfig(config: Config): KeyStore {
+  if (config.CRYPTO_KEY_PROVIDER === 'railway') {
+    return new RailwaySecretKeyStore({
+      backend: new EnvSecretBackend({
+        [config.CRYPTO_KEK_SECRET_NAME]: config.CRYPTO_KEK_MATERIAL,
+        [config.CRYPTO_WRAPPED_DEK_SECRET_NAME]: config.CRYPTO_WRAPPED_DEK_MATERIAL,
+      }),
+      kekSecretName: config.CRYPTO_KEK_SECRET_NAME,
+      dekSecretName: config.CRYPTO_WRAPPED_DEK_SECRET_NAME,
+      recoveryWindowDays: config.KEY_STORE_RECOVERY_WINDOW_DAYS,
+    });
+  }
   if (config.NODE_ENV === 'production') {
     throw new Error(
       'CRYPTO_KEY_PROVIDER=keystore uses LocalFileKeyStore, forbidden in production; the production KMS is Task 8.2b',
@@ -122,9 +142,10 @@ export function keyStoreFromConfig(config: Config): KeyStore {
 
 /**
  * Dependency-aware {@link KeyProvider} builder. Unlike {@link keyProviderFromConfig} (config-only,
- * local/dev), the `keystore` provider is DB-sourced (single `status='active'` row) so it needs a
- * pool. `keystore` is refused in production (no override — Task 8.2b); `kms` still throws (8.2b).
- * The `keyStore` may be injected (tests / a shared instance) or is built from config.
+ * local/dev), the `keystore`/`railway` providers are DB-sourced (single `status='active'` row) so
+ * they need a pool — see {@link isKeyStoreProvider}. `keystore` is refused in production (no
+ * override — Task 8.2b); `railway` is the ONE provider usable in production; `kms` still throws
+ * (8.2b). The `keyStore` may be injected (tests / a shared instance) or is built from config.
  */
 export function buildKeyProvider(deps: {
   config: Config;
@@ -137,7 +158,7 @@ export function buildKeyProvider(deps: {
       'CRYPTO_KEY_PROVIDER=kms is not implemented yet (Task 8.2b: production KMS provider)',
     );
   }
-  if (config.CRYPTO_KEY_PROVIDER === 'keystore') {
+  if (isKeyStoreProvider(config.CRYPTO_KEY_PROVIDER)) {
     const keyStore = deps.keyStore ?? keyStoreFromConfig(config);
     return new KeyStoreProvider({
       keyStore,
