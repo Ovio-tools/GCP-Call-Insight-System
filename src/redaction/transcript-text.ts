@@ -41,6 +41,13 @@ export function transcriptToRedactableText(raw: string): string {
   if (Array.isArray(lines)) {
     const parts: string[] = [];
     for (const line of lines) {
+      // Dialpad AI "moment" lines are not speech: their content is a moment label
+      // ("ner", "call_purpose", …) observed verbatim on real staging payloads
+      // (follow-up #31). Repeated labels false-hold the residual scan via
+      // vault_value_reintroduced. ONLY the exact known non-speech type is skipped —
+      // unknown/absent types stay included (fail safe: scan MORE, not less), and a
+      // skipped line never becomes model-visible text (egress-safe by construction).
+      if (typeof line.type === 'string' && line.type.trim().toLowerCase() === 'moment') continue;
       const content = typeof line.content === 'string' ? line.content.trim() : '';
       if (content.length === 0) continue;
       const name = typeof line.name === 'string' ? line.name.trim() : '';

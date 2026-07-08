@@ -46,6 +46,47 @@ describe('transcriptToRedactableText', () => {
     expect(extractedDigitRuns).toBe(0);
   });
 
+  it('skips Dialpad AI moment lines — their content is a label, not speech', () => {
+    // Observed on real staging payloads (follow-up #31): lines with type "moment"
+    // carry labels like "ner"/"call_purpose" as content. Repeated labels get one
+    // vaulted (NER tags them) and the rest reintroduced -> spurious residual holds.
+    const withMoments = JSON.stringify({
+      call_id: 456,
+      lines: [
+        { name: 'Agent', content: 'How can I help you today', type: 'transcript' },
+        { name: 'Agent', content: 'ner', type: 'moment' },
+        { name: 'Agent', content: 'call_purpose', type: 'moment' },
+        { name: 'Customer', content: 'the water heater is leaking', type: 'transcript' },
+        { name: 'Customer', content: 'pii_number', type: 'moment' },
+      ],
+    });
+    const text = transcriptToRedactableText(withMoments);
+    expect(text).toContain('How can I help you today');
+    expect(text).toContain('the water heater is leaking');
+    expect(text).not.toContain('ner');
+    expect(text).not.toContain('call_purpose');
+    expect(text).not.toContain('pii_number');
+  });
+
+  it('keeps lines with unknown or absent types (fail safe: scan MORE, not less)', () => {
+    const unknownTypes = JSON.stringify({
+      lines: [
+        { name: 'Agent', content: 'words with no type field' },
+        { name: 'Customer', content: 'words with a novel type', type: 'sentence' },
+      ],
+    });
+    const text = transcriptToRedactableText(unknownTypes);
+    expect(text).toContain('words with no type field');
+    expect(text).toContain('words with a novel type');
+  });
+
+  it('falls back to RAW when a lines[] envelope contains ONLY moment lines', () => {
+    const momentsOnly = JSON.stringify({
+      lines: [{ name: 'Agent', content: 'ner', type: 'moment' }],
+    });
+    expect(transcriptToRedactableText(momentsOnly)).toBe(momentsOnly);
+  });
+
   it('returns a flat `transcript` string as-is', () => {
     const flat = JSON.stringify({ call_id: 1, transcript: 'plain spoken words about a job' });
     expect(transcriptToRedactableText(flat)).toBe('plain spoken words about a job');
