@@ -6,7 +6,9 @@
  * as untrusted data. The system prompt NEVER contains transcript text.
  */
 
-export const EXTRACT_PROMPT_VERSION = 'extract-v1';
+// v2: the prompt family now includes the ADR 0007 schema-failure retry suffix
+// (buildExtractRetryUserMessage); both attempts record under this version.
+export const EXTRACT_PROMPT_VERSION = 'extract-v2';
 
 export const EXTRACT_SCHEMA_VERSION = 1;
 
@@ -56,4 +58,36 @@ export function buildExtractUserMessage(redactedText: string): string {
 <transcript>
 ${redactedText}
 </transcript>`;
+}
+
+/** Fixed per-kind description for the retry correction — constants only, never model text. */
+const RETRY_FAILURE_DESCRIPTION: Record<string, string> = {
+  empty: 'it was empty',
+  non_json: 'it was not a single parseable JSON object',
+  schema_invalid: 'it failed schema validation',
+  unexpected_stop_reason: 'it ended with an unexpected stop reason',
+};
+
+/**
+ * The ADR 0007 one-shot retry message: the ORIGINAL user message (transcript
+ * included) plus a bounded correction. The optional issue summary is built by
+ * the parser from zod `path` + `code` only — content-free — and appears ONLY
+ * here, in the outbound request; it is never logged, alerted, or persisted.
+ */
+export function buildExtractRetryUserMessage(
+  redactedText: string,
+  failure: string,
+  issueSummary: readonly string[] = [],
+): string {
+  const why = RETRY_FAILURE_DESCRIPTION[failure] ?? 'it could not be validated';
+  const issues =
+    issueSummary.length > 0
+      ? `\nThe schema violations were (field: violation code):\n${issueSummary
+          .map((s) => `- ${s}`)
+          .join('\n')}`
+      : '';
+  return `${buildExtractUserMessage(redactedText)}
+
+Your previous response could not be used because ${why}.${issues}
+Respond again with a SINGLE valid JSON object exactly matching the schema — no prose, no code fences, no fields beyond the schema.`;
 }

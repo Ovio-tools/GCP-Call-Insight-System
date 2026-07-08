@@ -439,23 +439,134 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
 
   // ---- malformed ---------------------------------------------------------------
 
-  it('bad JSON → held schema_invalid, MODEL_MALFORMED_RESPONSE alert, invocation malformed_response, spend settled', async () => {
+  it('bad JSON twice → ONE retry, held schema_invalid, ONE final alert, BOTH invocations recorded, both settled', async () => {
     const callId = 'test-ext-malformed';
     await seed(callId);
-    const { model } = fakeModel(() => Promise.resolve(result({ text: 'this is not json' })));
+    const { model, spy } = fakeModel(() =>
+      Promise.resolve(result({ text: 'this is not json' })),
+    );
     const res = await handler(() => model)(ctx(callId));
     expect(res.action).toBe('hold');
     if (res.action === 'hold') {
       expect(res.reason).toBe('schema_invalid');
       expect(res.errorCode).toBe('MODEL_MALFORMED_RESPONSE');
-      expect(res.detail).toMatchObject({ parse_failure: 'non_json' });
+      expect(res.detail).toMatchObject({ parse_failure: 'non_json', retry_attempted: true });
     }
+    expect(spy).toHaveBeenCalledTimes(2);
+    // One actionable alert per failure path: only the FINAL failure alerts.
     expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(1);
     const invocations = await listInvocations(app, callId);
-    expect(invocations).toHaveLength(1);
-    expect(invocations[0]?.outcome).toBe('malformed_response');
+    expect(invocations).toHaveLength(2);
+    expect(invocations.map((i) => i.outcome)).toEqual([
+      'malformed_response',
+      'malformed_response',
+    ]);
     expect(await countRows('extraction_candidates', callId)).toBe(0);
-    expect(await dayCost()).toBeCloseTo(settledCost(2000, 300), 10);
+    expect(await dayCost()).toBeCloseTo(settledCost(2000, 300) * 2, 10);
+  });
+
+  // ---- schema-failure retry (ADR 0007) -------------------------------------------
+
+  it('retry: malformed then valid → continues, two invocations (malformed_response, success), NO alert', async () => {
+    const callId = 'test-ext-retryok';
+    await seed(callId);
+    let calls = 0;
+    const { model, spy } = fakeModel(() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1 ? result({ text: 'this is not json' }) : result(),
+      );
+    });
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('continue');
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(0);
+    const invocations = await listInvocations(app, callId);
+    expect(invocations.map((i) => i.outcome)).toEqual(['malformed_response', 'success']);
+    expect(await countRows('extraction_candidates', callId)).toBe(1);
+    expect(await dayCost()).toBeCloseTo(settledCost(2000, 300) * 2, 10);
+  });
+
+  it('retry request: original transcript + correction present; schema issue summary is path+code only', async () => {
+    const callId = 'test-ext-retrymsg';
+    await seed(callId);
+    const smuggled = { ...GOLDEN, service_category: 'hvac_secret_value' };
+    let calls = 0;
+    const { model, spy } = fakeModel(() => {
+      calls += 1;
+      return Promise.resolve(
+        calls === 1 ? result({ text: JSON.stringify(smuggled) }) : result(),
+      );
+    });
+    const { lines, logger } = collectingLogger();
+    const res = await handler(() => model)(ctx(callId, logger));
+
+    expect(res.action).toBe('continue');
+    const retryReq = spy.mock.calls[1]?.[0] as { system: string; userText: string };
+    expect(retryReq.system).toBe(EXTRACT_SYSTEM_PROMPT);
+    // The retry user message still carries the transcript AND a correction.
+    expect(retryReq.userText).toContain(REDACTED);
+    expect(retryReq.userText).toContain('could not be used');
+    expect(retryReq.userText).toContain('service_category');
+    // Content-free feedback: paths and zod codes only, never the received value.
+    expect(retryReq.userText).not.toContain('hvac_secret_value');
+    // And the summary never reaches logs.
+    expect(lines.join('')).not.toContain('service_category:');
+  });
+
+  it.each([
+    ['refusal', { stopReason: 'refusal' }],
+    ['truncated', { stopReason: 'max_tokens' }],
+    ['usage missing', { usagePresent: false, inputTokens: 0, outputTokens: 0 }],
+  ] as const)('no retry on %s — single attempt, held schema_invalid', async (_name, over) => {
+    const callId = `test-ext-noretry-${_name.replace(/[^a-z]/g, '')}`;
+    await seed(callId);
+    const { model, spy } = fakeModel(() => Promise.resolve(result(over)));
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('hold');
+    if (res.action === 'hold') {
+      expect(res.reason).toBe('schema_invalid');
+      expect(res.detail).not.toMatchObject({ retry_attempted: true });
+    }
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(await listInvocations(app, callId)).toHaveLength(1);
+  });
+
+  it('cost cap blocks the retry: single attempt, held schema_invalid with retry_skipped, one invocation', async () => {
+    const callId = 'test-ext-retrycap';
+    await seed(callId);
+    // Cap fits ONE reservation (~0.1515 USD at test rates) but not a second.
+    const { model, spy } = fakeModel(() =>
+      Promise.resolve(result({ text: 'this is not json' })),
+    );
+    const res = await handler(() => model, { DAILY_MODEL_COST_CAP_USD: 0.16 })(ctx(callId));
+
+    expect(res.action).toBe('hold');
+    if (res.action === 'hold') {
+      expect(res.reason).toBe('schema_invalid');
+      expect(res.errorCode).toBe('MODEL_MALFORMED_RESPONSE');
+      expect(res.detail).toMatchObject({ retry_skipped: 'cost_cap' });
+    }
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(await listInvocations(app, callId)).toHaveLength(1);
+    expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(1);
+  });
+
+  it('model API error during the retry attempt → handleModelError path, rethrown (BullMQ owns further retries)', async () => {
+    const callId = 'test-ext-retryapierr';
+    await seed(callId);
+    let calls = 0;
+    const { model, spy } = fakeModel(() => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(result({ text: 'this is not json' }));
+      return Promise.reject(new ModelApiError('rate_limited', 'not_billed', 429));
+    });
+    await expect(handler(() => model)(ctx(callId))).rejects.toBeInstanceOf(ModelApiError);
+    expect(spy).toHaveBeenCalledTimes(2);
+    // Attempt 1 was recorded before the retry threw.
+    expect(await listInvocations(app, callId)).toHaveLength(1);
   });
 
   it('usage missing (valid record) → held schema_invalid, reservation KEPT, invocation malformed_response', async () => {
@@ -658,7 +769,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
       urgency: 'routine',
       sentiment: 'neutral',
       schema_version: 1,
-      prompt_version: 'extract-v1',
+      prompt_version: 'extract-v2',
       model_id: makeTestConfig().EXTRACT_MODEL_ID,
       pii_scan_status: 'pending',
     });
@@ -668,7 +779,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     expect(invocations[0]).toMatchObject({
       stage: 'extract',
       model_id: makeTestConfig().EXTRACT_MODEL_ID,
-      prompt_version: 'extract-v1',
+      prompt_version: 'extract-v2',
       outcome: 'success',
       input_tokens: 2000,
       output_tokens: 300,
