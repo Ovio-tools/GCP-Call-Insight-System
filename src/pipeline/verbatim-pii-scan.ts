@@ -125,18 +125,22 @@ export function createVerbatimPiiScanHandler(deps: VerbatimPiiScanHandlerDeps): 
       });
     }
 
-    // 7. Verbatim recheck — every persisted phrase must appear (light-normalized) in the clean
-    //    transcript. A reconstructed/paraphrased phrase → latch verbatim_mismatch → schema_invalid.
+    // 7. Verbatim recheck — a DEFENSIVE latch: every persisted phrase must be an EXACT quote
+    //    of the clean transcript. The extract gate already recovered near-verbatim phrases
+    //    (snapping them to real spans) and dropped fabrications, so a persisted phrase that is
+    //    NOT exact here (snap/drop would fire) means non-verbatim text reached persistence →
+    //    latch verbatim_mismatch → schema_invalid. This stage never snaps; it asserts.
     const vb = verbatimGate(phrases, clean.redacted_text);
-    if (!vb.ok) {
+    const nonVerbatimCount = vb.snappedCount + vb.droppedCount;
+    if (nonVerbatimCount > 0) {
       await markPiiScanFailed(pool, callId, {
         kind: 'verbatim_mismatch',
-        mismatch_count: vb.mismatchCount,
-        phrase_count: vb.phraseCount,
+        mismatch_count: nonVerbatimCount,
+        phrase_count: phrases.length,
       });
       return malformedHold(pool, callId, stage, config, logger, 'verbatim_mismatch', {
-        mismatch_count: vb.mismatchCount,
-        phrase_count: vb.phraseCount,
+        mismatch_count: nonVerbatimCount,
+        phrase_count: phrases.length,
       });
     }
 

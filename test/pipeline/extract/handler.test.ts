@@ -594,7 +594,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
 
   // ---- verbatim gate -----------------------------------------------------------
 
-  it('verbatim mismatch (phrase not in transcript, no PII) → held schema_invalid, no candidate', async () => {
+  it('all phrases fabricated (un-locatable, no PII) → held schema_invalid, no candidate', async () => {
     const callId = 'test-ext-verbatim';
     await seed(callId);
     const fabricated = { ...GOLDEN, customer_language: ['the sink is completely blocked up'] };
@@ -608,14 +608,65 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
       expect(res.errorCode).toBe('MODEL_MALFORMED_RESPONSE');
       expect(res.detail).toMatchObject({
         gate: 'verbatim_mismatch',
-        mismatch_count: 1,
+        dropped_count: 1,
         retry_attempted: true,
       });
     }
-    // The verbatim mismatch got the ONE bounded retry before holding; final failure alerts once.
+    // The mismatch got the ONE bounded retry before holding; final failure alerts once.
     expect(spy).toHaveBeenCalledTimes(2);
     expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(1);
     expect(await countRows('extraction_candidates', callId)).toBe(0);
+  });
+
+  it('snap-to-source (issue #63): a reworded phrase persists as the REAL span, no hold, no alert', async () => {
+    const callId = 'test-ext-snap';
+    await seed(callId);
+    // First phrase is an exact quote; the second inserts "the" ("it stopped making THE hot
+    // water"). The retry returns the same, so after the retry is spent the reworded phrase
+    // snaps to the real "it stopped making hot water".
+    const reworded = {
+      ...GOLDEN,
+      customer_language: ['my water heater is leaking', 'it stopped making the hot water'],
+    };
+    const { model, spy } = fakeModel(() =>
+      Promise.resolve(result({ text: JSON.stringify(reworded) })),
+    );
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('continue');
+    if (res.action === 'continue') {
+      expect(res.detail).toMatchObject({ customer_language_snapped: 1 });
+    }
+    // Retry fired first (still non-exact), then the snap recovered it — no alert.
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(0);
+    const cand = await getExtractionCandidate(app, callId);
+    // The REAL source span is stored, never the model's "the hot water" reword.
+    expect(cand?.customer_language).toEqual([
+      'my water heater is leaking',
+      'it stopped making hot water',
+    ]);
+  });
+
+  it('snap + drop mix: keeps the recoverable phrase, drops the fabricated one, continues', async () => {
+    const callId = 'test-ext-snapdrop';
+    await seed(callId);
+    const mixed = {
+      ...GOLDEN,
+      customer_language: ['it stopped making the hot water', 'the sink is completely blocked up'],
+    };
+    const { model } = fakeModel(() => Promise.resolve(result({ text: JSON.stringify(mixed) })));
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('continue');
+    if (res.action === 'continue') {
+      expect(res.detail).toMatchObject({
+        customer_language_snapped: 1,
+        customer_language_dropped: 1,
+      });
+    }
+    const cand = await getExtractionCandidate(app, callId);
+    expect(cand?.customer_language).toEqual(['it stopped making hot water']);
   });
 
   it('retry: verbatim mismatch then corrected → continues; feedback carries counts, never the phrase', async () => {
