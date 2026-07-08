@@ -15,8 +15,14 @@ import { upsertCleanTranscript } from '../../src/db/repositories/clean-transcrip
 import { listByCall as listLogs } from '../../src/db/repositories/processing-log-repo.js';
 import { createRootLogger } from '../../src/logging/logger.js';
 import { makeTestConfig } from '../_config.js';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
-import { cleanupCalls, makeAppPool, seedKeyVersion } from '../db/_dal.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
+import {
+  cleanupCalls,
+  cleanupRawCalls,
+  makeAppPool,
+  makeRawAppPool,
+  seedKeyVersion,
+} from '../db/_dal.js';
 
 /**
  * Task 5.2 M6 — the `verbatim-pii-scan` stage. This is the crash-safe, model-free re-verify
@@ -79,9 +85,13 @@ function baseCandidate(callId: string, customerLanguage: string[]): ExtractionCa
   };
 }
 
-describe.skipIf(!hasTestDb)('verbatim-pii-scan stage', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('verbatim-pii-scan stage', () => {
   let owner!: Pool;
   let app!: Pool;
+  // DB-B (raw store): the full production set ends in mark-retention-eligible, which touches
+  // raw_transcripts + token_vault (now DB-B only).
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
   const silent = createRootLogger({ level: 'silent' });
 
   /** Seed call_state@verbatim-pii-scan + clean_transcripts + a candidate (pending). */
@@ -130,6 +140,7 @@ describe.skipIf(!hasTestDb)('verbatim-pii-scan stage', () => {
       keyProvider,
       queue: { add: vi.fn(() => Promise.resolve()) },
       config,
+      rawPool: rawApp,
     });
   };
 
@@ -166,13 +177,17 @@ describe.skipIf(!hasTestDb)('verbatim-pii-scan stage', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
     await seedKeyVersion(owner);
   });
   afterEach(async () => {
     vi.restoreAllMocks();
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.query(
       `DELETE FROM alert_events WHERE error_code IN ('VERBATIM_PII_DETECTED','MODEL_MALFORMED_RESPONSE')`,
     );
@@ -180,6 +195,8 @@ describe.skipIf(!hasTestDb)('verbatim-pii-scan stage', () => {
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
   });
 
   // ---- clean pass --------------------------------------------------------------

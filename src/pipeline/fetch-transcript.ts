@@ -28,6 +28,8 @@ export interface FetchTranscriptDeps {
   queue: DelayedRetryQueue;
   config: Config;
   clock?: Clock;
+  /** DB-B app pool (Task 8a): raw_transcripts + token_vault live only in the raw store. */
+  rawPool: Pool;
 }
 
 /** Map a client `DialpadError` kind to the shared failure-model code + processing state. */
@@ -131,7 +133,10 @@ export function createFetchTranscriptHandler(deps: FetchTranscriptDeps): StageHa
     }
 
     if (result.kind === 'ready') {
-      await putTranscript(pool, deps.keyProvider, { callId, transcript: result.transcript });
+      await putTranscript(deps.rawPool, deps.keyProvider, {
+        callId,
+        transcript: result.transcript,
+      });
       logger.info({ stage }, 'transcript fetched and stored');
       return { action: 'continue' };
     }
@@ -179,9 +184,13 @@ export function createFetchTranscriptHandler(deps: FetchTranscriptDeps): StageHa
  * should always pass (fetch-transcript only advances on a successful store); if the row is
  * somehow gone, it fails safe by holding rather than sending an empty transcript downstream.
  */
-export function createTranscriptAvailabilityHandler(deps: { config: Config }): StageHandler {
+export function createTranscriptAvailabilityHandler(deps: {
+  config: Config;
+  /** DB-B app pool (Task 8a): the raw transcript lives only in the raw store. */
+  rawPool: Pool;
+}): StageHandler {
   return async (ctx: StageContext): Promise<StageResult> => {
-    const present = await transcriptExists(ctx.pool, ctx.callId);
+    const present = await transcriptExists(deps.rawPool, ctx.callId);
     if (!present) {
       // Same disposition as the not-ready timeout: emit the deduped alert, then hold.
       await recordTranscriptMissingAlert(ctx.pool, {

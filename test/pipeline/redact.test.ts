@@ -24,8 +24,8 @@ import { mergeDetections } from '../../src/redaction/spans.js';
 import { tokenize } from '../../src/redaction/tokenize.js';
 import type { Detector, DetectorResult } from '../../src/redaction/types.js';
 import { makeTestConfig } from '../_config.js';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
-import { cleanupCalls, makeAppPool } from '../db/_dal.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
+import { cleanupCalls, cleanupRawCalls, makeAppPool, makeRawAppPool } from '../db/_dal.js';
 
 const PATTERN = 'test-rd-%';
 const HASH_KEY = Buffer.alloc(32, 0x5a).toString('base64');
@@ -68,9 +68,12 @@ function collectingLogger(): { lines: string[]; logger: ReturnType<typeof create
   return { lines, logger: createRootLogger({ level: 'debug', destination: stream }) };
 }
 
-describe.skipIf(!hasTestDb)('redact stage', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('redact stage', () => {
   let owner!: Pool;
   let app!: Pool;
+  // DB-B (raw store): raw_transcripts + token_vault now live only here.
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
   const keyProvider = new LocalKeyProvider({
     masterKey: Buffer.alloc(DEK_BYTES, 0x07),
     activeKeyVersion: 1,
@@ -101,7 +104,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
       currentStage: 'redact',
       status: 'processing',
     });
-    await putTranscript(app, keyProvider, { callId, transcript });
+    await putTranscript(rawApp, keyProvider, { callId, transcript });
   };
 
   const makeHandler = (
@@ -112,6 +115,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     createRedactionHandler({
       keyProvider,
       config: { ...config, ...overrides },
+      rawPool: rawApp,
       detectors,
       denyTerms: [],
       ...(compose ? { compose } : {}),
@@ -143,8 +147,11 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
     await owner.query(
       `INSERT INTO key_versions (key_version, status, wrapped_dek_ref, kek_version)
        VALUES (1, 'active', 'local:test', 'kek-test') ON CONFLICT (key_version) DO NOTHING`,
@@ -152,11 +159,14 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.query(`DELETE FROM alert_events WHERE error_code = 'REDACTION_LOW_CONFIDENCE'`);
   });
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
   });
 
   it('happy path: vault round-trips byte-exact, findings carry refs/hashes only, clean row written, advances', async () => {
@@ -174,7 +184,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     expect(Number(clean?.redaction_risk_score)).toBe(0);
 
     // Vault round-trip through the envelope helper is byte-exact.
-    const runner = createRestrictedRunner(app);
+    const runner = createRestrictedRunner(rawApp);
     const name = await getToken(runner, keyProvider, { callId, token: '[NAME_1]' });
     const phone = await getToken(runner, keyProvider, { callId, token: '[PHONE_1]' });
     expect(name?.toString('utf8')).toBe('John Smith');
@@ -261,7 +271,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     expect(clean?.redacted_text).not.toContain('example.com');
 
     // The repaired value is vaulted like any detector hit.
-    const runner = createRestrictedRunner(app);
+    const runner = createRestrictedRunner(rawApp);
     const vaulted = await getToken(runner, keyProvider, { callId, token: '[EMAIL_1]' });
     expect(vaulted?.toString('utf8')).toBe('john＠example.com');
   });
@@ -346,7 +356,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     // The clean row is byte-for-byte unchanged and NOTHING was written for the call.
     const after = await owner.query(`SELECT * FROM clean_transcripts WHERE call_id = $1`, [callId]);
     expect(after.rows).toEqual(before.rows);
-    const vault = await owner.query<{ n: string }>(
+    const vault = await rawOwner.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM token_vault WHERE call_id = $1`,
       [callId],
     );
@@ -443,13 +453,13 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     const findings = await getFindings(app, callId);
     expect(findings).toHaveLength(3); // active set only — the replace soft-deleted the old one
 
-    const vaultRows = await owner.query<{ n: string }>(
+    const vaultRows = await rawOwner.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM token_vault WHERE call_id = $1`,
       [callId],
     );
     expect(Number(vaultRows.rows[0]?.n)).toBe(2);
 
-    const runner = createRestrictedRunner(app);
+    const runner = createRestrictedRunner(rawApp);
     const name = await getToken(runner, keyProvider, { callId, token: '[NAME_1]' });
     expect(name?.toString('utf8')).toBe('John Smith');
   });
@@ -559,6 +569,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
       createRedactionHandler({
         keyProvider,
         config: makeTestConfig(),
+        rawPool: rawApp,
         detectors: [happyDetector()],
         denyTerms: [],
       }),

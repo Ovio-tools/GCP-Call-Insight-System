@@ -18,8 +18,8 @@ import {
 import { getTranscript, putTranscript } from '../../src/db/repositories/raw-transcripts-repo.js';
 import { createRootLogger } from '../../src/logging/logger.js';
 import { makeTestConfig } from '../_config.js';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
-import { cleanupCalls, makeAppPool } from '../db/_dal.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
+import { cleanupCalls, cleanupRawCalls, makeAppPool, makeRawAppPool } from '../db/_dal.js';
 
 const PATTERN = 'test-ft-%';
 
@@ -56,9 +56,12 @@ function collectingLogger(): { lines: string[]; logger: ReturnType<typeof create
   return { lines, logger: createRootLogger({ level: 'debug', destination: stream }) };
 }
 
-describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('fetch-transcript stage', () => {
   let owner!: Pool;
   let app!: Pool;
+  // DB-B (raw store): raw_transcripts + token_vault now live only here.
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
   const keyProvider = new LocalKeyProvider({
     masterKey: Buffer.alloc(DEK_BYTES, 0x07),
     activeKeyVersion: 1,
@@ -67,8 +70,8 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
   const seedProcessing = (callId: string, stage = 'fetch-transcript'): Promise<unknown> =>
     upsertCallState(app, { callId, source: 'test', currentStage: stage, status: 'processing' });
 
-  const countRows = async (table: string, callId: string): Promise<number> => {
-    const r = await owner.query<{ n: string }>(
+  const countRows = async (table: string, callId: string, from?: Pool): Promise<number> => {
+    const r = await (from ?? owner).query<{ n: string }>(
       `SELECT count(*)::text AS n FROM ${table} WHERE call_id = $1`,
       [callId],
     );
@@ -85,8 +88,11 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
     await owner.query(
       `INSERT INTO key_versions (key_version, status, wrapped_dek_ref, kek_version)
        VALUES (1, 'active', 'local:test', 'kek-test') ON CONFLICT (key_version) DO NOTHING`,
@@ -94,11 +100,14 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.query(`DELETE FROM alert_events WHERE error_code LIKE 'DIALPAD_%'`);
   });
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
   });
 
   function handlers(client: DialpadClient, queue = fakeQueue(), overrides = {}) {
@@ -110,7 +119,7 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
       ...overrides,
     });
     return {
-      set: buildProductionStageHandlers({ client, keyProvider, queue, config }),
+      set: buildProductionStageHandlers({ client, keyProvider, queue, config, rawPool: rawApp }),
       queue,
       config,
     };
@@ -133,7 +142,7 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
     const state = await getCallState(app, callId);
     expect(state?.status).toBe('processing');
     expect(state?.current_stage).toBe('classify');
-    expect(await getTranscript(app, keyProvider, callId)).toBe('RAW BODY');
+    expect(await getTranscript(rawApp, keyProvider, callId)).toBe('RAW BODY');
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
@@ -155,7 +164,7 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
     expect(state?.current_stage).toBe('fetch-transcript');
     expect(state?.transcript_wait_started_at).not.toBeNull();
     expect(await countRows('review_queue', callId)).toBe(0);
-    expect(await countRows('raw_transcripts', callId)).toBe(0);
+    expect(await countRows('raw_transcripts', callId, rawOwner)).toBe(0);
 
     // A delayed retry was scheduled with a distinct, BullMQ-safe (no ':') job id.
     expect(queue.add).toHaveBeenCalledTimes(1);
@@ -264,12 +273,13 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
       keyProvider,
       queue: fakeQueue(),
       config: makeTestConfig({ DIALPAD_API_KEY: 'k' }),
+      rawPool: rawApp,
     });
     const ctx: StageContext = { callId, stage: 'fetch-transcript', logger, pool: app };
     await handler(ctx);
 
     // Stored (encrypted) but never written to a log line.
-    expect(await getTranscript(app, keyProvider, callId)).toBe(planted);
+    expect(await getTranscript(rawApp, keyProvider, callId)).toBe(planted);
     expect(lines.join('')).not.toContain('secret_9999');
     expect(lines.join('')).not.toContain('111-22-3333');
   });
@@ -280,10 +290,10 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
     it('continues when an encrypted transcript is present', async () => {
       const callId = 'test-ft-avail-ok';
       await seedProcessing(callId, 'transcript-availability');
-      await putTranscript(app, keyProvider, { callId, transcript: 'present' });
+      await putTranscript(rawApp, keyProvider, { callId, transcript: 'present' });
       const { logger } = collectingLogger();
 
-      const result = await createTranscriptAvailabilityHandler({ config })({
+      const result = await createTranscriptAvailabilityHandler({ config, rawPool: rawApp })({
         callId,
         stage: 'transcript-availability',
         logger,
@@ -297,7 +307,7 @@ describe.skipIf(!hasTestDb)('fetch-transcript stage', () => {
       const callId = 'test-ft-avail-missing';
       await seedProcessing(callId, 'transcript-availability');
       const { logger } = collectingLogger();
-      const gate = createTranscriptAvailabilityHandler({ config });
+      const gate = createTranscriptAvailabilityHandler({ config, rawPool: rawApp });
       const ctx = { callId, stage: 'transcript-availability' as const, logger, pool: app };
 
       expect(await gate(ctx)).toMatchObject({ action: 'hold', reason: 'missing_transcript' });

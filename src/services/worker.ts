@@ -9,7 +9,7 @@ import {
   requireCheckUrl,
   startLivenessHeartbeat,
 } from '../heartbeat/index.js';
-import { createAppPool } from '../db/index.js';
+import { createAppPool, createRawAppPool } from '../db/index.js';
 import { recordHeartbeat } from '../db/repositories/component-heartbeats-repo.js';
 import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
 import { isMaintenanceActive } from '../key-lifecycle/maintenance-lock.js';
@@ -36,10 +36,15 @@ async function main(): Promise<void> {
   requireCheckUrl(config, 'worker');
   await assertDependenciesReady(config, logger);
 
-  // Readiness guarantees DATABASE_URL/REDIS_URL are set and reachable; guard anyway for types.
+  // Readiness guarantees DATABASE_URL/RAW_DATABASE_URL/REDIS_URL are set and reachable; guard
+  // anyway for types.
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
 
   const pool = createAppPool(config.DATABASE_URL);
+  // DB-B app pool (Task 8a): raw_transcripts + token_vault live only in the raw store. The
+  // raw/vault-touching pipeline stages use this; every DB-A access stays on `pool`.
+  const rawPool = createRawAppPool(config.RAW_DATABASE_URL);
   // Separate connections: the worker's blocking BRPOPLPUSH must not tie up the queue's, and
   // the outbound Dialpad rate limiter (non-blocking evals) gets its own so it can't stall
   // behind either.
@@ -63,6 +68,7 @@ async function main(): Promise<void> {
     keyProvider,
     queue,
     config,
+    rawPool,
   });
   const worker = createPipelineWorker(config, pool, workerConnection, {
     handlers,
@@ -134,6 +140,7 @@ async function main(): Promise<void> {
   await workerConnection.quit();
   await limiterConnection.quit();
   await pool.end();
+  await rawPool.end();
 }
 
 main().catch((err: unknown) => {

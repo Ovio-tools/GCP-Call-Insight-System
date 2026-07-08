@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises';
 import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
-import { createAppPool } from '../db/index.js';
+import { createAppPool, createRawAppPool } from '../db/index.js';
 import { loadDenyList } from '../redaction/deny-list.js';
 import { requireRedactionConfig } from '../redaction/config.js';
 import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
@@ -81,6 +81,8 @@ export async function main(): Promise<void> {
     const queueConnection = createQueueConnectionFromConfig(config);
     const limiterConnection = createQueueConnectionFromConfig(config);
     const queue = createPipelineQueue(config, queueConnection);
+    // Hoisted so the finally can release it even if construction throws mid-try.
+    let rawPool: ReturnType<typeof createRawAppPool> | undefined;
 
     try {
       // Real stage handlers — the FULL existing pipeline, never duplicated logic. runSampleValidation
@@ -91,7 +93,17 @@ export async function main(): Promise<void> {
         perMinute: config.DIALPAD_RATE_PER_MINUTE,
       });
       const client = createDialpadClient({ config, limiter, logger });
-      const handlers = buildProductionStageHandlers({ client, keyProvider, queue, config });
+      // DB-B app pool (Task 8a): the harness runs the FULL pipeline in-process, so it needs the
+      // raw store for the raw/vault stages. Readiness above already probed RAW_DATABASE_URL.
+      if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
+      rawPool = createRawAppPool(config.RAW_DATABASE_URL);
+      const handlers = buildProductionStageHandlers({
+        client,
+        keyProvider,
+        queue,
+        config,
+        rawPool,
+      });
 
       const result = await runSampleValidation(
         pool,
@@ -121,6 +133,7 @@ export async function main(): Promise<void> {
       await queue.close();
       await queueConnection.quit();
       await limiterConnection.quit();
+      await rawPool?.end();
     }
   } finally {
     await pool.end();

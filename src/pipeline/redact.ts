@@ -54,6 +54,10 @@ import type { StageContext, StageHandler, StageResult } from './stages.js';
 export interface RedactionDeps {
   keyProvider: KeyProvider;
   config: Config;
+  /** DB-B app pool (Task 8a): raw_transcripts + token_vault live only in the raw store.
+   * The vault restricted runner is derived from this via makeRunner (DB-B login user is a
+   * member of both roles, exactly like DB-A). */
+  rawPool: Pool;
   /** Test injection. Default: [NER, regex, deny-list] built from config. */
   detectors?: readonly Detector[];
   /** Test injection. Default: createRestrictedRunner. */
@@ -143,7 +147,7 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     }
 
     // 1. Input: raw transcript only, via envelope decryption. Absent ⇒ fail closed.
-    const rawTranscript = await getTranscript(pool, deps.keyProvider, callId);
+    const rawTranscript = await getTranscript(deps.rawPool, deps.keyProvider, callId);
     if (rawTranscript === undefined) {
       logger.info({ stage }, 'raw transcript absent at redact — holding');
       return {
@@ -186,7 +190,7 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
     // 4a. Vault first: no finding/clean row may ever reference an unvaulted token.
     //     Stale rows from a prior detector version are harmless (highest-security
     //     table, purged with raw).
-    const runner = makeRunner(pool);
+    const runner = makeRunner(deps.rawPool);
     for (const entry of tokenized.vaultEntries) {
       await putToken(runner, deps.keyProvider, {
         callId,

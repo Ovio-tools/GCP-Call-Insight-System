@@ -18,8 +18,21 @@ import { upsertDailyCost } from '../../../src/db/repositories/daily-cost-usage-r
 import { createRootLogger } from '../../../src/logging/logger.js';
 import { utcDay } from '../../../src/model/cost.js';
 import { makeTestConfig } from '../../_config.js';
-import { hasTestDb, makePool, migrate } from '../../db/_pg.js';
-import { cleanupCalls, makeAppPool, seedKeyVersion } from '../../db/_dal.js';
+import {
+  hasRawTestDb,
+  hasTestDb,
+  makePool,
+  makeRawPool,
+  migrate,
+  migrateRaw,
+} from '../../db/_pg.js';
+import {
+  cleanupCalls,
+  cleanupRawCalls,
+  makeAppPool,
+  makeRawAppPool,
+  seedKeyVersion,
+} from '../../db/_dal.js';
 
 /**
  * Classify-stage privacy suite (Task 5.1, Task 8). Asserts the privacy boundary end-to-end for
@@ -81,9 +94,13 @@ function collectingLogger(): { lines: string[]; logger: ReturnType<typeof create
   return { lines, logger: createRootLogger({ level: 'debug', destination: stream }) };
 }
 
-describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('classify stage privacy boundary', () => {
   let owner!: Pool;
   let app!: Pool;
+  // DB-B (raw store): the full production set ends in mark-retention-eligible, which touches
+  // raw_transcripts + token_vault (now DB-B only).
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
 
   const seed = async (callId: string, redacted: string): Promise<void> => {
     await upsertCallState(app, {
@@ -127,6 +144,7 @@ describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
       config,
       clock,
       getClassifyModel: getModel,
+      rawPool: rawApp,
     });
   }
 
@@ -147,12 +165,16 @@ describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
     await seedKeyVersion(owner);
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.query(
       `DELETE FROM alert_events WHERE error_code IN
         ('MODEL_COST_CAP_EXCEEDED','MODEL_MALFORMED_RESPONSE','MODEL_AUTH_FAILED',
@@ -163,6 +185,8 @@ describe.skipIf(!hasTestDb)('classify stage privacy boundary', () => {
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
   });
 
   // ---- outbound payload containment --------------------------------------------

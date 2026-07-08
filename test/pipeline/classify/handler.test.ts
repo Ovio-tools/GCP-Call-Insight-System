@@ -26,8 +26,15 @@ import { getDay } from '../../../src/db/repositories/daily-cost-usage-repo.js';
 import { createRootLogger } from '../../../src/logging/logger.js';
 import { utcDay } from '../../../src/model/cost.js';
 import { makeTestConfig } from '../../_config.js';
-import { hasTestDb, makePool, migrate } from '../../db/_pg.js';
-import { cleanupCalls, makeAppPool } from '../../db/_dal.js';
+import {
+  hasRawTestDb,
+  hasTestDb,
+  makePool,
+  makeRawPool,
+  migrate,
+  migrateRaw,
+} from '../../db/_pg.js';
+import { cleanupCalls, cleanupRawCalls, makeAppPool, makeRawAppPool } from '../../db/_dal.js';
 
 const PATTERN = 'test-cls-%';
 
@@ -74,9 +81,13 @@ const dialpadStub: DialpadClient = {
   listRecentlyConcludedCalls: vi.fn(() => Promise.resolve({ calls: [] })),
 };
 
-describe.skipIf(!hasTestDb)('classify stage handler', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('classify stage handler', () => {
   let owner!: Pool;
   let app!: Pool;
+  // DB-B (raw store): the full production set ends in mark-retention-eligible, which touches
+  // raw_transcripts + token_vault (now DB-B only), so the set needs a raw pool.
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
   const keyProvider = new LocalKeyProvider({
     masterKey: Buffer.alloc(DEK_BYTES, 0x07),
     activeKeyVersion: 1,
@@ -135,6 +146,7 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
       config,
       clock,
       getClassifyModel: getModel,
+      rawPool: rawApp,
     });
   }
 
@@ -142,8 +154,11 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
     await owner.query(
       `INSERT INTO key_versions (key_version, status, wrapped_dek_ref, kek_version)
        VALUES (1, 'active', 'local:test', 'kek-test') ON CONFLICT (key_version) DO NOTHING`,
@@ -151,6 +166,7 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.query(
       `DELETE FROM alert_events WHERE error_code IN
         ('MODEL_COST_CAP_EXCEEDED','MODEL_COST_WARNING_THRESHOLD_EXCEEDED','MODEL_MALFORMED_RESPONSE',
@@ -161,6 +177,8 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
   });
 
   // ---- routing -----------------------------------------------------------------
@@ -647,6 +665,7 @@ describe.skipIf(!hasTestDb)('classify stage handler', () => {
         queue: { add: vi.fn(() => Promise.resolve()) },
         config,
         clock,
+        rawPool: rawApp,
       });
       expect(handlers.classify).toBeTypeOf('function');
 
