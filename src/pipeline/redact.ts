@@ -110,6 +110,7 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
       minScore: deps.config.REDACTION_NER_MIN_SCORE,
       chunkChars: deps.config.REDACTION_NER_CHUNK_CHARS,
       chunkOverlapChars: deps.config.REDACTION_NER_CHUNK_OVERLAP_CHARS,
+      entityScope: new Set(deps.config.REDACTION_NER_ENTITY_SCOPE),
     }),
     createRegexDetector(),
     createDenyListDetector(denyTerms),
@@ -173,12 +174,7 @@ export function createRedactionHandler(deps: RedactionDeps): StageHandler {
 
     const signals: RiskSignal[] = [
       ...detectorSignals,
-      ...deriveSpanSignals({
-        text: transcript,
-        spans,
-        disagreement,
-        nerMinScore: deps.config.REDACTION_NER_MIN_SCORE,
-      }),
+      ...deriveSpanSignals({ text: transcript, spans, disagreement }),
       ...(residualHit ? [{ reason: 'residual_scan_hit' as const }] : []),
     ];
     const risk = scoreRisk(signals);

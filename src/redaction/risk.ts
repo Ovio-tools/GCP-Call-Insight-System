@@ -55,9 +55,6 @@ export interface SpanSignalInput {
   spans: readonly Detection[];
   /** From mergeDetections: any cross-type overlap. */
   disagreement: boolean;
-  /** REDACTION_NER_MIN_SCORE; omitted ⇒ no confidence-based signal here (the NER
-   * detector also raises it itself — duplicates collapse in scoreRisk). */
-  nerMinScore?: number;
 }
 
 /** Signals derived from the merged spans + text shape (the detectors raise their
@@ -74,12 +71,8 @@ export function deriveSpanSignals(input: SpanSignalInput): RiskSignal[] {
     reasons.add('high_entity_density');
   }
 
-  if (
-    input.nerMinScore !== undefined &&
-    input.spans.some((s) => s.confidence !== undefined && s.confidence < input.nerMinScore!)
-  ) {
-    reasons.add('ner_low_confidence');
-  }
-
+  // ner_low_confidence is deliberately NOT derived here: post-gate (ADR 0006) no
+  // surviving NER span can sit below the threshold — the detector raises the
+  // signal itself when it drops candidates.
   return [...reasons].map((reason) => ({ reason }));
 }

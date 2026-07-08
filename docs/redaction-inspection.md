@@ -19,8 +19,8 @@ the primary layers missed) from a false hold.
   1. `NODE_ENV=staging`
   2. no configured resource (`DATABASE_URL` / `REDIS_URL` / `DIALPAD_BASE_URL` / `OIDC_ISSUER_URL`)
      resolves to a host containing `prod` / `production`.
-  It will refuse to run anywhere else. Output goes to the container logs — treat those logs as
-  sensitive while inspecting.
+     It will refuse to run anywhere else. Output goes to the container logs — treat those logs as
+     sensitive while inspecting.
 
 ## Usage
 

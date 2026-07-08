@@ -315,10 +315,12 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
         { ...NAME_SPAN, entityType: 'name', detector: 'ner', confidence: 0.99 },
         { ...PHONE_SPAN, entityType: 'phone', detector: 'regex' },
       ],
-      riskSignals: [{ reason: 'ner_low_confidence' }, { reason: 'deny_list_hit' }],
+      riskSignals: [{ reason: 'detector_disagreement' }, { reason: 'deny_list_hit' }],
     });
-    // Threshold 0.25: safe reasons sum to 0.25 => hold, but outputSafe stays true.
-    const result = await makeHandler([noisy], { REDACTION_RISK_THRESHOLD: 0.25 })(ctx(callId));
+    // Threshold 0.2: safe reasons sum to 0.2 => hold, but outputSafe stays true.
+    // (ner_low_confidence no longer qualifies — since ADR 0006 it means a dropped
+    // candidate surface remains in the output, i.e. unsafe.)
+    const result = await makeHandler([noisy], { REDACTION_RISK_THRESHOLD: 0.2 })(ctx(callId));
     expect(result).toMatchObject({
       action: 'hold',
       reason: 'redaction_failed',
@@ -327,7 +329,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     const clean = await getCleanTranscript(app, callId);
     expect(clean?.redacted_text).toContain('[NAME_1]');
     expect(clean?.redaction_reasons).toEqual(
-      expect.arrayContaining(['ner_low_confidence', 'deny_list_hit']),
+      expect.arrayContaining(['detector_disagreement', 'deny_list_hit']),
     );
     expect(await alertCount()).toBe(1);
   });
@@ -337,6 +339,8 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     'transcript_chunking_truncated',
     'address_like_ambiguous',
     'short_transcript',
+    // ADR 0006: dropped low-confidence candidates leave a suspect surface in the text.
+    'ner_low_confidence',
   ] as const)(
     'unsafe risk hold (%s): held redaction_failed with NO active clean row',
     async (reason) => {

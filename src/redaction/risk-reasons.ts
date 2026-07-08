@@ -20,9 +20,10 @@
  *     clean_transcripts (an unencrypted, app_role table).
  */
 export const RISK_REASONS = {
-  /** Redacted NER spans whose confidence fell below REDACTION_NER_MIN_SCORE. The spans
-   * are STILL tokenized (never dropped — fail closed); this is a signal, not a gap. */
-  ner_low_confidence: { weight: 0.15, forcedHold: false, safety: 'safe_after_redaction' },
+  /** NER candidate spans below REDACTION_NER_MIN_SCORE were DROPPED, not redacted
+   * (ADR 0006 precision gate) — a suspected-entity surface remains in the output, so
+   * the text is not trustworthy for clean_transcripts if the call ends up held. */
+  ner_low_confidence: { weight: 0.15, forcedHold: false, safety: 'unsafe_uncertain_surface' },
 
   /** Detectors disagreed on overlapping spans; the merge redacted the union. */
   detector_disagreement: { weight: 0.1, forcedHold: false, safety: 'safe_after_redaction' },

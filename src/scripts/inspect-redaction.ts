@@ -194,6 +194,7 @@ function buildDetectors(config: Config, denyTerms: readonly string[]): Detector[
       minScore: config.REDACTION_NER_MIN_SCORE,
       chunkChars: config.REDACTION_NER_CHUNK_CHARS,
       chunkOverlapChars: config.REDACTION_NER_CHUNK_OVERLAP_CHARS,
+      entityScope: new Set(config.REDACTION_NER_ENTITY_SCOPE),
     }),
     createRegexDetector(),
     createDenyListDetector(denyTerms),

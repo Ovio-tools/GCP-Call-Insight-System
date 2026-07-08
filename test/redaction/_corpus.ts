@@ -34,6 +34,11 @@ export interface CorpusCase {
   entities: CorpusEntity[];
   /** The case is expected to hold (e.g. spelled-out digits caught by residual). */
   expectHold?: boolean;
+  /** Precision corpus (ADR 0006): non-PII values that must SURVIVE redaction. */
+  survivingValues?: string[];
+  /** Precision corpus: values where a person-shaped fragment may legitimately be
+   * redacted inside a business name ("Bob's Heating and Air") — not-held only. */
+  acceptOverRedaction?: string[];
 }
 
 export interface Corpus {
@@ -91,7 +96,7 @@ export async function runStack(
   const residualHit = residual.hits.length > 0;
   const signals: RiskSignal[] = [
     ...results.flatMap((r) => [...r.riskSignals]),
-    ...deriveSpanSignals({ text, spans, disagreement, nerMinScore: 0.5 }),
+    ...deriveSpanSignals({ text, spans, disagreement }),
     ...(residualHit ? [{ reason: 'residual_scan_hit' as const }] : []),
   ];
   const risk = scoreRisk(signals);

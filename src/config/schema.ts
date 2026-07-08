@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { HELD_REASON, heldReasonSchema } from '../db/enums.js';
+import { NER_ENTITY_SCOPES } from '../redaction/types.js';
 
 /**
  * The reconciliation-cron cadence (minutes) the SLA-breach scan piggybacks on (Task 6.1).
@@ -429,9 +430,28 @@ export const configObjectSchema = z.object({
   /** Local directory the vendored NER model lives in (transformers.js cacheDir). */
   REDACTION_NER_MODEL_DIR: z.string().min(1).default('models'),
 
-  /** NER spans below this confidence still get redacted (fail closed) but raise the
-   * ner_low_confidence risk reason. */
-  REDACTION_NER_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.5),
+  /** NER spans below this confidence are DROPPED (not redacted) and raise the
+   * ner_low_confidence risk reason — the ADR 0006 precision gate. Default tuned
+   * empirically (2026-07): weakest corpus-needed name span scores 0.7614, so 0.7 is
+   * the highest round value keeping >= 0.05 recall margin. Raising it further trades
+   * name recall for precision. */
+  REDACTION_NER_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.7),
+
+  /** CSV of NER entity scopes actually redacted (ADR 0006). `person` = PER spans;
+   * `numbered_location` = LOC spans only when a house-style number is directly
+   * adjacent (suffix-less addresses); `location`/`organization`/`misc` opt back in
+   * to bare cities / business names / MISC. Structured PII (phones, emails, street
+   * addresses, IDs, cards) is always covered by the regex layer regardless. */
+  REDACTION_NER_ENTITY_SCOPE: z
+    .string()
+    .default('person,numbered_location')
+    .transform((v) =>
+      v
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean),
+    )
+    .pipe(z.array(z.enum(NER_ENTITY_SCOPES)).nonempty()),
 
   /** Chunk size (chars) for splitting long transcripts under the model's token window. */
   REDACTION_NER_CHUNK_CHARS: z.coerce.number().int().positive().default(1500),
