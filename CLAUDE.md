@@ -167,15 +167,19 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
   metadata are never deleted. Fails safe: anything missing, unknown, or ambiguous passes.
 - **fetch transcript** — only for calls that survive the pre-filter. A call with no
   transcript yet is handled by the availability check, not treated as a failure.
-- **redact** (Task 4.1, built) — layered detection (in-process ONNX NER dual-pass +
-  regex variants + config deny-list), stable per-call tokens (`[NAME_1]`) vaulted in
-  `token_vault`, findings with per-call value hashes, a reason-based risk score, and
-  an independent residual scan over the output. Every NER candidate is redacted
-  regardless of confidence. A residual hit holds `residual_pii_detected`; a forced
-  reason or `score >= REDACTION_RISK_THRESHOLD` holds `redaction_failed` — never
-  sent. A held call keeps its clean row only when every risk reason is
-  safe-after-redaction; the corpus recall / no-egress / adversarial gates run in CI
-  against the real model (`REDACTION_RECALL_REGRESSION` on regression).
+- **redact** (Task 4.1, built; precision-scoped by ADR 0006) — layered detection
+  (in-process ONNX NER dual-pass + regex variants + config deny-list), stable
+  per-call tokens (`[NAME_1]`) vaulted in `token_vault`, findings with per-call
+  value hashes, a reason-based risk score, and an independent residual scan over
+  the output. NER redacts by entity-scope policy (`REDACTION_NER_ENTITY_SCOPE`,
+  default person + numbered locations — bare cities/orgs/misc are NOT redacted);
+  spans below `REDACTION_NER_MIN_SCORE` are dropped and raise `ner_low_confidence`
+  (unsafe surface); title-case-pass detections count only for PERSON. A residual
+  hit holds `residual_pii_detected`; a forced reason or
+  `score >= REDACTION_RISK_THRESHOLD` holds `redaction_failed` — never sent. A held
+  call keeps its clean row only when every risk reason is safe-after-redaction; the
+  corpus recall / no-egress / adversarial / precision gates run in CI against the
+  real model (`REDACTION_RECALL_REGRESSION` on regression).
 - **classify** (Haiku) — sorts into customer, non-customer, spam, or held. Held and
   spam are set aside, never silently dropped.
 - **extract** (Sonnet) — returns a structured record against a fixed schema. A

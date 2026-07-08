@@ -30,6 +30,12 @@ dual-pass (original + title-cased copy, identical length so offsets map 1:1)
 
 ### 2. Every NER candidate span is redacted, regardless of confidence
 
+> **Superseded by ADR 0006** (2026-07-07): on real staging calls this held 100%
+> of traffic via over-redaction. NER redaction is now scoped by
+> `REDACTION_NER_ENTITY_SCOPE` (default person + numbered locations) and
+> sub-`REDACTION_NER_MIN_SCORE` candidates are dropped, raising
+> `ner_low_confidence` (now `unsafe_uncertain_surface`).
+
 `REDACTION_NER_MIN_SCORE` is a risk signal (`ner_low_confidence`), never a drop
 threshold. Over-redaction costs a placeholder token; a dropped suspected name is
 a privacy-boundary leak. The only unredacted NER outcome is a failed offset
