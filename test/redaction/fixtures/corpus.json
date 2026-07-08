@@ -1,5 +1,5 @@
 {
-  "description": "Labeled synthetic PII corpus for the Task 4.1 recall gate. Every case is invented call-transcript-like text; entities list the PII values that must be redacted OR the call held. No real customer data.",
+  "description": "Labeled synthetic PII corpus for the Task 4.1 recall gate. Every case is invented call-transcript-like text; entities list the PII values that must be redacted OR the call held. No real customer data. Bare-location and bare-organization cases moved to precision.json under the ADR 0006 entity-type policy (they are asserted NOT redacted there); org cases here survive only as deny-list entities.",
   "denyTerms": ["Acme Plumbing", "Golden State HVAC"],
   "cases": [
     {
@@ -73,60 +73,14 @@
       "entities": [{ "type": "name", "value": "Bob Kowalski" }]
     },
     {
-      "id": "loc-01",
-      "text": "I am calling from Sacramento about the estimate you emailed over, we would like to move forward with the second option.",
-      "entities": [{ "type": "location", "value": "Sacramento" }]
-    },
-    {
-      "id": "loc-02",
-      "text": "The property is in Elk Grove near the big shopping center, the gate code is the same one we gave you last time.",
-      "entities": [{ "type": "location", "value": "Elk Grove" }]
-    },
-    {
-      "id": "loc-03",
-      "text": "We just moved to Citrus Heights from Stockton and need someone to look at the ducting in the new place before summer.",
-      "entities": [
-        { "type": "location", "value": "Citrus Heights" },
-        { "type": "location", "value": "Stockton" }
-      ]
-    },
-    {
-      "id": "loc-04",
-      "text": "The office building in Roseville has three units on the roof, two of them are fine but the third one trips the breaker.",
-      "entities": [{ "type": "location", "value": "Roseville" }]
-    },
-    {
       "id": "org-01",
       "text": "I got your number from Acme Plumbing over on the west side, they said you handle the bigger commercial jobs now.",
       "entities": [{ "type": "deny_list", "value": "Acme Plumbing" }]
     },
     {
-      "id": "org-02",
-      "text": "We used Home Depot for the parts before, but Bob's Heating and Air quoted us a better price on the full install.",
-      "entities": [
-        { "type": "organization", "value": "Home Depot" },
-        { "type": "organization", "value": "Bob's Heating and Air" }
-      ]
-    },
-    {
       "id": "org-03",
       "text": "Golden State HVAC did the original install about six years ago, the paperwork should have the model number on it.",
       "entities": [{ "type": "deny_list", "value": "Golden State HVAC" }]
-    },
-    {
-      "id": "org-04",
-      "text": "We are with Sunrise Senior Living, the facility over in the north end, and we need the boiler inspected this quarter.",
-      "entities": [{ "type": "organization", "value": "Sunrise Senior Living" }]
-    },
-    {
-      "id": "org-05",
-      "text": "The office is right next to Raley's, you cannot miss it, park around the back where the loading dock is and ring the bell.",
-      "entities": [{ "type": "organization", "value": "Raley's" }]
-    },
-    {
-      "id": "org-06",
-      "text": "Elite Roofing LLC subcontracts their sheet metal work to us, they asked me to coordinate the crane schedule with you.",
-      "entities": [{ "type": "organization", "value": "Elite Roofing LLC" }]
     },
     {
       "id": "phone-01",

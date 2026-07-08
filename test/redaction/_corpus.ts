@@ -34,6 +34,11 @@ export interface CorpusCase {
   entities: CorpusEntity[];
   /** The case is expected to hold (e.g. spelled-out digits caught by residual). */
   expectHold?: boolean;
+  /** Precision corpus (ADR 0006): non-PII values that must SURVIVE redaction. */
+  survivingValues?: string[];
+  /** Precision corpus: values where a person-shaped fragment may legitimately be
+   * redacted inside a business name ("Bob's Heating and Air") — not-held only. */
+  acceptOverRedaction?: string[];
 }
 
 export interface Corpus {

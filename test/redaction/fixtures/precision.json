@@ -1,0 +1,74 @@
+{
+  "description": "Labeled synthetic PRECISION corpus for the ADR 0006 gate — the mirror of corpus.json. Every case is invented trade-call text whose listed values are NOT PII under the signed-off entity-type policy (bare cities, business names, rooms, fixtures) and must SURVIVE redaction un-redacted, with the call NOT held. The loc-*/org-* cases moved here from corpus.json when the recall gate stopped asserting bare LOC/ORG as PII.",
+  "denyTerms": [],
+  "cases": [
+    {
+      "id": "loc-01",
+      "text": "I am calling from Sacramento about the estimate you emailed over, we would like to move forward with the second option.",
+      "entities": [],
+      "survivingValues": ["Sacramento"]
+    },
+    {
+      "id": "loc-02",
+      "text": "The property is in Elk Grove near the big shopping center, and the side entrance is the same one we showed you last time.",
+      "entities": [],
+      "survivingValues": ["Elk Grove", "property"]
+    },
+    {
+      "id": "loc-03",
+      "text": "We just moved to Citrus Heights from Stockton and need someone to look at the ducting in the new place before summer.",
+      "entities": [],
+      "survivingValues": ["Citrus Heights", "Stockton"]
+    },
+    {
+      "id": "loc-04",
+      "text": "The office building in Roseville has three units on the roof, two of them are fine but the third one trips the breaker.",
+      "entities": [],
+      "survivingValues": ["Roseville", "office"]
+    },
+    {
+      "id": "org-02",
+      "text": "We used Home Depot for the parts before, but Bob's Heating and Air quoted us a better price on the full install.",
+      "entities": [],
+      "survivingValues": ["Home Depot"],
+      "acceptOverRedaction": ["Bob's Heating and Air"]
+    },
+    {
+      "id": "org-04",
+      "text": "We are with Sunrise Senior Living, the facility over in the north end, and we need the boiler inspected this quarter.",
+      "entities": [],
+      "survivingValues": ["Sunrise Senior Living"]
+    },
+    {
+      "id": "org-05",
+      "text": "The office is right next to Raley's, you cannot miss it, park around the back where the loading dock is and ring the bell.",
+      "entities": [],
+      "survivingValues": ["office"],
+      "acceptOverRedaction": ["Raley's"]
+    },
+    {
+      "id": "org-06",
+      "text": "Elite Roofing LLC subcontracts their sheet metal work to us, they asked me to coordinate the crane schedule with you.",
+      "entities": [],
+      "survivingValues": ["Elite Roofing LLC"]
+    },
+    {
+      "id": "trade-01",
+      "text": "The bathroom sink is leaking and the kitchen faucet drips near the pool gate, please send someone out to the house this week.",
+      "entities": [],
+      "survivingValues": ["bathroom", "kitchen", "pool", "gate", "house"]
+    },
+    {
+      "id": "trade-02",
+      "text": "Our office out in Texas has the AC system acting up again, and the water heater in the utility room needs a look while you are there.",
+      "entities": [],
+      "survivingValues": ["office", "Texas", "AC system", "water heater", "room"]
+    },
+    {
+      "id": "trade-03",
+      "text": "The oval window by the fire pit lets the draft in, the gas line to the property is fine but the panel by the side gate keeps tripping.",
+      "entities": [],
+      "survivingValues": ["oval window", "fire pit", "line", "property", "gate"]
+    }
+  ]
+}
