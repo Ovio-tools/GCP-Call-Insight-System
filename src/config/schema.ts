@@ -152,14 +152,14 @@ export const configObjectSchema = z.object({
   /** Secret name holding the wrapped-DEK document. */
   CRYPTO_WRAPPED_DEK_SECRET_NAME: z.string().min(1).default('CRYPTO_WRAPPED_DEK_MATERIAL'),
   /** KEK document value (JSON), injected at boot on services. Consumer validates presence. */
-  CRYPTO_KEK_MATERIAL: z.string().optional(),
+  CRYPTO_KEK_MATERIAL: z.string().min(1).optional(),
   /** Wrapped-DEK document value (JSON), injected at boot on services. */
-  CRYPTO_WRAPPED_DEK_MATERIAL: z.string().optional(),
+  CRYPTO_WRAPPED_DEK_MATERIAL: z.string().min(1).optional(),
   /** Railway API token — CLIs only, to read/write the two secrets and trigger a redeploy. */
-  RAILWAY_API_TOKEN: z.string().optional(),
+  RAILWAY_API_TOKEN: z.string().min(1).optional(),
   /** Railway environment + service the CLIs mutate secrets on. CLIs validate presence. */
-  RAILWAY_ENVIRONMENT_ID: z.string().optional(),
-  RAILWAY_SERVICE_ID: z.string().optional(),
+  RAILWAY_ENVIRONMENT_ID: z.string().min(1).optional(),
+  RAILWAY_SERVICE_ID: z.string().min(1).optional(),
 
   /** BullMQ queue name for the per-call pipeline (Task 2.1). */
   WORKER_QUEUE_NAME: z.string().min(1).default('call-pipeline'),
