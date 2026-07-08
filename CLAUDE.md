@@ -8,6 +8,18 @@ file, so it shapes every plan and every task. The authoritative source is the bu
 plan (`gcp-call-insight-execution-plan-v8.md`, §2 and §3); this is its working
 summary.
 
+## 0. Communicating with the user
+
+Always communicate with the user in simple, easy-to-understand, non-technical
+terms. Explain what you did and why in plain language, as if talking to someone
+without an engineering background. When a technical term is unavoidable (a
+migration, an environment variable, a pull request), briefly say what it means in
+everyday words. Prefer short sentences and concrete outcomes ("customer names are
+now hidden before anything leaves the system") over jargon ("NER entity-scope
+gating at the redaction boundary"). This applies to all summaries, explanations,
+questions, and plan descriptions — code, commit messages, and technical docs keep
+their normal engineering style.
+
 Several conventions reference modules not yet built (Task 2.3 hardening/auth
 middleware, Task 8.2 crypto/restore procedures). When you implement those, wire them
 in here rather than rolling your own. The §6.1 held-call retention POLICY + review-queue
