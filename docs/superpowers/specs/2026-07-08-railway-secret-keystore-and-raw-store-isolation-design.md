@@ -193,6 +193,30 @@ caution: if anything is uncertain, it does not delete and simply tries again nex
 This actually makes the raw clean-up **simpler** than before, because raw data is now the
 short-lived "leaf" that nothing else depends on.
 
+### Keeping the "never bring deleted data back" guarantee (finality marker)
+
+Today the system has a strict promise: once a call's original data is permanently deleted,
+the scrubbing step can **never** accidentally re-create it. That promise is currently
+enforced by doing the delete and recording "this call is permanently gone" **together, in
+one all-or-nothing step**, in the same database. Splitting raw data into DB-B would break
+that, because the "permanently gone" record lives with the review information in DB-A and
+you cannot do a single all-or-nothing step across two separate databases.
+
+To keep the promise intact, we move the small **"permanently gone" marker into DB-B**,
+right next to the data it protects (a tiny `raw_purge_tombstone` record keyed by call).
+Then:
+
+- When the deletion job removes a call's raw data, it also writes that call's "gone"
+  marker **in the same DB-B step** — all-or-nothing again.
+- The scrubbing step checks that **DB-B** marker before it writes; if the call is marked
+  gone, it refuses — same database, so the check is exact and race-free.
+- The equivalent stamp in DB-A (on the review record) is kept too, but only as a
+  best-effort audit copy for reporting — it is no longer what enforces the guarantee.
+
+The result: the strongest privacy guarantee (a deleted call can never be silently
+repopulated) is preserved exactly, and it now lives with the data it protects rather than
+across a database boundary.
+
 ### If the raw database is unavailable
 
 If DB-B cannot be reached, the system **fails safe**: a call that cannot have its raw
