@@ -12,13 +12,18 @@ const opts = { token: 't', environmentId: 'env-1', serviceId: 'svc-1' };
 
 describe('RailwayApiSecretBackend', () => {
   it('read returns the decoded variable value', async () => {
-    const fetchMock = fetchReturning({ data: { variables: { CRYPTO_KEK_MATERIAL: '{"active":{}}' } } });
+    const fetchMock = fetchReturning({
+      data: { variables: { CRYPTO_KEK_MATERIAL: '{"active":{}}' } },
+    });
     const backend = new RailwayApiSecretBackend({ ...opts, fetch: fetchMock });
     expect(await backend.read('CRYPTO_KEK_MATERIAL')).toBe('{"active":{}}');
     expect(fetchMock).toHaveBeenCalledOnce();
   });
   it('read returns undefined for an absent variable', async () => {
-    const backend = new RailwayApiSecretBackend({ ...opts, fetch: fetchReturning({ data: { variables: {} } }) });
+    const backend = new RailwayApiSecretBackend({
+      ...opts,
+      fetch: fetchReturning({ data: { variables: {} } }),
+    });
     expect(await backend.read('NOPE')).toBeUndefined();
   });
   it('write issues a variableUpsert mutation and never logs the value', async () => {
@@ -33,7 +38,10 @@ describe('RailwayApiSecretBackend', () => {
     expect(body.variables.value).toBe('{"active":{"kek-1":{"bytes":"x"}}}');
   });
   it('throws on a GraphQL error response', async () => {
-    const backend = new RailwayApiSecretBackend({ ...opts, fetch: fetchReturning({ errors: [{ message: 'nope' }] }) });
+    const backend = new RailwayApiSecretBackend({
+      ...opts,
+      fetch: fetchReturning({ errors: [{ message: 'nope' }] }),
+    });
     await expect(backend.read('X')).rejects.toThrow(/Railway API/);
   });
   it('write rethrows a GENERIC error that cannot contain the submitted value', async () => {

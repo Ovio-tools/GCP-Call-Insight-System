@@ -17,9 +17,10 @@ DEK files on disk, a two-state recovery-windowed destruction, and a launch gate 
 durable, access-controlled, replicated, or auditable the way a real KMS is, and its "deletion" is a
 file unlink rather than a KMS destroy with the vendor's own recovery/version-history semantics.
 
-`buildKeyProvider` refuses `keystore` in `production`; `CRYPTO_KEY_PROVIDER=kms` still throws; and
-`checkLaunchGate` fails in production for any provider other than a verified `kms`. Those guards are
-the tripwires that keep production blocked until this task flips them.
+`buildKeyProvider` refuses `keystore` in `production` and `CRYPTO_KEY_PROVIDER=kms` still throws;
+`checkLaunchGate` now passes in production on `railway` (ADR 0008) or a verified `kms`. Those guards
+no longer block production — they keep the dev/staging-only `keystore`/`local` providers out of
+production and gate the not-yet-implemented `kms` path this task would add.
 
 ## Scope / deliverables
 
@@ -36,8 +37,8 @@ the tripwires that keep production blocked until this task flips them.
   - who is authorized to destroy key material, and how destruction is audited by the vendor;
   - every DEK-caching service (worker, review surface) restarted after a revocation so no process
     holds a cached unwrapped DEK past the shred.
-- **Flip the launch gate**: production passes once a verified external KMS is configured, instead of
-  always failing.
+- **Extend the launch gate to `kms`**: production additionally passes with a verified external KMS
+  configured (it already passes on `railway` per ADR 0008).
 - **Full restore drill end-to-end** against a production-like backup + the real KMS (see
   `docs/restore-drill.md`), proving a pre-destruction backup cannot decrypt rows whose DEK material
   was later destroyed in the KMS.
@@ -61,8 +62,8 @@ the tripwires that keep production blocked until this task flips them.
   refused in production.
 - The decisive backup test passes against the real KMS: destroyed-version rows are unreadable in a
   restored backup once the KMS reports the material unrecoverable (past any recovery window).
-- The launch gate passes in production only with the verified KMS; it still fails on a stalled
-  destruction and on a still-recoverable destroyed version.
+- The launch gate passes in production with the verified KMS (alongside `railway`); it still fails
+  on a stalled destruction and on a still-recoverable destroyed version.
 - The deletion-semantics checklist is filled in with real, dated evidence from the KMS.
 
 ## Owner
