@@ -207,7 +207,11 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
   verbatim-gate mismatch gets ONE bounded re-attempt (one retry total per call)
   with content-free feedback (zod path+code / mismatch counts) before holding
   (ADR 0007 — per-attempt cost reservation, alert on final failure only, PII hits
-  never retried). A
+  never retried). The verbatim gate is snap-to-source (ADR 0008): after the retry,
+  an exact phrase is kept, a near-verbatim phrase is SNAPPED to the real source span
+  (word-LCS ≥ 0.7 — never the model's text), a fabrication is dropped, and the record
+  holds `schema_invalid` only if NOTHING verbatim remains; the second PII scan still
+  latches any non-exact PERSISTED phrase. A
   deterministic rule sets the urgency flag. Sentiment is internal only.
 - **second PII scan** — over the verbatim `customer_language` phrases. A hit holds
   the record rather than storing leaked text.

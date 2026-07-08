@@ -31,58 +31,87 @@ function baseRecord(overrides: Partial<ExtractionRecord> = {}): ExtractionRecord
 describe('verbatimGate', () => {
   const transcript = 'Caller: my water heater stopped making hot water this morning.';
 
-  it('passes an exact-match phrase', () => {
-    expect(verbatimGate(['stopped making hot water'], transcript)).toEqual({ ok: true });
+  it('keeps an exact-match phrase as-is (counts it exact)', () => {
+    expect(verbatimGate(['stopped making hot water'], transcript)).toEqual({
+      phrases: ['stopped making hot water'],
+      exactCount: 1,
+      snappedCount: 0,
+      droppedCount: 0,
+    });
   });
 
-  it('passes a case/whitespace-variant phrase', () => {
-    expect(verbatimGate(['STOPPED   MAKING  hot water'], transcript)).toEqual({ ok: true });
+  it('keeps a case/whitespace-variant phrase as-is', () => {
+    const r = verbatimGate(['STOPPED   MAKING  hot water'], transcript);
+    expect(r.phrases).toEqual(['STOPPED   MAKING  hot water']);
+    expect(r).toMatchObject({ exactCount: 1, snappedCount: 0, droppedCount: 0 });
   });
 
-  it('fails a fabricated phrase and reports counts only (no phrase text)', () => {
-    const result = verbatimGate(['this was never said'], transcript);
-    expect(result).toEqual({ ok: false, mismatchCount: 1, phraseCount: 1 });
+  it('drops a fully fabricated phrase and reports counts only (no phrase text)', () => {
+    const result = verbatimGate(['this was never said out loud here'], transcript);
+    expect(result.phrases).toEqual([]);
+    expect(result).toMatchObject({ exactCount: 0, snappedCount: 0, droppedCount: 1 });
     expect(JSON.stringify(result)).not.toContain('never said');
   });
 
-  it('passes an empty list', () => {
-    expect(verbatimGate([], transcript)).toEqual({ ok: true });
+  it('returns an empty all-exact result for an empty list', () => {
+    expect(verbatimGate([], transcript)).toEqual({
+      phrases: [],
+      exactCount: 0,
+      snappedCount: 0,
+      droppedCount: 0,
+    });
   });
 
-  // Issue #61: benign punctuation differences between the model's quote and the
-  // source are faithful and must PASS; only WORD differences may fail.
-  describe('punctuation tolerance (issue #61)', () => {
+  // Issue #63: a near-verbatim phrase (the model lightly reworded a real quote) is
+  // recovered by SNAPPING it back to the customer's real words — we store the source
+  // span, never the model's text. Only un-locatable (fabricated) phrases are dropped.
+  describe('snap-to-source (issue #63)', () => {
     const src = 'Caller: it stopped working, and now there is no hot water at all.';
 
-    // Source spells the apostrophe curly (typical ASR); the model quotes it straight.
-    const withApos = 'Also there’s no hot water right now.';
+    it('snaps a lightly-reworded phrase to the real source span, never the model text', () => {
+      // Model inserted "really"; the real quote is "no hot water".
+      const r = verbatimGate(['no really hot water'], src);
+      expect(r).toMatchObject({ exactCount: 0, snappedCount: 1, droppedCount: 0 });
+      expect(r.phrases).toEqual(['no hot water']);
+      expect(JSON.stringify(r)).not.toContain('really');
+    });
 
+    it('INVARIANT: every kept phrase is an exact substring of the redacted text', () => {
+      const r = verbatimGate(['no really hot water', 'it stopped now working'], src);
+      expect(r.phrases.length).toBeGreaterThan(0);
+      for (const p of r.phrases) expect(src).toContain(p);
+    });
+
+    it('drops a phrase whose words are too different from any source span (changed word)', () => {
+      const r = verbatimGate(['stopped leaking'], src);
+      expect(r).toMatchObject({ exactCount: 0, snappedCount: 0, droppedCount: 1 });
+      expect(r.phrases).toEqual([]);
+    });
+
+    it('drops a phrase that skips too much to align (dropped middle words)', () => {
+      const r = verbatimGate(['stopped now'], src);
+      expect(r).toMatchObject({ snappedCount: 0, droppedCount: 1 });
+    });
+
+    it('drops a fully fabricated phrase', () => {
+      const r = verbatimGate(['the furnace exploded overnight'], src);
+      expect(r).toMatchObject({ snappedCount: 0, droppedCount: 1 });
+      expect(r.phrases).toEqual([]);
+    });
+
+    // Issue #61 punctuation tolerance still holds — these remain EXACT (kept as-is,
+    // NOT snapped): benign punctuation/case/apostrophe/whitespace never fails.
+    const withApos = 'Also there’s no hot water right now.';
     it.each([
       ['dropped comma', 'stopped working and now'],
       ['added comma', 'no, hot water'],
       ['added trailing period', 'no hot water at all.'],
       ['hyphen vs space', 'hot-water'],
       ['straight vs curly apostrophe', "there's no hot water"],
-    ])('passes a phrase differing only by %s', (_label, phrase) => {
-      expect(verbatimGate([phrase], `${src} ${withApos}`)).toEqual({ ok: true });
-    });
-
-    it('still fails a changed word', () => {
-      expect(verbatimGate(['stopped leaking'], src)).toMatchObject({ ok: false });
-    });
-
-    it('still fails an added word that breaks the contiguous run', () => {
-      // Source says "no hot water"; an inserted "really" is not a faithful quote.
-      expect(verbatimGate(['no really hot water'], src)).toMatchObject({ ok: false });
-    });
-
-    it('still fails a dropped middle word that breaks the contiguous run', () => {
-      // "stopped now" skips "working, and" — not a contiguous quote.
-      expect(verbatimGate(['stopped now'], src)).toMatchObject({ ok: false });
-    });
-
-    it('still fails a fully fabricated phrase', () => {
-      expect(verbatimGate(['the furnace exploded'], src)).toMatchObject({ ok: false });
+    ])('keeps a phrase differing only by %s as an exact match', (_label, phrase) => {
+      const r = verbatimGate([phrase], `${src} ${withApos}`);
+      expect(r.phrases).toEqual([phrase]);
+      expect(r).toMatchObject({ exactCount: 1, snappedCount: 0, droppedCount: 0 });
     });
   });
 });
@@ -147,8 +176,9 @@ describe('scanPhrasesForResidual (residual PII)', () => {
     expect(scan.hit).toBe(true);
     if (scan.hit) expect(scan.counts.digit_run).toBeGreaterThan(0);
 
-    // Verbatim would also fail, but PII precedence means the scan's hit is decisive.
-    expect(verbatimGate([phrase], transcript).ok).toBe(false);
+    // Verbatim would also drop this (not exact), but PII precedence means the scan's
+    // hit is decisive — the handler consults the residual scan BEFORE the verbatim gate.
+    expect(verbatimGate([phrase], transcript).exactCount).toBe(0);
   });
 });
 

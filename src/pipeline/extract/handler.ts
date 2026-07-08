@@ -251,6 +251,11 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
     //     preserved). The loop exits by `break` (record accepted) or a hold `return`;
     //     with the retry consumed it cannot iterate a third time.
     let record!: ExtractionRecord;
+    // The verbatim-gate outcome carried out of the loop: the KEPT customer_language set
+    // (exact quotes + phrases snapped to real source spans) plus observability counts.
+    let customerLanguage: string[] = [];
+    let verbatimSnapped = 0;
+    let verbatimDropped = 0;
     for (;;) {
       // 10. Malformed route — on the FINAL attempt only (one actionable alert per failure
       //     path; a retried-then-valid response alerts nothing). A valid parse WITH usage
@@ -330,55 +335,71 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
         };
       }
 
-      // 12. Verbatim gate — every phrase must appear (light-normalized) in the redacted text.
-      //     A reconstructed/paraphrased phrase is output badness; it gets the one bounded
-      //     retry (ADR 0007, count-only feedback) if still available, else → schema_invalid.
-      //     Persist NOTHING.
+      // 12. Verbatim gate (issue #63) — keep exact quotes; SNAP a near-verbatim phrase to
+      //     the customer's real words (an exact source span, never the model text); DROP an
+      //     un-locatable (fabricated) phrase. A non-exact result gets the one bounded retry
+      //     (ADR 0007, count-only feedback) FIRST; once the retry is spent we proceed on the
+      //     recovered set, holding schema_invalid ONLY if nothing verbatim remains. Every kept
+      //     phrase is a substring of the already-scanned redacted text (step 11 ran on the
+      //     ORIGINAL phrases; the downstream second PII scan re-checks the persisted set), so
+      //     PII precedence is preserved. Persist only the recovered set.
       const vb = verbatimGate(record.customer_language, row.redacted_text);
-      if (vb.ok) break;
+      if (vb.snappedCount === 0 && vb.droppedCount === 0) {
+        customerLanguage = vb.phrases;
+        break;
+      }
       if (!retryAttempted && !retrySkipped) {
         const performed = await tryRetry(
           buildExtractRetryUserMessage(row.redacted_text, 'verbatim_mismatch', [
-            `${String(vb.mismatchCount)} of ${String(vb.phraseCount)} customer_language phrases are not exact quotes`,
+            `${String(vb.snappedCount + vb.droppedCount)} of ${String(record.customer_language.length)} customer_language phrases are not exact quotes`,
           ]),
         );
         if (performed) continue;
       }
-      await recordStageAlert(
-        pool,
-        callId,
-        stage,
-        config,
-        'MODEL_MALFORMED_RESPONSE',
-        'continuing',
-        {
-          gate: 'verbatim_mismatch',
-          mismatch_count: vb.mismatchCount,
-          phrase_count: vb.phraseCount,
-          ...(retryAttempted ? { retry_attempted: true } : {}),
-          ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
-        },
-      );
-      logger.info(
-        { stage, gate: 'verbatim_mismatch', mismatch_count: vb.mismatchCount },
-        'extract customer_language failed the verbatim gate — holding schema_invalid',
-      );
-      return {
-        action: 'hold',
-        reason: 'schema_invalid',
-        errorCode: 'MODEL_MALFORMED_RESPONSE',
-        detail: {
-          gate: 'verbatim_mismatch',
-          mismatch_count: vb.mismatchCount,
-          phrase_count: vb.phraseCount,
-          ...(retryAttempted ? { retry_attempted: true } : {}),
-          ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
-        },
-      };
+      // Retry spent or skipped. Proceed on the recovered phrases; hold only when EVERY
+      // phrase was un-locatable (genuinely untrustworthy output).
+      if (vb.phrases.length === 0) {
+        await recordStageAlert(
+          pool,
+          callId,
+          stage,
+          config,
+          'MODEL_MALFORMED_RESPONSE',
+          'continuing',
+          {
+            gate: 'verbatim_mismatch',
+            dropped_count: vb.droppedCount,
+            phrase_count: record.customer_language.length,
+            ...(retryAttempted ? { retry_attempted: true } : {}),
+            ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
+          },
+        );
+        logger.info(
+          { stage, gate: 'verbatim_mismatch', dropped_count: vb.droppedCount },
+          'extract customer_language had no verbatim phrases — holding schema_invalid',
+        );
+        return {
+          action: 'hold',
+          reason: 'schema_invalid',
+          errorCode: 'MODEL_MALFORMED_RESPONSE',
+          detail: {
+            gate: 'verbatim_mismatch',
+            dropped_count: vb.droppedCount,
+            phrase_count: record.customer_language.length,
+            ...(retryAttempted ? { retry_attempted: true } : {}),
+            ...(retrySkipped ? { retry_skipped: retrySkipped } : {}),
+          },
+        };
+      }
+      customerLanguage = vb.phrases;
+      verbatimSnapped = vb.snappedCount;
+      verbatimDropped = vb.droppedCount;
+      break;
     }
 
     // 13. Token gate — drop any phrase carrying a redaction token; keep the rest. COUNTS ONLY.
-    const gated = tokenGate(record.customer_language);
+    //     Runs on the verbatim-recovered set (exact + snapped source spans).
+    const gated = tokenGate(customerLanguage);
 
     // 14. Deterministic emergency rule (urgency + hold + constant trigger ids).
     const decision = emergencyRule(record, row.redacted_text);
@@ -426,6 +447,8 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
         stage,
         phrase_count: gated.phrases.length,
         tokened_phrases_dropped: gated.droppedCount,
+        ...(verbatimSnapped ? { customer_language_snapped: verbatimSnapped } : {}),
+        ...(verbatimDropped ? { customer_language_dropped: verbatimDropped } : {}),
         urgency: decision.urgency,
       },
       'extract completed — advancing',
@@ -435,6 +458,8 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
       detail: {
         phrase_count: gated.phrases.length,
         tokened_phrases_dropped: gated.droppedCount,
+        ...(verbatimSnapped ? { customer_language_snapped: verbatimSnapped } : {}),
+        ...(verbatimDropped ? { customer_language_dropped: verbatimDropped } : {}),
         urgency: decision.urgency,
       },
     };
