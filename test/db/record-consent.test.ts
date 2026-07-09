@@ -34,6 +34,7 @@ describe.skipIf(!hasTestDb)('record-consent CLI (runRecordConsent)', () => {
     });
     expect(res.inserted).toBe(true);
     expect(res.alreadyRecorded).toBe(false);
+    expect(res.recordedAt).toBeInstanceOf(Date);
     const rows = await listByType(pool, 'dialpad_recording_consent');
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ recorded_by: 'Jane Doe', evidence_ref: 'email 2026-06-30' });

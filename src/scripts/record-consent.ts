@@ -60,6 +60,8 @@ export function parseRecordConsentArgs(argv: readonly string[]): RecordConsentAr
 export interface RecordConsentResult {
   inserted: boolean;
   alreadyRecorded: boolean;
+  /** When a new row was written (inserted === true), its recorded_at timestamp. */
+  recordedAt?: Date;
   existingRecordedBy?: string;
   existingRecordedAt?: Date;
   /** Required §0.2 processing gates not yet recorded (ServiceTitan consent excluded). */
@@ -78,6 +80,7 @@ export async function runRecordConsent(
 
   let inserted = false;
   let alreadyRecorded = false;
+  let recordedAt: Date | undefined;
   let existingRecordedBy: string | undefined;
   let existingRecordedAt: Date | undefined;
 
@@ -86,18 +89,20 @@ export async function runRecordConsent(
     existingRecordedBy = first.recorded_by;
     existingRecordedAt = first.recorded_at;
   } else {
-    await recordConsent(pool, {
+    const row = await recordConsent(pool, {
       gateType: input.gateType,
       recordedBy: input.recordedBy,
       evidenceRef: input.note,
     });
     inserted = true;
+    recordedAt = row.recorded_at;
   }
 
   const { missing } = await checkProcessingGates(pool, { requireServiceTitanMatching: false });
   return {
     inserted,
     alreadyRecorded,
+    ...(recordedAt !== undefined ? { recordedAt } : {}),
     ...(existingRecordedBy !== undefined ? { existingRecordedBy } : {}),
     ...(existingRecordedAt !== undefined ? { existingRecordedAt } : {}),
     missingProcessingGates: missing,
@@ -132,7 +137,8 @@ export async function main(): Promise<void> {
       process.stdout.write(
         `Recorded consent gate: ${args.gateType}\n` +
           `  recorded by: ${args.recordedBy}\n` +
-          `  evidence:    ${args.note}\n`,
+          `  evidence:    ${args.note}\n` +
+          `  recorded at: ${result.recordedAt?.toISOString() ?? 'unknown'}\n`,
       );
     }
     if (result.missingProcessingGates.length === 0) {
