@@ -227,7 +227,7 @@ describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
     }
   });
 
-  it('key_admin_role can INSERT key_versions + events (DB-A) and has ZERO raw/vault footprint (DB-B)', async () => {
+  it('key_admin_role can INSERT key_versions + events but has no raw/vault grants (DB-A)', async () => {
     // INSERT a rotating key_version via key_admin_role (column-scoped grant) on DB-A.
     await keyAdmin.query(
       `INSERT INTO key_versions (key_version, status, wrapped_dek_ref, kek_version)
@@ -241,16 +241,22 @@ describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
     await expect(
       keyAdmin.query(`UPDATE key_versions SET status = 'retired' WHERE key_version = 9401`),
     ).resolves.toBeDefined();
-    // The key-administrator role can NEVER reach raw/vault. Structural, post-split (ADR 0008 Move 2):
-    // key_admin_role is a DB-A-only role (created by migration 017; migrations-raw never creates it)
-    // and raw_transcripts + token_vault live ONLY in DB-B (asserted absent from DB-A by
-    // backup-isolation-guard.test.ts). DB-B never grants key_admin_role anything, so it has ZERO
-    // ACL entries on the raw store's tables. Asserted via the table ACLs (aclexplode) rather than
-    // `pg_roles`, because roles are cluster-global shared catalog — on a shared local cluster
-    // key_admin_role is visible from DB-B, so a role-existence check is topology-dependent; an
-    // ACL-grant count is 0 in BOTH the shared-local and separate-CI-cluster topologies.
-    if (rawOwner) {
-      const grants = await rawOwner.query<{ n: number }>(
+    await owner.query(`DELETE FROM key_lifecycle_events WHERE actor = 'key-admin'`);
+    await owner.query(`DELETE FROM key_versions WHERE key_version = 9401`);
+  });
+
+  it.skipIf(!hasRawTestDb)(
+    'key_admin_role has ZERO raw/vault footprint in the raw store (DB-B)',
+    async () => {
+      // The key-administrator role can NEVER reach raw/vault. Structural, post-split (ADR 0008 Move
+      // 2): key_admin_role is a DB-A-only role (created by migration 017; migrations-raw never
+      // creates it) and raw_transcripts + token_vault live ONLY in DB-B (asserted absent from DB-A
+      // by backup-isolation-guard.test.ts). DB-B never grants key_admin_role anything, so it has
+      // ZERO ACL entries on the raw store's tables. Asserted via the table ACLs (aclexplode) rather
+      // than `pg_roles`, because roles are cluster-global shared catalog — on a shared local cluster
+      // key_admin_role is visible from DB-B, so a role-existence check is topology-dependent; an
+      // ACL-grant count is 0 in BOTH the shared-local and separate-CI-cluster topologies.
+      const grants = await rawOwner!.query<{ n: number }>(
         `SELECT count(*)::int AS n
            FROM pg_class c
            CROSS JOIN LATERAL aclexplode(c.relacl) a
@@ -260,10 +266,8 @@ describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
             AND r.rolname = 'key_admin_role'`,
       );
       expect(grants.rows[0]?.n).toBe(0);
-    }
-    await owner.query(`DELETE FROM key_lifecycle_events WHERE actor = 'key-admin'`);
-    await owner.query(`DELETE FROM key_versions WHERE key_version = 9401`);
-  });
+    },
+  );
 
   it('down removes the 016 objects; up restores them (round-trip)', async () => {
     const snap = await snapshotKeyVersions();

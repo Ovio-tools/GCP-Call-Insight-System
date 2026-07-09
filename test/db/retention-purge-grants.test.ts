@@ -86,16 +86,16 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
   });
 
   it('purge_role cannot SELECT a content/ciphertext column it may only scrub', async () => {
-    expect(await runAs(pool, 'purge_role', 'SELECT redacted_text FROM clean_transcripts LIMIT 1')).toBe(
-      PERMISSION_DENIED,
-    );
+    expect(
+      await runAs(pool, 'purge_role', 'SELECT redacted_text FROM clean_transcripts LIMIT 1'),
+    ).toBe(PERMISSION_DENIED);
     expect(await runAs(pool, 'purge_role', 'SELECT payload FROM raw_webhook_events LIMIT 1')).toBe(
       PERMISSION_DENIED,
     );
     if (rawPool) {
-      expect(await runAs(rawPool, 'purge_role', 'SELECT ciphertext FROM raw_transcripts LIMIT 1')).toBe(
-        PERMISSION_DENIED,
-      );
+      expect(
+        await runAs(rawPool, 'purge_role', 'SELECT ciphertext FROM raw_transcripts LIMIT 1'),
+      ).toBe(PERMISSION_DENIED);
       expect(await runAs(rawPool, 'purge_role', 'SELECT ciphertext FROM token_vault LIMIT 1')).toBe(
         PERMISSION_DENIED,
       );
@@ -131,10 +131,13 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
     }
   });
 
-  it('purge_role cannot reset retention_eligible_at', async () => {
-    if (!rawPool) return;
+  it.skipIf(!hasRawTestDb)('purge_role cannot reset retention_eligible_at', async () => {
     expect(
-      await runAs(rawPool, 'purge_role', `UPDATE raw_transcripts SET retention_eligible_at = now()`),
+      await runAs(
+        rawPool!,
+        'purge_role',
+        `UPDATE raw_transcripts SET retention_eligible_at = now()`,
+      ),
     ).toBe(PERMISSION_DENIED);
   });
 
@@ -150,21 +153,24 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
     }
     // DELETE is denied on every DB-A purgeable store (stamp-and-scrub, never physical delete).
     for (const table of PURGEABLE_DB_A) {
-      expect(await runAs(pool, 'purge_role', `DELETE FROM ${table}`), `DELETE ${table} denied`).toBe(
-        PERMISSION_DENIED,
-      );
+      expect(
+        await runAs(pool, 'purge_role', `DELETE FROM ${table}`),
+        `DELETE ${table} denied`,
+      ).toBe(PERMISSION_DENIED);
     }
   });
 
-  it('app_role has no token_vault access; restricted_role does (DB-B boundary)', async () => {
-    if (!rawPool) return;
-    expect(await runAs(rawPool, 'app_role', `SELECT ciphertext FROM token_vault LIMIT 1`)).toBe(
-      PERMISSION_DENIED,
-    );
-    expect(
-      await runAs(rawPool, 'restricted_role', `SELECT ciphertext FROM token_vault LIMIT 1`),
-    ).toBeUndefined();
-  });
+  it.skipIf(!hasRawTestDb)(
+    'app_role has no token_vault access; restricted_role does (DB-B boundary)',
+    async () => {
+      expect(await runAs(rawPool!, 'app_role', `SELECT ciphertext FROM token_vault LIMIT 1`)).toBe(
+        PERMISSION_DENIED,
+      );
+      expect(
+        await runAs(rawPool!, 'restricted_role', `SELECT ciphertext FROM token_vault LIMIT 1`),
+      ).toBeUndefined();
+    },
+  );
 
   it('purge_role cannot INSERT into any purgeable table', async () => {
     expect(
@@ -208,7 +214,11 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
 
   it('restricted_role can read the two non-sensitive review_queue columns (putToken guard)', async () => {
     expect(
-      await runAs(pool, 'restricted_role', `SELECT call_id, raw_purged_at FROM review_queue LIMIT 1`),
+      await runAs(
+        pool,
+        'restricted_role',
+        `SELECT call_id, raw_purged_at FROM review_queue LIMIT 1`,
+      ),
     ).toBeUndefined();
   });
 
@@ -229,6 +239,8 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
     expect(await runAs(pool, 'purge_role', `DELETE FROM clean_transcripts`)).toBeUndefined();
     // up: 013..019 + the drop re-applied — the column-scoped DELETE revoke is back.
     await migrate('up');
-    expect(await runAs(pool, 'purge_role', `DELETE FROM clean_transcripts`)).toBe(PERMISSION_DENIED);
+    expect(await runAs(pool, 'purge_role', `DELETE FROM clean_transcripts`)).toBe(
+      PERMISSION_DENIED,
+    );
   });
 });
