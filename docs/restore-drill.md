@@ -3,13 +3,17 @@
 A tested procedure to restore a Postgres backup into an isolated environment, verify integrity, and
 confirm the **decisive crypto-shred property**: rows whose external key material was destroyed are
 unreadable after restore, even though the restore is otherwise intact. **Scope: staging + the
-reference `LocalFileKeyStore`. The full production drill against a real KMS is Task 8.2b.**
+reference `LocalFileKeyStore`, and the production Railway-secret key store (ADR 0008). The full
+production drill against a dedicated external KMS remains Task 8.2b.**
 
-## The §6.1 launch gate (production-blocked pending 8.2b)
+## The §6.1 launch gate
 
-The restore drill is a §6.1 launch gate for live processing. It **cannot pass for production** while
-`CRYPTO_KEY_PROVIDER=kms` is unimplemented — `checkLaunchGate` fails in production for any non-`kms`
-provider, and `docs/backup-retention.md`'s provider table must be filled with real, dated evidence.
+The restore drill is a §6.1 launch gate for live processing. As of ADR 0008 production runs on the
+Railway-secret key store (`CRYPTO_KEY_PROVIDER=railway`): `checkLaunchGate` **passes** in production
+on `railway` (or a verified `kms`) and still **fails** on the dev/staging-only `keystore`/`local`
+providers, on a still-recoverable destroyed version, and on a stalled destruction. It no longer
+blocks production pending Task 8.2b. `docs/backup-retention.md`'s provider table must still be filled
+with real, dated evidence for whichever store production uses.
 
 ## Automated proof (runs in CI/local against an isolated scratch DB)
 
