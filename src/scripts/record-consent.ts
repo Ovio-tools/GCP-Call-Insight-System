@@ -10,7 +10,11 @@
  *   npm run record-consent -- --gate dialpad_recording_consent --by "Jane Doe" \
  *     --note "Eric confirmed recordings in writing, email 2026-06-30"
  */
+import { pathToFileURL } from 'node:url';
 import type { Pool } from 'pg';
+import { loadConfig } from '../config/index.js';
+import { createBootLogger } from '../boot/logger.js';
+import { createAppPool } from '../db/index.js';
 import { listByType, recordConsent } from '../db/repositories/consent-gates-repo.js';
 import {
   checkProcessingGates,
@@ -98,4 +102,51 @@ export async function runRecordConsent(
     ...(existingRecordedAt !== undefined ? { existingRecordedAt } : {}),
     missingProcessingGates: missing,
   };
+}
+
+export async function main(): Promise<void> {
+  const config = loadConfig();
+  const logger = createBootLogger({ level: config.LOG_LEVEL, name: 'record-consent' });
+  if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+
+  const args = parseRecordConsentArgs(process.argv.slice(2));
+  const pool = createAppPool(config.DATABASE_URL);
+  try {
+    const result = await runRecordConsent(pool, args);
+    if (result.alreadyRecorded) {
+      logger.info({ gateType: args.gateType }, 'consent gate already recorded — no new row written');
+      process.stdout.write(
+        `Already recorded: ${args.gateType}\n` +
+          `  first recorded by ${result.existingRecordedBy ?? 'unknown'} at ` +
+          `${result.existingRecordedAt?.toISOString() ?? 'unknown'}\n` +
+          `  (use --force to record an additional row)\n`,
+      );
+    } else {
+      logger.info({ gateType: args.gateType, recordedBy: args.recordedBy }, 'consent gate recorded');
+      process.stdout.write(
+        `Recorded consent gate: ${args.gateType}\n` +
+          `  recorded by: ${args.recordedBy}\n` +
+          `  evidence:    ${args.note}\n`,
+      );
+    }
+    if (result.missingProcessingGates.length === 0) {
+      process.stdout.write(`\nAll five §0.2 processing consent gates are now recorded.\n`);
+    } else {
+      process.stdout.write(
+        `\nStill missing ${result.missingProcessingGates.length} required processing gate(s):\n` +
+          result.missingProcessingGates.map((g) => `  - ${g}`).join('\n') +
+          '\n',
+      );
+    }
+  } finally {
+    await pool.end();
+  }
+}
+
+// Run only when invoked as the entrypoint, never when imported by a test.
+if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((err: unknown) => {
+    process.stderr.write(`record-consent failed: ${String(err)}\n`);
+    process.exit(1);
+  });
 }
