@@ -9,14 +9,23 @@ import { insertWebhookEvent } from '../../src/db/repositories/raw-webhook-events
 import { markTranscriptRetentionEligible } from '../../src/db/repositories/raw-transcripts-repo.js';
 import { enqueueReview } from '../../src/db/repositories/review-queue-repo.js';
 import { hasBlockingReviewForCleanTranscript } from '../../src/db/repositories/review-queue-repo.js';
-import { hasTestDb, makePool, migrate } from './_pg.js';
-import { cleanupCalls, makeAppPool, seedKeyVersion } from './_dal.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from './_pg.js';
+import {
+  cleanupCalls,
+  cleanupRawCalls,
+  makeAppPool,
+  makeRawAppPool,
+  seedKeyVersion,
+} from './_dal.js';
 
 const PATTERN = 'test-elig-%';
 
 describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 8.1)', () => {
   let owner!: Pool;
   let app!: Pool;
+  // raw_transcripts lives in DB-B (ADR 0008 Move 2). clean/findings/webhook/match_keys stay DB-A.
+  let rawOwner: Pool | undefined;
+  let rawApp: Pool | undefined;
 
   async function ensureCall(callId: string): Promise<void> {
     await owner.query(
@@ -48,13 +57,21 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
     owner = makePool();
     app = makeAppPool();
     await seedKeyVersion(owner);
+    if (hasRawTestDb) {
+      await migrateRaw('up');
+      rawOwner = makeRawPool();
+      rawApp = makeRawAppPool();
+    }
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    if (rawOwner) await cleanupRawCalls(rawOwner, PATTERN);
   });
   afterAll(async () => {
     await owner.end();
     await app.end();
+    if (rawOwner) await rawOwner.end();
+    if (rawApp) await rawApp.end();
   });
 
   it('upsertCleanTranscript stamps retention_eligible_at at creation', async () => {
@@ -112,25 +129,28 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
     await owner.query(`DELETE FROM raw_webhook_events WHERE id = $1`, [row.id]);
   });
 
-  it('mark-retention-eligible still stamps raw transcripts (raw/vault path unchanged)', async () => {
-    await ensureCall('test-elig-raw');
-    await owner.query(
-      `INSERT INTO raw_transcripts (call_id, ciphertext, key_version) VALUES ($1, $2, 1)`,
-      ['test-elig-raw', Buffer.from([1])],
-    );
-    // Not stamped at insert (raw eligibility is post-store).
-    const before = await owner.query<{ retention_eligible_at: Date | null }>(
-      `SELECT retention_eligible_at FROM raw_transcripts WHERE call_id = $1`,
-      ['test-elig-raw'],
-    );
-    expect(before.rows[0]?.retention_eligible_at).toBeNull();
-    await markTranscriptRetentionEligible(app, 'test-elig-raw');
-    const after = await owner.query<{ retention_eligible_at: Date | null }>(
-      `SELECT retention_eligible_at FROM raw_transcripts WHERE call_id = $1`,
-      ['test-elig-raw'],
-    );
-    expect(after.rows[0]?.retention_eligible_at).not.toBeNull();
-  });
+  it.skipIf(!hasRawTestDb)(
+    'mark-retention-eligible still stamps raw transcripts (raw/vault path unchanged)',
+    async () => {
+      // raw_transcripts now lives in DB-B, with no cross-DB FK to call_state.
+      await rawOwner!.query(
+        `INSERT INTO raw_transcripts (call_id, ciphertext, key_version) VALUES ($1, $2, 1)`,
+        ['test-elig-raw', Buffer.from([1])],
+      );
+      // Not stamped at insert (raw eligibility is post-store).
+      const before = await rawOwner!.query<{ retention_eligible_at: Date | null }>(
+        `SELECT retention_eligible_at FROM raw_transcripts WHERE call_id = $1`,
+        ['test-elig-raw'],
+      );
+      expect(before.rows[0]?.retention_eligible_at).toBeNull();
+      await markTranscriptRetentionEligible(rawApp!, 'test-elig-raw');
+      const after = await rawOwner!.query<{ retention_eligible_at: Date | null }>(
+        `SELECT retention_eligible_at FROM raw_transcripts WHERE call_id = $1`,
+        ['test-elig-raw'],
+      );
+      expect(after.rows[0]?.retention_eligible_at).not.toBeNull();
+    },
+  );
 
   it('a held call that never completes still has clean/findings stamped + blocked', async () => {
     await owner.query(
@@ -165,11 +185,17 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
     });
     await replaceFindings(app, 'test-elig-bf', [{ entityType: 'NAME', tokenRef: '[NAME_1]' }]);
     const wh = await insertWebhookEvent(app, { source: 'dialpad', signatureStatus: 'valid' });
-    await owner.query(
-      `INSERT INTO raw_transcripts (call_id, ciphertext, key_version) VALUES ($1, $2, 1)`,
-      ['test-elig-bf', Buffer.from([1])],
-    );
-    // Simulate pre-stamping rows: null out eligibility everywhere.
+    // raw_transcripts now lives in DB-B (ADR 0008 Move 2). Seed a NULL-stamped raw row there to
+    // prove the DB-A migration-013 backfill provably cannot reach it (raw is post-store eligibility
+    // only, and cross-DB now doubly guarantees the migration never stamps it).
+    if (rawOwner) {
+      await rawOwner.query(
+        `INSERT INTO raw_transcripts (call_id, ciphertext, key_version, retention_eligible_at)
+         VALUES ($1, $2, 1, NULL)`,
+        ['test-elig-bf', Buffer.from([1])],
+      );
+    }
+    // Simulate pre-stamping rows: null out eligibility everywhere (DB-A tables).
     await owner.query(
       `UPDATE clean_transcripts SET retention_eligible_at = NULL WHERE call_id = $1`,
       ['test-elig-bf'],
@@ -181,10 +207,6 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
     await owner.query(`UPDATE raw_webhook_events SET retention_eligible_at = NULL WHERE id = $1`, [
       wh.id,
     ]);
-    await owner.query(
-      `UPDATE raw_transcripts SET retention_eligible_at = NULL WHERE call_id = $1`,
-      ['test-elig-bf'],
-    );
     // A pre-existing match_keys row with no eligibility stamp (its writer predates the stamping
     // fix) — must be backfilled, else it would be immortal to the purge predicate.
     await owner.query(
@@ -194,11 +216,14 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
     );
 
     // Re-run migration 013 → its forward-only backfill stamps clean/findings/webhook/match_keys.
-    // down 7 rolls back 019 (kek_versions app read grant) + 018 (backfill run status, Task 11.2) +
-    // 017 (key lifecycle, Task 8.2) + 016 (labeled_examples, Task 6.3) + 015 (reprocess_requests) +
-    // 014 (reveal_raw enum) — all stacked above 013 — then 013 itself; the following `up` re-applies
-    // all seven, re-running 013's backfill.
-    await migrate('down', 7);
+    // down 8 rolls back 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) + 019
+    // (kek_versions app read grant) + 018 (backfill run status, Task 11.2) + 017 (key lifecycle,
+    // Task 8.2) + 016 (labeled_examples, Task 6.3) + 015 (reprocess_requests) + 014 (reveal_raw
+    // enum) — all stacked above 013 — then 013 itself; the following `up` re-applies all eight,
+    // re-running 013's backfill. (The drop migration's down() transiently recreates raw/vault in
+    // DB-A while rolled down, but 013's backfill never touches raw, and the drop re-applies on the
+    // way up, so DB-A ends with no raw_transcripts.)
+    await migrate('down', 8);
     await migrate('up');
 
     expect(await cleanEligibleAt('test-elig-bf')).not.toBeNull();
@@ -213,12 +238,15 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
       ['test-elig-bf'],
     );
     expect(mkAfter.rows[0]?.retention_eligible_at).not.toBeNull();
-    // Raw is intentionally NOT backfilled (post-store eligibility only).
-    const rawAfter = await owner.query<{ retention_eligible_at: Date | null }>(
-      `SELECT retention_eligible_at FROM raw_transcripts WHERE call_id = $1`,
-      ['test-elig-bf'],
-    );
-    expect(rawAfter.rows[0]?.retention_eligible_at).toBeNull();
+    // Raw is intentionally NOT backfilled (post-store eligibility only) — and it lives in DB-B,
+    // which the DB-A migration cannot reach at all. Assert its stamp is still NULL on DB-B.
+    if (rawOwner) {
+      const rawAfter = await rawOwner.query<{ retention_eligible_at: Date | null }>(
+        `SELECT retention_eligible_at FROM raw_transcripts WHERE call_id = $1`,
+        ['test-elig-bf'],
+      );
+      expect(rawAfter.rows[0]?.retention_eligible_at).toBeNull();
+    }
 
     await owner.query(`DELETE FROM raw_webhook_events WHERE id = $1`, [wh.id]);
   });

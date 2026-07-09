@@ -2,8 +2,16 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { DEK_BYTES, LocalKeyProvider } from '../../src/crypto/index.js';
 import { repositories, restricted } from '../../src/db/index.js';
-import { hasTestDb, makePool, migrate } from './_pg.js';
-import { cleanupCalls, makeAppPool, seedKeyVersion } from './_dal.js';
+import type { RestrictedRunner } from '../../src/db/restricted/restricted-context.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from './_pg.js';
+import {
+  cleanupCalls,
+  cleanupRawCalls,
+  makeAppPool,
+  makeRawAppPool,
+  makeRawRestrictedRunner,
+  seedKeyVersion,
+} from './_dal.js';
 
 const PATTERN = 'test-iso-%';
 const PERMISSION_DENIED = '42501';
@@ -12,26 +20,43 @@ const PERMISSION_DENIED = '42501';
  * The privacy boundary is DB-enforced: ordinary DAL connections run as app_role and
  * cannot touch the vault tables; only the restricted context can, and it round-trips
  * token_vault through envelope encryption while match_keys stays a one-way HMAC digest.
+ *
+ * ADR 0008 Move 2 splits the enforcement across two databases: token_vault lives in the isolated
+ * raw store (DB-B) and match_keys stays in DB-A. Each denial/round-trip runs against the database
+ * that actually holds the table, so the 42501 boundary is proven where it applies.
  */
-describe.skipIf(!hasTestDb)('vault / match-key isolation', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('vault / match-key isolation', () => {
   let owner!: Pool;
   let app!: Pool;
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
+  let rawRunnerPool!: Pool;
+  let rawRunner!: RestrictedRunner;
   const keyProvider = new LocalKeyProvider({
     masterKey: Buffer.alloc(DEK_BYTES, 0x07),
     activeKeyVersion: 1,
   });
+  // Match keys stay in DB-A → use the DB-A restricted runner.
   const runner = () => restricted.createRestrictedRunner(app);
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
+    ({ pool: rawRunnerPool, runner: rawRunner } = makeRawRestrictedRunner());
     await seedKeyVersion(owner);
   });
   afterAll(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
+    await rawRunnerPool.end();
   });
 
   it('app pool connections run as app_role', async () => {
@@ -40,7 +65,8 @@ describe.skipIf(!hasTestDb)('vault / match-key isolation', () => {
   });
 
   it('app_role cannot read token_vault (42501)', async () => {
-    await expect(app.query(`SELECT * FROM token_vault LIMIT 1`)).rejects.toMatchObject({
+    // token_vault lives in DB-B; app_role has REVOKE ALL there.
+    await expect(rawApp.query(`SELECT * FROM token_vault LIMIT 1`)).rejects.toMatchObject({
       code: PERMISSION_DENIED,
     });
   });
@@ -53,25 +79,20 @@ describe.skipIf(!hasTestDb)('vault / match-key isolation', () => {
 
   it('token_vault round-trips plaintext through the restricted, encrypted path', async () => {
     const callId = 'test-iso-vault';
-    await repositories.callState.upsertCallState(app, {
-      callId,
-      source: 'test',
-      currentStage: 'redact',
-      status: 'processing',
-    });
     const secret = Buffer.from('(555) 123-4567', 'utf8');
-    await restricted.tokenVault.putToken(runner(), keyProvider, {
+    // DB-B token_vault has no cross-DB FK to call_state — seed the vault directly.
+    await restricted.tokenVault.putToken(rawRunner, keyProvider, {
       callId,
       token: '[PHONE_1]',
       plaintext: secret,
     });
-    const back = await restricted.tokenVault.getToken(runner(), keyProvider, {
+    const back = await restricted.tokenVault.getToken(rawRunner, keyProvider, {
       callId,
       token: '[PHONE_1]',
     });
     expect(back?.equals(secret)).toBe(true);
     // Stored bytes are ciphertext, not the plaintext.
-    const raw = await owner.query<{ ciphertext: Buffer }>(
+    const raw = await rawOwner.query<{ ciphertext: Buffer }>(
       `SELECT ciphertext FROM token_vault WHERE call_id = $1 AND token = $2`,
       [callId, '[PHONE_1]'],
     );

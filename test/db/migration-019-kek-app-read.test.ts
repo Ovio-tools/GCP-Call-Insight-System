@@ -14,9 +14,12 @@ import { createAppPool } from '../../src/db/pool.js';
  * key bytes (only `external_kek_ref`, a pointer), so a table-level read grant to app_role
  * is safe — consistent with how the sibling metadata table `key_versions` is treated.
  *
- * 019 is the topmost migration: down(1) exposes the pre-019 schema, up(1) re-applies.
+ * 019 is no longer the topmost migration — 1782864100000 (drop raw/vault from DB-A, ADR 0008
+ * Move 2) sits above it: down(2) rolls back the drop migration then exposes the pre-019 schema,
+ * up(2) re-applies 019 + the drop. (The drop's down() recreates raw/vault in DB-A at the
+ * rolled-down state, but this test only touches kek_versions, so that is harmless.)
  */
-const ABOVE = 1;
+const ABOVE = 2;
 
 describe.skipIf(!hasTestDb)('migration 019 — kek_versions app read grant', () => {
   let owner!: Pool;

@@ -3,8 +3,15 @@ import type { Pool } from 'pg';
 import { DEK_BYTES, LocalKeyProvider } from '../../src/crypto/index.js';
 import { SENTIMENTS, SERVICE_CATEGORIES } from '../../src/db/enums.js';
 import { repositories, restricted } from '../../src/db/index.js';
-import { hasTestDb, makePool, migrate } from './_pg.js';
-import { cleanupCalls, makeAppPool, seedKeyVersion } from './_dal.js';
+import type { RestrictedRunner } from '../../src/db/restricted/restricted-context.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from './_pg.js';
+import {
+  cleanupCalls,
+  cleanupRawCalls,
+  makeAppPool,
+  makeRawRestrictedRunner,
+  seedKeyVersion,
+} from './_dal.js';
 
 const PATTERN = 'test-idem-%';
 
@@ -12,11 +19,23 @@ const PATTERN = 'test-idem-%';
 describe.skipIf(!hasTestDb)('upsert idempotency', () => {
   let owner!: Pool;
   let app!: Pool;
+  // token_vault lives in DB-B (ADR 0008 Move 2) — reached via the raw-store restricted runner.
+  let rawOwner: Pool | undefined;
+  let rawRunnerPool: Pool | undefined;
+  let rawRunner: RestrictedRunner | undefined;
   const keyProvider = new LocalKeyProvider({
     masterKey: Buffer.alloc(DEK_BYTES, 0x07),
     activeKeyVersion: 1,
   });
   const runner = () => restricted.createRestrictedRunner(app);
+
+  async function rawCountActive(table: string, callId: string): Promise<number> {
+    const res = await rawOwner!.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM ${table} WHERE call_id = $1`,
+      [callId],
+    );
+    return Number(res.rows[0]?.n);
+  }
 
   async function seedCall(callId: string): Promise<void> {
     await repositories.callState.upsertCallState(app, {
@@ -40,11 +59,19 @@ describe.skipIf(!hasTestDb)('upsert idempotency', () => {
     owner = makePool();
     app = makeAppPool();
     await seedKeyVersion(owner);
+    if (hasRawTestDb) {
+      await migrateRaw('up');
+      rawOwner = makeRawPool();
+      ({ pool: rawRunnerPool, runner: rawRunner } = makeRawRestrictedRunner());
+    }
   });
   afterAll(async () => {
     await cleanupCalls(owner, PATTERN);
+    if (rawOwner) await cleanupRawCalls(rawOwner, PATTERN);
     await owner.end();
     await app.end();
+    if (rawOwner) await rawOwner.end();
+    if (rawRunnerPool) await rawRunnerPool.end();
   });
 
   it('call_state upsert keeps one row and reflects the latest write', async () => {
@@ -164,26 +191,29 @@ describe.skipIf(!hasTestDb)('upsert idempotency', () => {
     }
   });
 
-  it('token_vault upsert on (call_id, token) keeps one row and re-encrypts', async () => {
-    const callId = 'test-idem-vault';
-    await seedCall(callId);
-    await restricted.tokenVault.putToken(runner(), keyProvider, {
-      callId,
-      token: '[PHONE_1]',
-      plaintext: Buffer.from('111', 'utf8'),
-    });
-    await restricted.tokenVault.putToken(runner(), keyProvider, {
-      callId,
-      token: '[PHONE_1]',
-      plaintext: Buffer.from('222', 'utf8'),
-    });
-    const value = await restricted.tokenVault.getToken(runner(), keyProvider, {
-      callId,
-      token: '[PHONE_1]',
-    });
-    expect(value?.toString('utf8')).toBe('222');
-    expect(await countActive('token_vault', callId)).toBe(1);
-  });
+  it.skipIf(!hasRawTestDb)(
+    'token_vault upsert on (call_id, token) keeps one row and re-encrypts',
+    async () => {
+      const callId = 'test-idem-vault';
+      // DB-B token_vault has no cross-DB FK to call_state — no seedCall needed.
+      await restricted.tokenVault.putToken(rawRunner!, keyProvider, {
+        callId,
+        token: '[PHONE_1]',
+        plaintext: Buffer.from('111', 'utf8'),
+      });
+      await restricted.tokenVault.putToken(rawRunner!, keyProvider, {
+        callId,
+        token: '[PHONE_1]',
+        plaintext: Buffer.from('222', 'utf8'),
+      });
+      const value = await restricted.tokenVault.getToken(rawRunner!, keyProvider, {
+        callId,
+        token: '[PHONE_1]',
+      });
+      expect(value?.toString('utf8')).toBe('222');
+      expect(await rawCountActive('token_vault', callId)).toBe(1);
+    },
+  );
 
   it('daily_cost_usage upsert accumulates on the day key', async () => {
     const day = '2026-07-01';
