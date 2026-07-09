@@ -271,6 +271,26 @@ export const configObjectSchema = z.object({
    * plaintext-phone/name fallback. Never a real value in the repo. */
   DIALPAD_PII_HASH_SECRET: z.string().min(16).optional(),
 
+  /** Whether the Dialpad webhook enforces the signed-timestamp freshness check. The `iat`
+   * claim is still PROVISIONAL (issue #31): until a real Dialpad payload is confirmed to sign
+   * a numeric `iat`, requiring it would reject EVERY delivery (WEBHOOK_TIMESTAMP_INVALID). So
+   * this defaults `false` — freshness is skipped, and replay protection + the body-size limit
+   * remain the guards. Flip to `true` in staging/prod ONLY once a live payload confirms `iat`.
+   * An explicit string enum (never truthy-coerced), like CLASSIFY_ENABLED. */
+  DIALPAD_WEBHOOK_TIMESTAMP_REQUIRED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** Diagnostic (issue #31): when `true`, the receiver logs the STRUCTURE of each decoded
+   * payload — key paths + leaf types only, never any value (see `describePayloadShape`) — so
+   * the provisional field names can be reconciled against real Dialpad deliveries in staging.
+   * Off by default; enable deliberately in staging while capturing payloads, never in prod. */
+  DIALPAD_WEBHOOK_LOG_PAYLOAD_SHAPE: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
   /** How long (ms) a `raw_webhook_events` audit row is retained before the retention cron
    * (Task 8.1) may purge it. Consumed by that cron; the receiver stamps
    * `retention_eligible_at = received_at` at ingest, and the cron applies this window.

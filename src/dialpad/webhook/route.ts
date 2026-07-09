@@ -8,6 +8,7 @@ import { systemClock, type Clock, type WebhookApp } from '../../http/index.js';
 import { verifyAndDecodeDialpadJwt, type DialpadSecrets } from './jwt.js';
 import { hashPii } from './hash.js';
 import {
+  describePayloadShape,
   parseClaims,
   replayKeyFor,
   resolveCallId,
@@ -92,6 +93,18 @@ export function registerDialpadWebhook(webhookApp: WebhookApp, deps: DialpadWebh
       : {}),
   };
 
+  // Freshness is enforced only when a real payload has confirmed Dialpad signs a numeric `iat`
+  // (issue #31). Until then `DIALPAD_WEBHOOK_TIMESTAMP_REQUIRED=false` OMITS extractTimestamp, so
+  // the middleware skips the freshness gate (unsupported mode) instead of 400-ing every delivery;
+  // replay protection + the body-size limit remain the guards. Wired as a conditional spread so
+  // the property is genuinely absent (not `undefined`) under exactOptionalPropertyTypes.
+  const extractTimestamp = (rawBody: Buffer): number => {
+    const result = verifyAndDecodeDialpadJwt(rawBody, secrets);
+    if (!result) return Number.NaN;
+    const claims = parseClaims(result.claims);
+    return typeof claims.iat === 'number' ? claims.iat * 1000 : Number.NaN;
+  };
+
   webhookApp.registerWebhook({
     path: DIALPAD_WEBHOOK_PATH,
     provider: PROVIDER,
@@ -100,14 +113,8 @@ export function registerDialpadWebhook(webhookApp: WebhookApp, deps: DialpadWebh
     verifySignature: (rawBody: Buffer): boolean =>
       verifyAndDecodeDialpadJwt(rawBody, secrets) !== null,
 
-    // 2. Freshness: Dialpad signs `iat` (seconds). Required mode — the contract confirms a signed
-    //    timestamp. If a real payload ever lacks it, omit this to register in unsupported mode.
-    extractTimestamp: (rawBody: Buffer): number => {
-      const result = verifyAndDecodeDialpadJwt(rawBody, secrets);
-      if (!result) return Number.NaN;
-      const claims = parseClaims(result.claims);
-      return typeof claims.iat === 'number' ? claims.iat * 1000 : Number.NaN;
-    },
+    // 2. Freshness (conditional — see above): present only when the operator has confirmed `iat`.
+    ...(config.DIALPAD_WEBHOOK_TIMESTAMP_REQUIRED ? { extractTimestamp } : {}),
 
     // 3. Replay key: unique event id if present, else a digest of the signed payload (+iat).
     extractEventId: (rawBody: Buffer): string => {
@@ -128,6 +135,19 @@ export function registerDialpadWebhook(webhookApp: WebhookApp, deps: DialpadWebh
         });
       }
       const callId = resolveCallId(result.claims);
+
+      // Diagnostic (issue #31): log the payload STRUCTURE — key paths + leaf types only, never a
+      // value — so provisional field names can be reconciled against real deliveries. Emitted
+      // BEFORE the call_id reject below so an unresolvable id still reveals which key carries it.
+      // Off by default; the shape is an array of strings, so the log redaction guard cannot trip.
+      if (config.DIALPAD_WEBHOOK_LOG_PAYLOAD_SHAPE) {
+        const shapeLogger = callId ? createCallLogger(callId, logger) : logger;
+        shapeLogger.info(
+          { component: 'webhook-receiver', payload_shape: describePayloadShape(result.claims) },
+          'dialpad webhook payload shape (diagnostic; field names + types only, no values)',
+        );
+      }
+
       if (!callId) {
         throw createFailure('REQUEST_MALFORMED', {
           processingState: 'continuing',

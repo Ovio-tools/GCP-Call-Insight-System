@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { hashPii } from '../../src/dialpad/webhook/hash.js';
 import {
   collectPii,
+  describePayloadShape,
   extractCallId,
   normalizePhone,
   parseClaims,
@@ -276,5 +277,45 @@ describe('PII normalization + over-broad tightening (issue #35)', () => {
       to_number: '555-123-4567',
     });
     expect(payload.phone_hmac).toEqual([hashOne('5551234567')]);
+  });
+});
+
+describe('describePayloadShape (issue #31 diagnostic — field names + types, never values)', () => {
+  it('emits path:type entries for scalars, never the values', () => {
+    const shape = describePayloadShape({ call_id: 555, direction: 'inbound', is_internal: false });
+    expect(shape.sort()).toEqual(
+      ['call_id:number', 'direction:string', 'is_internal:boolean'].sort(),
+    );
+  });
+
+  it('describes nested objects by dotted path', () => {
+    const shape = describePayloadShape({ call: { id: 4917123, state: 'connected' } });
+    expect(shape.sort()).toEqual(['call.id:number', 'call.state:string'].sort());
+  });
+
+  it('describes array element shapes under a []-suffixed path, deduped', () => {
+    const shape = describePayloadShape({
+      participants: [{ role: 'operator' }, { role: 'customer' }],
+    });
+    expect(shape).toEqual(['participants[].role:string']);
+  });
+
+  it('never leaks a value — a phone/name/transcript appears only as its key path and type', () => {
+    const shape = describePayloadShape({
+      contact: { name: 'Jane Doe', phone: '+15551234567' },
+      transcript: 'the caller said secret words',
+    });
+    const joined = shape.join('\n');
+    expect(shape.sort()).toEqual(
+      ['contact.name:string', 'contact.phone:string', 'transcript:string'].sort(),
+    );
+    for (const value of ['Jane Doe', '+15551234567', 'secret words']) {
+      expect(joined).not.toContain(value);
+    }
+  });
+
+  it('marks null and empty arrays without throwing', () => {
+    const shape = describePayloadShape({ ended: null, tags: [] });
+    expect(shape.sort()).toEqual(['ended:null', 'tags:array(empty)'].sort());
   });
 });
