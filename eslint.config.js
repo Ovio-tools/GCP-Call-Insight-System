@@ -4,10 +4,11 @@ import prettier from 'eslint-config-prettier';
 
 export default tseslint.config(
   {
-    // migrations/** are plain CommonJS (.cjs) DDL scripts run by node-pg-migrate from
-    // the raw repo-root dir, never compiled or type-checked. Type-aware linting can't
-    // resolve them (not in tsconfig) and would flag CJS `exports`/`require`, so skip.
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'migrations/**'],
+    // migrations/** and migrations-raw/** are plain CommonJS (.cjs) DDL scripts run by
+    // node-pg-migrate from the raw repo-root dir, never compiled or type-checked. Type-aware
+    // linting can't resolve them (not in tsconfig) and would flag CJS `exports`/`require`, so skip.
+    // (migrations-raw is the DB-B raw-store set — ADR 0008 Move 2.)
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'migrations/**', 'migrations-raw/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
