@@ -10,7 +10,10 @@
  *   npm run record-consent -- --gate dialpad_recording_consent --by "Jane Doe" \
  *     --note "Eric confirmed recordings in writing, email 2026-06-30"
  */
+import type { Pool } from 'pg';
+import { listByType, recordConsent } from '../db/repositories/consent-gates-repo.js';
 import {
+  checkProcessingGates,
   REQUIRED_PROCESSING_GATE_TYPES,
   SERVICETITAN_MATCHING_CONSENT_GATE,
 } from '../sample-validation/index.js';
@@ -48,4 +51,51 @@ export function parseRecordConsentArgs(argv: readonly string[]): RecordConsentAr
   const note = reqNonEmpty('--note');
   const force = argv.includes('--force');
   return { gateType, recordedBy, note, force };
+}
+
+export interface RecordConsentResult {
+  inserted: boolean;
+  alreadyRecorded: boolean;
+  existingRecordedBy?: string;
+  existingRecordedAt?: Date;
+  /** Required §0.2 processing gates not yet recorded (ServiceTitan consent excluded). */
+  missingProcessingGates: string[];
+}
+
+/** Record the gate if new (or forced); otherwise report it as already recorded. Then
+ * compute which required processing gates remain. Pure orchestration over the existing
+ * repo + gate-check — no new SQL. */
+export async function runRecordConsent(
+  pool: Pool,
+  input: RecordConsentArgs,
+): Promise<RecordConsentResult> {
+  const existing = await listByType(pool, input.gateType);
+  const first = existing[0];
+
+  let inserted = false;
+  let alreadyRecorded = false;
+  let existingRecordedBy: string | undefined;
+  let existingRecordedAt: Date | undefined;
+
+  if (first !== undefined && !input.force) {
+    alreadyRecorded = true;
+    existingRecordedBy = first.recorded_by;
+    existingRecordedAt = first.recorded_at;
+  } else {
+    await recordConsent(pool, {
+      gateType: input.gateType,
+      recordedBy: input.recordedBy,
+      evidenceRef: input.note,
+    });
+    inserted = true;
+  }
+
+  const { missing } = await checkProcessingGates(pool, { requireServiceTitanMatching: false });
+  return {
+    inserted,
+    alreadyRecorded,
+    ...(existingRecordedBy !== undefined ? { existingRecordedBy } : {}),
+    ...(existingRecordedAt !== undefined ? { existingRecordedAt } : {}),
+    missingProcessingGates: missing,
+  };
 }
