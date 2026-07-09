@@ -114,7 +114,10 @@ export async function main(): Promise<void> {
   try {
     const result = await runRecordConsent(pool, args);
     if (result.alreadyRecorded) {
-      logger.info({ gateType: args.gateType }, 'consent gate already recorded — no new row written');
+      logger.info(
+        { gateType: args.gateType },
+        'consent gate already recorded — no new row written',
+      );
       process.stdout.write(
         `Already recorded: ${args.gateType}\n` +
           `  first recorded by ${result.existingRecordedBy ?? 'unknown'} at ` +
@@ -122,7 +125,10 @@ export async function main(): Promise<void> {
           `  (use --force to record an additional row)\n`,
       );
     } else {
-      logger.info({ gateType: args.gateType, recordedBy: args.recordedBy }, 'consent gate recorded');
+      logger.info(
+        { gateType: args.gateType, recordedBy: args.recordedBy },
+        'consent gate recorded',
+      );
       process.stdout.write(
         `Recorded consent gate: ${args.gateType}\n` +
           `  recorded by: ${args.recordedBy}\n` +
