@@ -441,10 +441,14 @@ export async function hasBlockingReviewForCleanTranscript(
 }
 
 /**
- * Stamp `raw_purged_at` on a review row, the Task 6.1 ↔ 8.1 seam. Takes a {@link Queryable} so
- * Task 8.1 calls it inside the SAME transaction as the hard raw/vault removal — the stamp lands
- * only after that succeeds. Idempotent (`raw_purged_at IS NULL` guard). `review_queue` is NOT
- * purgeable and has no retention triplet, so the row itself survives the purge.
+ * Stamp `raw_purged_at` on a review row (DB-A), the Task 6.1 ↔ 8.1 seam. Takes a {@link Queryable}
+ * so the retention cron calls it on the DB-A `purge_role` client. Under the two-pool split (ADR
+ * 0008 Move 2) raw/vault live in DB-B and cannot share a transaction with this DB-A write, so the
+ * held-cap purge deletes raw/vault + writes the DB-B `raw_purge_tombstone` in ONE DB-B transaction
+ * FIRST, then calls this as a SEPARATE DB-A write AFTER that commit — a best-effort audit mirror of
+ * the DB-B tombstone (which is the authoritative finality). Idempotent (`raw_purged_at IS NULL`
+ * guard): if a crash lands between the DB-B commit and this stamp, a later run re-runs it and it
+ * converges. `review_queue` is NOT purgeable and has no retention triplet, so the row survives.
  *
  * `RETURNING id` (not `*`): the caller only needs to know whether the stamp landed (the purged
  * id) or was a no-op (`undefined`, already purged), and `purge_role` may not read the full row.

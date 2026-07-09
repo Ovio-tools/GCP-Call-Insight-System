@@ -7,17 +7,24 @@ import {
   listRawPurgeEligible,
   markRawPurged,
 } from '../db/repositories/review-queue-repo.js';
+import { insertRawTombstone } from '../db/repositories/raw-purge-tombstone-repo.js';
 
 /**
  * Task 8.1 — scheduled retention purge. Deletion lives ONLY here (never the per-call path).
  *
  * Groups (CLAUDE.md §2 "purged with" pairs are coupled + atomic):
- *   - RAW     : raw_transcripts (+ token_vault)     — parent-driven, review-blocked pre-cap
- *   - CLEAN   : clean_transcripts (+ redaction_findings) — parent-driven, review-blocked; two-mode
- *   - WEBHOOK : raw_webhook_events                   — own window
- *   - MATCH   : match_keys                           — own window
- *   - EXTRACT : extraction_candidates                — own window
- * Plus the held-cap pass (Task 6.1 ↔ 8.1 seam): PHYSICAL delete of raw/vault past the raw-PII cap.
+ *   - RAW     : raw_transcripts (+ token_vault)     — DB-B; parent-driven, review-blocked pre-cap
+ *   - CLEAN   : clean_transcripts (+ redaction_findings) — DB-A; parent-driven, review-blocked; two-mode
+ *   - WEBHOOK : raw_webhook_events                   — DB-A; own window
+ *   - MATCH   : match_keys                           — DB-A; own window
+ *   - EXTRACT : extraction_candidates                — DB-A; own window
+ * Plus the held-cap pass (Task 6.1 ↔ 8.1 seam): PHYSICAL delete of raw/vault (DB-B) past the raw-PII cap.
+ *
+ * TWO-POOL (ADR 0008 Move 2): raw_transcripts + token_vault live ONLY in DB-B; review_queue,
+ * clean_transcripts, and the other purgeable tables stay in DB-A. The RAW group + held-cap run on
+ * the DB-B `rawPool`; the "an open review blocks a raw purge" predicate — which can no longer be a
+ * cross-DB SQL subquery — becomes an application-level pre-filter against DB-A ({@link blockedRawCallIds}).
+ * A separate advisory lock is taken on BOTH pools so neither DB can be raced by a second run.
  *
  * Two windowed passes per group: SOFT (recoverable `soft_deleted_at`) then HARD (stamp-and-scrub —
  * `hard_deleted_at` + overwrite content; the tombstone stays so the finality guards keep meaning).
@@ -44,8 +51,11 @@ export interface PurgeReport {
   groupCounts: GroupCount[];
 }
 export interface PurgeDeps {
-  /** A pool bound to `purge_role`. */
+  /** DB-A pool bound to `purge_role` — CLEAN/WEBHOOK/MATCH/EXTRACT groups, held-cap eligibility
+   * reads (review_queue), and the DB-A advisory lock (shared with key rotation/revocation). */
   pool: Pool;
+  /** DB-B purge_role pool — RAW group + held-cap physical delete/tombstone. */
+  rawPool: Pool;
   config: Config;
   logger: Logger;
   now: Date;
@@ -114,108 +124,152 @@ const SCRUB: Record<string, string> = {
   ].join(', '),
 };
 
-/** Blocking-review NOT EXISTS fragments (mirror the merged 6.1 predicates). `callExpr` is the
- * SQL expression for the row's call_id (e.g. `t.call_id`). */
-function rawBlocking(callExpr: string): string {
-  return `AND NOT EXISTS (SELECT 1 FROM review_queue rq WHERE rq.call_id = ${callExpr}
-            AND rq.status IN ('open','in_review','unresolvable') AND rq.raw_purged_at IS NULL)`;
-}
+/** Blocking-review NOT EXISTS fragment for the CLEAN group (mirrors the merged 6.1 predicate).
+ * `callExpr` is the SQL expression for the row's call_id (e.g. `t.call_id`). This stays a SQL
+ * subquery because CLEAN and review_queue both live in DB-A. The RAW group's blocking predicate
+ * is instead an application pre-filter ({@link blockedRawCallIds}) — cross-DB, so not expressible
+ * as a subquery. */
 function cleanBlocking(callExpr: string): string {
   return `AND NOT EXISTS (SELECT 1 FROM review_queue rq WHERE rq.call_id = ${callExpr}
             AND rq.status IN ('open','in_review','unresolvable'))`;
 }
 
-type Blocking = 'raw' | 'clean' | 'none';
+type Blocking = 'clean' | 'none';
 function blockingFor(kind: Blocking, callExpr: string): string {
-  if (kind === 'raw') return rawBlocking(callExpr);
   if (kind === 'clean') return cleanBlocking(callExpr);
   return '';
 }
 
+/**
+ * The subset of `callIds` that DB-A says still BLOCK a raw purge — a review row that is
+ * `open`/`in_review`/`unresolvable` and not yet cap-purged (`raw_purged_at IS NULL`), mirroring
+ * {@link hasBlockingReviewForRawPurge}. The RAW group runs on DB-B where this join is impossible,
+ * so it is pulled out into this DB-A pre-filter; the caller excludes these ids from the DB-B
+ * delete/soft/hard passes. Fail-safe: any error here propagates (as a RetentionPurgeError) and
+ * aborts the run rather than purging a possibly-blocked call.
+ */
+async function blockedRawCallIds(dbA: PoolClient, callIds: string[]): Promise<Set<string>> {
+  if (callIds.length === 0) return new Set();
+  const rows = (
+    await dbA.query<{ call_id: string }>(
+      `SELECT DISTINCT call_id FROM review_queue
+         WHERE call_id = ANY($1::text[]) AND status IN ('open','in_review','unresolvable')
+           AND raw_purged_at IS NULL`,
+      [callIds],
+    )
+  ).rows;
+  return new Set(rows.map((r) => r.call_id));
+}
+
 export async function runPurge(deps: PurgeDeps): Promise<PurgeReport> {
-  const { pool, config, logger, now } = deps;
+  const { pool, rawPool, config, logger, now } = deps;
   const dryRun = config.RETENTION_DRY_RUN;
   const batch = config.RETENTION_PURGE_BATCH_SIZE;
 
   const client = await pool.connect();
   try {
-    const locked = (
+    const lockedA = (
       await client.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [LOCK_KEY])
     ).rows[0]?.ok;
-    if (!locked) {
+    if (!lockedA) {
       logger.info({ component: 'retention-cron' }, 'another retention run active — skipping');
       return { dryRun, skipped: true, actions: [], groupCounts: [] };
     }
 
     try {
-      const ctx: PurgeContext = { client, now, batch, dryRun, actions: [], groupCounts: [] };
+      // A separate DB-B connection + advisory lock so two runs can't race the raw store either.
+      const rawClient = await rawPool.connect();
+      try {
+        const lockedB = (
+          await rawClient.query<{ ok: boolean }>('SELECT pg_try_advisory_lock($1) AS ok', [
+            LOCK_KEY,
+          ])
+        ).rows[0]?.ok;
+        if (!lockedB) {
+          logger.info(
+            { component: 'retention-cron' },
+            'another retention run active on the raw store — skipping',
+          );
+          return { dryRun, skipped: true, actions: [], groupCounts: [] };
+        }
 
-      // Coupled groups (parent-driven, atomic per batch, review-blocked).
-      await purgeCoupled(ctx, {
-        group: 'RAW',
-        parent: 'raw_transcripts',
-        child: 'token_vault',
-        softDays: config.RETENTION_RAW_SOFT_DELETE_DAYS,
-        hardDays: config.RETENTION_RAW_HARD_DELETE_DAYS,
-        blocking: 'raw',
-      });
-      if (config.RETENTION_CLEAN_SOFT_DELETE_DAYS !== 'never') {
-        await purgeCoupled(ctx, {
-          group: 'CLEAN',
-          parent: 'clean_transcripts',
-          child: 'redaction_findings',
-          softDays: config.RETENTION_CLEAN_SOFT_DELETE_DAYS,
-          hardDays: config.RETENTION_CLEAN_HARD_DELETE_DAYS as number,
-          blocking: 'clean',
-        });
-      } else {
-        logger.info(
-          { component: 'retention-cron' },
-          'CLEAN retention is indefinite (never) — skipping',
-        );
+        try {
+          const ctx: PurgeContext = { client, now, batch, dryRun, actions: [], groupCounts: [] };
+
+          // RAW group (DB-B): parent-driven coupling stays intra-DB-B; the review-blocking
+          // predicate is a DB-A pre-filter, not a cross-DB subquery.
+          await purgeRawGroup(ctx, rawClient, client, {
+            group: 'RAW',
+            parent: 'raw_transcripts',
+            child: 'token_vault',
+            softDays: config.RETENTION_RAW_SOFT_DELETE_DAYS,
+            hardDays: config.RETENTION_RAW_HARD_DELETE_DAYS,
+          });
+
+          // CLEAN coupled group (DB-A, parent-driven, review-blocked; two-mode).
+          if (config.RETENTION_CLEAN_SOFT_DELETE_DAYS !== 'never') {
+            await purgeCoupled(ctx, {
+              group: 'CLEAN',
+              parent: 'clean_transcripts',
+              child: 'redaction_findings',
+              softDays: config.RETENTION_CLEAN_SOFT_DELETE_DAYS,
+              hardDays: config.RETENTION_CLEAN_HARD_DELETE_DAYS as number,
+              blocking: 'clean',
+            });
+          } else {
+            logger.info(
+              { component: 'retention-cron' },
+              'CLEAN retention is indefinite (never) — skipping',
+            );
+          }
+
+          // Single-table groups (DB-A, own window, no review coupling).
+          await purgeSingle(ctx, {
+            group: 'WEBHOOK',
+            table: 'raw_webhook_events',
+            keyCol: 'id',
+            softDays: config.RETENTION_WEBHOOK_SOFT_DELETE_DAYS,
+            hardDays: config.RETENTION_WEBHOOK_HARD_DELETE_DAYS,
+          });
+          await purgeSingle(ctx, {
+            group: 'MATCH',
+            table: 'match_keys',
+            keyCol: 'id',
+            softDays: config.RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS,
+            hardDays: config.RETENTION_MATCH_KEYS_HARD_DELETE_DAYS,
+          });
+          await purgeSingle(ctx, {
+            group: 'EXTRACT',
+            table: 'extraction_candidates',
+            keyCol: 'call_id',
+            softDays: config.RETENTION_EXTRACT_SOFT_DELETE_DAYS,
+            hardDays: config.RETENTION_EXTRACT_HARD_DELETE_DAYS,
+          });
+
+          // Held-cap physical purge (Task 6.1 ↔ 8.1 seam): DB-A eligibility, DB-B delete+tombstone.
+          await purgeHeldCap(ctx, rawClient, config.REVIEW_HELD_RAW_RETENTION_CAP_HOURS);
+
+          logger.info(
+            {
+              component: 'retention-cron',
+              dry_run: dryRun,
+              actions: ctx.actions.map((a) => ({
+                group: a.group,
+                table: a.table,
+                action: a.action,
+                window: a.window,
+                count: a.count,
+              })),
+            },
+            'retention purge complete',
+          );
+          return { dryRun, actions: ctx.actions, groupCounts: ctx.groupCounts };
+        } finally {
+          await rawClient.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => undefined);
+        }
+      } finally {
+        rawClient.release();
       }
-
-      // Single-table groups (own window, no review coupling).
-      await purgeSingle(ctx, {
-        group: 'WEBHOOK',
-        table: 'raw_webhook_events',
-        keyCol: 'id',
-        softDays: config.RETENTION_WEBHOOK_SOFT_DELETE_DAYS,
-        hardDays: config.RETENTION_WEBHOOK_HARD_DELETE_DAYS,
-      });
-      await purgeSingle(ctx, {
-        group: 'MATCH',
-        table: 'match_keys',
-        keyCol: 'id',
-        softDays: config.RETENTION_MATCH_KEYS_SOFT_DELETE_DAYS,
-        hardDays: config.RETENTION_MATCH_KEYS_HARD_DELETE_DAYS,
-      });
-      await purgeSingle(ctx, {
-        group: 'EXTRACT',
-        table: 'extraction_candidates',
-        keyCol: 'call_id',
-        softDays: config.RETENTION_EXTRACT_SOFT_DELETE_DAYS,
-        hardDays: config.RETENTION_EXTRACT_HARD_DELETE_DAYS,
-      });
-
-      // Held-cap physical purge (Task 6.1 ↔ 8.1 seam).
-      await purgeHeldCap(ctx, config.REVIEW_HELD_RAW_RETENTION_CAP_HOURS);
-
-      logger.info(
-        {
-          component: 'retention-cron',
-          dry_run: dryRun,
-          actions: ctx.actions.map((a) => ({
-            group: a.group,
-            table: a.table,
-            action: a.action,
-            window: a.window,
-            count: a.count,
-          })),
-        },
-        'retention purge complete',
-      );
-      return { dryRun, actions: ctx.actions, groupCounts: ctx.groupCounts };
     } finally {
       await client.query('SELECT pg_advisory_unlock($1)', [LOCK_KEY]).catch(() => undefined);
     }
@@ -241,6 +295,15 @@ interface CoupledSpec {
   hardDays: number;
   blocking: Blocking;
 }
+/** RAW coupled group (DB-B). No `blocking` field — the review-blocking predicate is the DB-A
+ * pre-filter {@link blockedRawCallIds}, applied per batch, not a SQL fragment. */
+interface RawSpec {
+  group: string;
+  parent: string;
+  child: string;
+  softDays: number;
+  hardDays: number;
+}
 interface SingleSpec {
   group: string;
   table: string;
@@ -264,7 +327,319 @@ async function step<T>(
   }
 }
 
-// --- Coupled groups (RAW, CLEAN) ------------------------------------------------------------
+// --- RAW group (DB-B, cross-DB review pre-filter) -------------------------------------------
+
+/**
+ * One RAW candidate pass with the review pre-filter. Loops: SELECT eligible ids on DB-B
+ * (excluding the running `blocked` accumulator) → ask DB-A which are still review-blocked →
+ * accumulate the blocked ids → UPDATE only the survivors on DB-B (in a DB-B transaction so the
+ * parent+child scrub is atomic). Returns the number of DISTINCT surviving calls processed.
+ *
+ * INFINITE-LOOP HAZARD + FIX: excluding review-blocked ids from the UPDATE leaves them eligible,
+ * so a naive "SELECT eligible LIMIT n → UPDATE" would re-SELECT them forever. The `blocked`
+ * accumulator (passed to the SELECT as a `<> ALL($2)` exclusion) guarantees strict progress: each
+ * batch either soft/hard-deletes survivors (they leave the window) or adds newly-discovered
+ * blocked ids to the accumulator (excluded from every later SELECT) — so the candidate set
+ * strictly shrinks and the loop terminates.
+ */
+async function rawPass(
+  ctx: PurgeContext,
+  rawClient: PoolClient,
+  dbA: PoolClient,
+  meta: { group: string; table: string; action: 'soft_delete' | 'hard_delete' },
+  selectSql: string,
+  applyUpdate: (rc: PoolClient, survivors: string[]) => Promise<void>,
+): Promise<number> {
+  const { now, batch } = ctx;
+  const blocked = new Set<string>();
+  let callCount = 0;
+  for (;;) {
+    const done = await step({ ...meta, dry_run: false }, async () => {
+      const ids = (
+        await rawClient.query<{ call_id: string }>(selectSql, [now, [...blocked], batch])
+      ).rows.map((r) => r.call_id);
+      if (ids.length === 0) return true;
+      const nowBlocked = await blockedRawCallIds(dbA, ids);
+      for (const id of nowBlocked) blocked.add(id);
+      const survivors = ids.filter((id) => !nowBlocked.has(id));
+      if (survivors.length > 0) {
+        await withClientTransaction(rawClient, (rc) => applyUpdate(rc, survivors));
+        callCount += survivors.length;
+      }
+      return false;
+    });
+    if (done) break;
+  }
+  return callCount;
+}
+
+/**
+ * RAW coupled group on DB-B (parent `raw_transcripts` + child `token_vault`). The coupling
+ * (parent-driven soft/hard, orphan-child handling, grace-gated hard, ciphertext scrub) stays
+ * intra-DB-B; the ONLY cross-DB concern — "an open review blocks this call's raw purge" — is the
+ * DB-A pre-filter {@link blockedRawCallIds}. Dry-run counts reflect the pre-filter exactly
+ * (DB-B-eligible MINUS DB-A-blocked), matching the real run's per-table + distinct-call shape.
+ *
+ * All DB-B SELECTs project ONLY purge_role-granted columns (call_id / the retention triplet) —
+ * never ciphertext or fetched_at/created_at, which are not in the purge_role SELECT grant.
+ */
+async function purgeRawGroup(
+  ctx: PurgeContext,
+  rawClient: PoolClient,
+  dbA: PoolClient,
+  spec: RawSpec,
+): Promise<void> {
+  const { dryRun } = ctx;
+  const { group, parent, child, softDays, hardDays } = spec;
+  const grace = hardDays - softDays;
+  const window = `soft=${softDays}d hard=${hardDays}d`;
+
+  // Base predicates on $1 = now only (no blocking subquery — that is the DB-A pre-filter).
+  const parentSoftBase = `p.retention_eligible_at IS NOT NULL
+    AND p.retention_eligible_at <= $1::timestamptz - make_interval(days => ${softDays})
+    AND p.soft_deleted_at IS NULL`;
+  const parentHardBase = `p.retention_eligible_at <= $1::timestamptz - make_interval(days => ${hardDays})
+    AND p.soft_deleted_at IS NOT NULL AND p.soft_deleted_at <= $1::timestamptz - make_interval(days => ${grace})
+    AND p.hard_deleted_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM ${child} c WHERE c.call_id = p.call_id
+      AND c.hard_deleted_at IS NULL
+      AND (c.soft_deleted_at IS NULL OR c.soft_deleted_at > $1::timestamptz - make_interval(days => ${grace})))`;
+  const orphanSoftBase = `c.retention_eligible_at IS NOT NULL
+    AND c.retention_eligible_at <= $1::timestamptz - make_interval(days => ${softDays})
+    AND c.soft_deleted_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM ${parent} p WHERE p.call_id = c.call_id)`;
+  const orphanHardBase = `c.retention_eligible_at <= $1::timestamptz - make_interval(days => ${hardDays})
+    AND c.soft_deleted_at IS NOT NULL AND c.soft_deleted_at <= $1::timestamptz - make_interval(days => ${grace})
+    AND c.hard_deleted_at IS NULL
+    AND NOT EXISTS (SELECT 1 FROM ${parent} p WHERE p.call_id = c.call_id)`;
+
+  if (dryRun) {
+    // Wrapped in `step` so a pg error in ANY dry-run RAW helper (DB-B selects/counts or the DB-A
+    // pre-filter) surfaces as a sanitized RetentionPurgeError, never a raw pg error — matching the
+    // non-dry-run passes. Meta names the RAW group; the dry-run flag is set.
+    await step({ group, table: parent, action: 'soft_delete', dry_run: true }, async () => {
+      // Select the eligible ids on DB-B, then subtract the DB-A-blocked ones. $2 is unused here
+      // (the accumulator exclusion is only for the batch loop) — pass an empty array.
+      const parentSoftIds = await selectRawIds(
+        rawClient,
+        `SELECT p.call_id FROM ${parent} p WHERE ${parentSoftBase}`,
+        ctx.now,
+      );
+      const parentHardIds = await selectRawIds(
+        rawClient,
+        `SELECT p.call_id FROM ${parent} p WHERE ${parentHardBase}`,
+        ctx.now,
+      );
+      const orphanSoftIds = await selectRawIds(
+        rawClient,
+        `SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanSoftBase}`,
+        ctx.now,
+      );
+      const orphanHardIds = await selectRawIds(
+        rawClient,
+        `SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanHardBase}`,
+        ctx.now,
+      );
+      const parentSoftSurv = await survivors(dbA, parentSoftIds);
+      const parentHardSurv = await survivors(dbA, parentHardIds);
+      const orphanSoftSurv = await survivors(dbA, orphanSoftIds);
+      const orphanHardSurv = await survivors(dbA, orphanHardIds);
+
+      // Child rows the surviving parents drag along (all not-yet-soft/hard vault rows for the call),
+      // PLUS orphan child rows on their own window — mirrors the real run's UPDATE reach.
+      const childParentSoft = await countChildForCalls(
+        rawClient,
+        child,
+        'soft_deleted_at IS NULL',
+        parentSoftSurv,
+      );
+      const childParentHard = await countChildForCalls(
+        rawClient,
+        child,
+        'hard_deleted_at IS NULL',
+        parentHardSurv,
+      );
+      const childOrphanSoft = await countChildMatching(
+        rawClient,
+        child,
+        orphanSoftBase,
+        orphanSoftSurv,
+        ctx.now,
+      );
+      const childOrphanHard = await countChildMatching(
+        rawClient,
+        child,
+        orphanHardBase,
+        orphanHardSurv,
+        ctx.now,
+      );
+
+      pushAction(ctx, {
+        table: parent,
+        group,
+        action: 'soft_delete',
+        window,
+        count: parentSoftSurv.length,
+      });
+      pushAction(ctx, {
+        table: parent,
+        group,
+        action: 'hard_delete',
+        window,
+        count: parentHardSurv.length,
+      });
+      pushAction(ctx, {
+        table: child,
+        group,
+        action: 'soft_delete',
+        window,
+        count: childParentSoft + childOrphanSoft,
+      });
+      pushAction(ctx, {
+        table: child,
+        group,
+        action: 'hard_delete',
+        window,
+        count: childParentHard + childOrphanHard,
+      });
+      addGroupCalls(ctx, group, 'soft_delete', parentSoftSurv.length + orphanSoftSurv.length);
+      addGroupCalls(ctx, group, 'hard_delete', parentHardSurv.length + orphanHardSurv.length);
+    });
+    return;
+  }
+
+  let parentSoft = 0;
+  let childSoft = 0;
+  let parentHard = 0;
+  let childHard = 0;
+
+  // Parent-driven soft (coupled: raw + its vault children together).
+  const softCalls = await rawPass(
+    ctx,
+    rawClient,
+    dbA,
+    { group, table: parent, action: 'soft_delete' },
+    `SELECT p.call_id FROM ${parent} p WHERE ${parentSoftBase} AND p.call_id <> ALL($2::text[]) LIMIT $3`,
+    async (rc, survivors) => {
+      const rp = await rc.query(
+        `UPDATE ${parent} SET soft_deleted_at = $1 WHERE call_id = ANY($2::text[]) AND soft_deleted_at IS NULL`,
+        [ctx.now, survivors],
+      );
+      const rcRes = await rc.query(
+        `UPDATE ${child} SET soft_deleted_at = $1 WHERE call_id = ANY($2::text[]) AND soft_deleted_at IS NULL`,
+        [ctx.now, survivors],
+      );
+      parentSoft += rp.rowCount ?? 0;
+      childSoft += rcRes.rowCount ?? 0;
+    },
+  );
+  // Orphan-child soft (vault rows with no raw parent, on their own window).
+  const orphanSoftCalls = await rawPass(
+    ctx,
+    rawClient,
+    dbA,
+    { group, table: child, action: 'soft_delete' },
+    `SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanSoftBase} AND c.call_id <> ALL($2::text[]) LIMIT $3`,
+    async (rc, survivors) => {
+      const res = await rc.query(
+        `UPDATE ${child} SET soft_deleted_at = $1 WHERE call_id = ANY($2::text[]) AND soft_deleted_at IS NULL`,
+        [ctx.now, survivors],
+      );
+      childSoft += res.rowCount ?? 0;
+    },
+  );
+
+  // Parent-driven, grace-gated hard (stamp-and-scrub).
+  const hardCalls = await rawPass(
+    ctx,
+    rawClient,
+    dbA,
+    { group, table: parent, action: 'hard_delete' },
+    `SELECT p.call_id FROM ${parent} p WHERE ${parentHardBase} AND p.call_id <> ALL($2::text[]) LIMIT $3`,
+    async (rc, survivors) => {
+      const rp = await rc.query(
+        `UPDATE ${parent} SET hard_deleted_at = $1, ${SCRUB[parent]}
+          WHERE call_id = ANY($2::text[]) AND hard_deleted_at IS NULL`,
+        [ctx.now, survivors],
+      );
+      const rcRes = await rc.query(
+        `UPDATE ${child} SET hard_deleted_at = $1, ${SCRUB[child]}
+          WHERE call_id = ANY($2::text[]) AND hard_deleted_at IS NULL`,
+        [ctx.now, survivors],
+      );
+      parentHard += rp.rowCount ?? 0;
+      childHard += rcRes.rowCount ?? 0;
+    },
+  );
+  // Orphan-child hard.
+  const orphanHardCalls = await rawPass(
+    ctx,
+    rawClient,
+    dbA,
+    { group, table: child, action: 'hard_delete' },
+    `SELECT DISTINCT c.call_id FROM ${child} c WHERE ${orphanHardBase} AND c.call_id <> ALL($2::text[]) LIMIT $3`,
+    async (rc, survivors) => {
+      const res = await rc.query(
+        `UPDATE ${child} SET hard_deleted_at = $1, ${SCRUB[child]}
+          WHERE call_id = ANY($2::text[]) AND hard_deleted_at IS NULL`,
+        [ctx.now, survivors],
+      );
+      childHard += res.rowCount ?? 0;
+    },
+  );
+
+  pushAction(ctx, { table: parent, group, action: 'soft_delete', window, count: parentSoft });
+  pushAction(ctx, { table: child, group, action: 'soft_delete', window, count: childSoft });
+  pushAction(ctx, { table: parent, group, action: 'hard_delete', window, count: parentHard });
+  pushAction(ctx, { table: child, group, action: 'hard_delete', window, count: childHard });
+  addGroupCalls(ctx, group, 'soft_delete', softCalls + orphanSoftCalls);
+  addGroupCalls(ctx, group, 'hard_delete', hardCalls + orphanHardCalls);
+}
+
+/** Select just the call_id column on DB-B (purge_role-safe), for a $1=now predicate. */
+async function selectRawIds(rawClient: PoolClient, sql: string, now: Date): Promise<string[]> {
+  return (await rawClient.query<{ call_id: string }>(sql, [now])).rows.map((r) => r.call_id);
+}
+
+/** The subset of `ids` NOT review-blocked in DB-A (i.e. the ones the real run would purge). */
+async function survivors(dbA: PoolClient, ids: string[]): Promise<string[]> {
+  if (ids.length === 0) return [];
+  const blocked = await blockedRawCallIds(dbA, ids);
+  return ids.filter((id) => !blocked.has(id));
+}
+
+/** Count child rows for the given calls matching `extra` (e.g. `soft_deleted_at IS NULL`). */
+async function countChildForCalls(
+  rawClient: PoolClient,
+  child: string,
+  extra: string,
+  callIds: string[],
+): Promise<number> {
+  if (callIds.length === 0) return 0;
+  const res = await rawClient.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM ${child} c WHERE ${extra} AND c.call_id = ANY($1::text[])`,
+    [callIds],
+  );
+  return Number(res.rows[0]?.n ?? 0);
+}
+
+/** Count child rows matching the orphan base predicate ($1=now) restricted to the given calls. */
+async function countChildMatching(
+  rawClient: PoolClient,
+  child: string,
+  base: string,
+  callIds: string[],
+  now: Date,
+): Promise<number> {
+  if (callIds.length === 0) return 0;
+  const res = await rawClient.query<{ n: string }>(
+    `SELECT count(*)::text AS n FROM ${child} c WHERE ${base} AND c.call_id = ANY($2::text[])`,
+    [now, callIds],
+  );
+  return Number(res.rows[0]?.n ?? 0);
+}
+
+// --- Coupled groups (CLEAN) -----------------------------------------------------------------
 
 async function purgeCoupled(ctx: PurgeContext, spec: CoupledSpec): Promise<void> {
   const { client, now, batch, dryRun } = ctx;
@@ -505,7 +880,11 @@ async function purgeSingle(ctx: PurgeContext, spec: SingleSpec): Promise<void> {
 
 // --- Held-cap physical purge ----------------------------------------------------------------
 
-async function purgeHeldCap(ctx: PurgeContext, capHours: number): Promise<void> {
+async function purgeHeldCap(
+  ctx: PurgeContext,
+  rawClient: PoolClient,
+  capHours: number,
+): Promise<void> {
   const { client, now, batch, dryRun } = ctx;
   const group = 'HELD_CAP';
   const window = `cap=${capHours}h`;
@@ -521,8 +900,20 @@ async function purgeHeldCap(ctx: PurgeContext, capHours: number): Promise<void> 
     return;
   }
 
-  // Batched: fetch at most `batch` eligible rows, purge each (each stamps raw_purged_at so it
-  // leaves the eligible set), then re-fetch until a batch comes back empty. Honors
+  // Eligibility comes from DB-A (review_queue); the physical delete + finality tombstone happen in
+  // ONE DB-B transaction; the DB-A `markRawPurged` audit stamp is a SEPARATE DB-A write AFTER the
+  // DB-B commit. The DB-B tombstone — not the DB-A stamp — is the authoritative finality marker.
+  //
+  // FAIL-LOUD, THEN CONVERGE: the DB-A stamp is wrapped in `step`, so if `markRawPurged` fails it
+  // THROWS a sanitized RetentionPurgeError and aborts the run (it is NOT silently swallowed). That
+  // is safe because finality is already guaranteed the instant the DB-B tombstone committed. On
+  // the next run the call is re-listed (DB-A `raw_purged_at` is still NULL), the DB-B DELETEs are
+  // no-ops (rows already gone), `insertRawTombstone` is ON CONFLICT DO NOTHING, and `markRawPurged`
+  // finally lands the stamp — converging with no double effect. The DB-A stamp is only the audit
+  // mirror of the DB-B finality.
+  //
+  // Batched: fetch at most `batch` eligible rows, purge each (each stamps raw_purged_at on DB-A so
+  // it leaves the eligible set), then re-fetch until a batch comes back empty. Honors
   // RETENTION_PURGE_BATCH_SIZE so a large held-call backlog cannot be loaded/processed unbounded.
   let purged = 0;
   for (;;) {
@@ -532,14 +923,21 @@ async function purgeHeldCap(ctx: PurgeContext, capHours: number): Promise<void> 
     );
     if (candidates.length === 0) break;
     for (const row of candidates) {
+      // DB-B: delete raw + vault and write the finality tombstone atomically.
       await step(
         { group, table: 'raw_transcripts', action: 'held_cap_purge', dry_run: false },
         () =>
-          withClientTransaction(client, async (c) => {
-            await c.query(`DELETE FROM token_vault WHERE call_id = $1`, [row.call_id]);
-            await c.query(`DELETE FROM raw_transcripts WHERE call_id = $1`, [row.call_id]);
-            await markRawPurged(c, row.id, now);
+          withClientTransaction(rawClient, async (rc) => {
+            await rc.query(`DELETE FROM token_vault WHERE call_id = $1`, [row.call_id]);
+            await rc.query(`DELETE FROM raw_transcripts WHERE call_id = $1`, [row.call_id]);
+            await insertRawTombstone(rc, row.call_id, now);
           }),
+      );
+      // DB-A: audit stamp AFTER the DB-B commit. Wrapped in `step` → fail-loud (a failure aborts
+      // the run with a sanitized error), then the next run converges idempotently (see the
+      // fail-loud-then-converge note above). The DB-B tombstone is the authoritative finality.
+      await step({ group, table: 'review_queue', action: 'held_cap_purge', dry_run: false }, () =>
+        markRawPurged(client, row.id, now),
       );
       purged += 1;
     }

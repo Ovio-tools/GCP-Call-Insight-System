@@ -4,7 +4,7 @@ import { loadConfig } from '../config/index.js';
 import type { Config } from '../config/schema.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
-import { createAppPool } from '../db/index.js';
+import { createAppPool, createRawPurgePool } from '../db/index.js';
 import { requireCheckUrl, type HeartbeatPinger } from '../heartbeat/index.js';
 import { createFailure } from '../failure-model/index.js';
 import { type AlertWebhookPoster, emitAlert, httpPostAlert } from '../alerting/index.js';
@@ -31,8 +31,10 @@ function sanitizedPurgeCtx(err: unknown): Record<string, string> {
 export interface RetentionServiceDeps {
   config: Config;
   logger: Logger;
-  /** Pool bound to `purge_role` — runs the purge work. */
+  /** DB-A pool bound to `purge_role` — runs the DB-A purge work + the DB-A advisory lock. */
   purgePool: Pool;
+  /** DB-B pool bound to `purge_role` — RAW group + held-cap physical delete/tombstone. */
+  rawPurgePool: Pool;
   /** Pool bound to `app_role` — writes `alert_events` (purge_role must not touch it). */
   appPool: Pool;
   /** Injectable purge (defaults to {@link runPurge} over `purgePool`). */
@@ -55,7 +57,7 @@ export interface RetentionServiceDeps {
  * problem cannot mask the original error.
  */
 export async function runRetentionService(deps: RetentionServiceDeps): Promise<void> {
-  const { config, logger, purgePool, appPool } = deps;
+  const { config, logger, purgePool, rawPurgePool, appPool } = deps;
   const now = deps.now ?? ((): Date => new Date());
 
   try {
@@ -64,7 +66,8 @@ export async function runRetentionService(deps: RetentionServiceDeps): Promise<v
       logger,
       purge:
         deps.purge ??
-        ((): Promise<PurgeReport> => runPurge({ pool: purgePool, config, logger, now: now() })),
+        ((): Promise<PurgeReport> =>
+          runPurge({ pool: purgePool, rawPool: rawPurgePool, config, logger, now: now() })),
       ...(deps.pingCheck ? { pingCheck: deps.pingCheck } : {}),
     });
   } catch (err) {
@@ -115,13 +118,16 @@ async function main(): Promise<void> {
   requireCheckUrl(config, 'retention-cron');
   await assertDependenciesReady(config, logger);
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
 
   const purgePool = createAppPool(config.DATABASE_URL, 'purge_role');
+  const rawPurgePool = createRawPurgePool(config.RAW_DATABASE_URL);
   const appPool = createAppPool(config.DATABASE_URL);
   try {
-    await runRetentionService({ config, logger, purgePool, appPool });
+    await runRetentionService({ config, logger, purgePool, rawPurgePool, appPool });
   } finally {
     await purgePool.end();
+    await rawPurgePool.end();
     await appPool.end();
   }
 }

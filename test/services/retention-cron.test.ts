@@ -28,12 +28,14 @@ describe.skipIf(!hasTestDb)('runRetentionService (Task 8.1)', () => {
   let owner!: Pool;
   let appPool!: Pool;
   let purgePool!: Pool;
+  let rawPurgePool!: Pool;
 
   beforeAll(async () => {
     await migrate('up');
     owner = makePool();
     appPool = makeAppPool();
     purgePool = makeAppPool(); // not exercised when purge is injected
+    rawPurgePool = makeAppPool(); // ditto — the injected purge never touches the DB-B pool
   });
   afterEach(async () => {
     await owner.query(`DELETE FROM alert_events WHERE error_code = 'RETENTION_PURGE_FAILED'`);
@@ -42,6 +44,7 @@ describe.skipIf(!hasTestDb)('runRetentionService (Task 8.1)', () => {
     await owner.end();
     await appPool.end();
     await purgePool.end();
+    await rawPurgePool.end();
   });
 
   it('pings the check exactly once after a successful purge; no alert recorded', async () => {
@@ -50,7 +53,15 @@ describe.skipIf(!hasTestDb)('runRetentionService (Task 8.1)', () => {
     const purge = vi.fn(() => Promise.resolve(okReport));
     const config = makeTestConfig({ RETENTION_CHECK_URL: CHECK_URL });
 
-    await runRetentionService({ config, logger, purgePool, appPool, purge, pingCheck });
+    await runRetentionService({
+      config,
+      logger,
+      purgePool,
+      rawPurgePool,
+      appPool,
+      purge,
+      pingCheck,
+    });
 
     expect(purge).toHaveBeenCalledTimes(1);
     expect(pingCheck).toHaveBeenCalledTimes(1);
@@ -77,7 +88,7 @@ describe.skipIf(!hasTestDb)('runRetentionService (Task 8.1)', () => {
     const purge = vi.fn(() => Promise.reject(boom));
 
     await expect(
-      runRetentionService({ config, logger, purgePool, appPool, purge, pingCheck }),
+      runRetentionService({ config, logger, purgePool, rawPurgePool, appPool, purge, pingCheck }),
     ).rejects.toBe(boom);
 
     expect(pingCheck).not.toHaveBeenCalled();
