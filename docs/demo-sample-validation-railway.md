@@ -102,7 +102,26 @@ The keys must be written **on this service's volume**, so run bootstrap here, on
 
 ### 6. Record the five §0.2 consent gates
 
-You are handling this. Confirm they exist in the staging DB before running:
+Record each of the five §0.2 processing consent gates with the operator command
+(one per gate, each with a one-line evidence note pointing at the signed
+document / confirmation):
+
+```bash
+npm run record-consent -- --gate dialpad_recording_consent \
+  --by "<your name>" --note "<where the proof lives>"
+npm run record-consent -- --gate signed_services_agreement \
+  --by "<your name>" --note "<where the proof lives>"
+npm run record-consent -- --gate signed_data_processing_addendum \
+  --by "<your name>" --note "<where the proof lives>"
+npm run record-consent -- --gate anthropic_no_training_confirmation \
+  --by "<your name>" --note "<where the proof lives>"
+npm run record-consent -- --gate anthropic_data_retention_confirmation \
+  --by "<your name>" --note "<where the proof lives>"
+```
+
+The command refuses an unknown gate name, skips a gate that is already recorded,
+and after each run prints which required gates remain — so you know when the gate
+is fully cleared. Verify:
 
 ```sql
 SELECT gate_type, count(*) FROM consent_gates
