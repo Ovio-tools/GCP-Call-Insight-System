@@ -26,6 +26,14 @@ production is the named blocking follow-up **Task 8.2b**. `buildKeyProvider` ref
 production and `kms` still throws; the launch gate fails in production for any non-`kms` provider.
 This keeps Task 8.2 honestly scoped to staging/reference and does not imply production is unblocked.
 
+> **Superseded in part by [ADR 0008](0008-railway-secret-key-store-and-raw-store-isolation.md)
+> (2026-07-08).** The "production is blocked on Task 8.2b / the launch gate fails in production for
+> any non-`kms` provider" conclusion above no longer holds. Production key custody is now the
+> Railway-secret key store (`CRYPTO_KEY_PROVIDER=railway`); `checkLaunchGate` passes in production on
+> `railway` (or a verified `kms`), and Task 8.2b (a dedicated external KMS) is an optional future
+> upgrade via the same `KeyStore` seam, not a launch blocker. The crypto-shred requirement, the
+> `store.recoverability()`-gated launch check, and the two-phase destruction below are unchanged.
+
 ### 2. Two-phase, recovery-windowed, durably-modeled destruction — gate off the store, not the DB
 
 Destruction is two-state: Phase A stamps `destroy_requested_at` + `destroy_recovery_window_until` +
