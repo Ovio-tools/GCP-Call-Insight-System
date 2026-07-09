@@ -9,14 +9,23 @@ import {
 } from '../../src/db/repositories/review-queue-repo.js';
 import { withTransaction } from '../../src/db/sql.js';
 import { createAppPool } from '../../src/db/index.js';
-import { hasTestDb, makePool, migrate, TEST_DATABASE_URL } from '../db/_pg.js';
-import { cleanupCalls, makeAppPool, seedKeyVersion } from '../db/_dal.js';
+import {
+  hasRawTestDb,
+  hasTestDb,
+  makePool,
+  makeRawPool,
+  migrate,
+  migrateRaw,
+  TEST_DATABASE_URL,
+} from '../db/_pg.js';
+import { cleanupCalls, cleanupRawCalls, makeAppPool, seedKeyVersion } from '../db/_dal.js';
 
 const PATTERN = 'test-ret-%';
 const CAP_HOURS = 72;
 
-describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () => {
-  let owner!: Pool;
+describe.skipIf(!hasTestDb || !hasRawTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () => {
+  let owner!: Pool; // DB-A (review_queue, clean_transcripts)
+  let rawOwner!: Pool; // DB-B (raw_transcripts, token_vault)
   let app!: Pool;
   let purge!: Pool;
 
@@ -48,15 +57,15 @@ describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () =>
     return rows[0]!.id;
   }
 
-  /** Seed raw_transcripts + token_vault whose retention_eligible_at is already in the past —
-   * so they are NORMALLY purge-eligible, and only the blocking review protects them. */
+  /** Seed raw_transcripts + token_vault (DB-B) whose retention_eligible_at is already in the past
+   * — so they are NORMALLY purge-eligible, and only the blocking review protects them. */
   async function seedRawAndVault(callId: string): Promise<void> {
-    await owner.query(
+    await rawOwner.query(
       `INSERT INTO raw_transcripts (call_id, ciphertext, key_version, retention_eligible_at)
        VALUES ($1, $2, 1, now() - interval '1 day')`,
       [callId, Buffer.from([0])],
     );
-    await owner.query(
+    await rawOwner.query(
       `INSERT INTO token_vault (call_id, token, ciphertext, key_version, retention_eligible_at)
        VALUES ($1, '[NAME_1]', $2, 1, now() - interval '1 day')`,
       [callId, Buffer.from([0])],
@@ -76,16 +85,20 @@ describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () =>
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
+    rawOwner = makeRawPool();
     app = makeAppPool();
     purge = createAppPool(TEST_DATABASE_URL as string, 'purge_role');
     await seedKeyVersion(owner);
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
   });
   afterAll(async () => {
     await owner.end();
+    await rawOwner.end();
     await app.end();
     await purge.end();
   });
@@ -129,17 +142,18 @@ describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () =>
 
     // A mere SOFT delete of the raw (still recoverable) does NOT satisfy the cap: the item is
     // still eligible because raw_purged_at is unset.
-    await owner.query(
+    await rawOwner.query(
       `UPDATE raw_transcripts SET soft_deleted_at = now() WHERE call_id = 'test-ret-cap'`,
     );
     expect(await eligibleIds()).toContain(id);
 
-    // Simulate Task 8.1: HARD-remove raw/vault AND stamp raw_purged_at in ONE transaction.
-    await withTransaction(owner, async (client) => {
+    // Simulate Task 8.1/8.2d: HARD-remove raw/vault on DB-B (one DB-B tx), then stamp
+    // raw_purged_at on DB-A (the separate best-effort audit mirror).
+    await withTransaction(rawOwner, async (client) => {
       await client.query(`DELETE FROM token_vault WHERE call_id = 'test-ret-cap'`);
       await client.query(`DELETE FROM raw_transcripts WHERE call_id = 'test-ret-cap'`);
-      await markRawPurged(client, id, new Date());
     });
+    await markRawPurged(app, id, new Date());
 
     expect((await getReview(app, id))?.raw_purged_at).not.toBeNull();
     // review row + clean transcript survive; raw/vault are gone.
@@ -149,7 +163,8 @@ describe.skipIf(!hasTestDb)('held-raw retention hooks (Task 6.1 ↔ 8.1)', () =>
         .rowCount,
     ).toBe(1);
     expect(
-      (await owner.query(`SELECT 1 FROM raw_transcripts WHERE call_id = 'test-ret-cap'`)).rowCount,
+      (await rawOwner.query(`SELECT 1 FROM raw_transcripts WHERE call_id = 'test-ret-cap'`))
+        .rowCount,
     ).toBe(0);
     // No longer eligible / blocking for raw, but the clean transcript stays protected.
     expect(await eligibleIds()).not.toContain(id);

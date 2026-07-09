@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
-import { createOwnerPool } from '../db/index.js';
+import { createOwnerPool, createRawOwnerPool } from '../db/index.js';
 import { isKeyStoreProvider, keyStoreForCli } from '../crypto/index.js';
 import { createRestrictedRunner } from '../db/restricted/restricted-context.js';
 import { revokeDek, revokeKek, type RevokeDeps } from '../key-lifecycle/revoke.js';
@@ -42,12 +42,15 @@ export async function main(): Promise<void> {
   }
   await assertDependenciesReady(config, logger);
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
 
   const pool = createOwnerPool(config.DATABASE_URL);
+  const rawPool = createRawOwnerPool(config.RAW_DATABASE_URL);
   const keyStore = keyStoreForCli(config);
   const deps: RevokeDeps = {
     pool,
-    restrictedRunner: createRestrictedRunner(pool),
+    rawPool,
+    restrictedRunner: createRestrictedRunner(rawPool),
     keyStore,
     config,
     actor: values.actor ?? '',
@@ -73,6 +76,7 @@ export async function main(): Promise<void> {
     );
   } finally {
     await pool.end();
+    await rawPool.end();
   }
 }
 

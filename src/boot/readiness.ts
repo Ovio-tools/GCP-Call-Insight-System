@@ -81,6 +81,32 @@ async function checkPostgres(config: Config, deps: ReadinessDeps): Promise<void>
   }
 }
 
+async function checkRawPostgres(config: Config, deps: ReadinessDeps): Promise<void> {
+  if (!config.RAW_DATABASE_URL) {
+    throw new FatalBootError(
+      DATABASE_UNAVAILABLE,
+      `${DATABASE_UNAVAILABLE}: RAW_DATABASE_URL is not set`,
+      {
+        missing: 'RAW_DATABASE_URL',
+      },
+    );
+  }
+  const create = deps.createPg ?? defaultCreatePg;
+  const client = create(config.RAW_DATABASE_URL, config.DB_CONNECT_TIMEOUT_MS);
+  try {
+    await client.connect();
+    await client.query('SELECT 1');
+  } catch (cause) {
+    throw new FatalBootError(
+      DATABASE_UNAVAILABLE,
+      `${DATABASE_UNAVAILABLE}: ${(cause as Error).message}`,
+      sanitizeConnectionContext(config.RAW_DATABASE_URL),
+    );
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
 async function checkRedis(config: Config, deps: ReadinessDeps): Promise<void> {
   if (!config.REDIS_URL) {
     throw new FatalBootError(REDIS_UNAVAILABLE, `${REDIS_UNAVAILABLE}: REDIS_URL is not set`, {
@@ -103,10 +129,11 @@ async function checkRedis(config: Config, deps: ReadinessDeps): Promise<void> {
 }
 
 /**
- * Confirm Postgres and Redis are reachable at boot. On any failure — missing URL or
- * unreachable store — emit the store-specific code via {@link failBoot} and exit
- * non-zero. Postgres is checked first, then Redis. Clients and the exit hook are
- * injectable so tests run with no live servers.
+ * Confirm Postgres (primary + raw store DB-B) and Redis are reachable at boot. On any
+ * failure — missing URL or unreachable store — emit the store-specific code via
+ * {@link failBoot} and exit non-zero. The primary Postgres is checked first, then the raw
+ * store, then Redis. Clients and the exit hook are injectable so tests run with no live
+ * servers.
  */
 export async function assertDependenciesReady(
   config: Config,
@@ -115,6 +142,7 @@ export async function assertDependenciesReady(
 ): Promise<void> {
   try {
     await checkPostgres(config, deps);
+    await checkRawPostgres(config, deps);
     await checkRedis(config, deps);
   } catch (err) {
     if (err instanceof FatalBootError) {

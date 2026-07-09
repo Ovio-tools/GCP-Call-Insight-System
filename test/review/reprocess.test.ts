@@ -1,14 +1,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { hasTestDb, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, migrate, migrateRaw } from '../db/_pg.js';
 import { makeReviewHarness, postAction, type ReviewHarness } from './_harness.js';
 import { drainPendingReprocessRequests } from '../../src/reconciliation/reprocess-drain.js';
 
 const PATTERN = 'test-rvrep-%';
 
-describe.skipIf(!hasTestDb)('reprocess + approve + preflight (Task 6.2)', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('reprocess + approve + preflight (Task 6.2)', () => {
   let h!: ReviewHarness;
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     h = await makeReviewHarness();
   });
   afterEach(() => h.cleanup(PATTERN));

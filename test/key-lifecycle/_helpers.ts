@@ -53,11 +53,13 @@ export async function seedIsolatedActiveKey(
 
 export async function insertEncryptedRaw(
   owner: Pool,
+  rawOwner: Pool,
   provider: KeyProvider,
   callId: string,
   version: number,
   plaintext: string,
 ): Promise<void> {
+  // call_state lives on DB-A; raw_transcripts moved to DB-B (no cross-DB FK — logical ref only).
   await owner.query(
     `INSERT INTO call_state (call_id, source, current_stage, status)
      VALUES ($1,'test','store','completed') ON CONFLICT (call_id) DO NOTHING`,
@@ -69,14 +71,14 @@ export async function insertEncryptedRaw(
     version,
     Buffer.from(callId, 'utf8'),
   );
-  await owner.query(
+  await rawOwner.query(
     `INSERT INTO raw_transcripts (call_id, ciphertext, key_version) VALUES ($1,$2,$3)`,
     [callId, enc.ciphertext, version],
   );
 }
 
 export async function insertEncryptedVaultToken(
-  owner: Pool,
+  rawOwner: Pool,
   provider: KeyProvider,
   callId: string,
   token: string,
@@ -89,16 +91,19 @@ export async function insertEncryptedVaultToken(
     version,
     Buffer.from(callId, 'utf8'),
   );
-  await owner.query(
+  // token_vault lives on DB-B.
+  await rawOwner.query(
     `INSERT INTO token_vault (call_id, token, ciphertext, key_version) VALUES ($1,$2,$3,$4)`,
     [callId, token, enc.ciphertext, version],
   );
 }
 
 /** Remove everything this suite created and restore key_version=1 as the sole active row. */
-export async function cleanupKeyLifecycle(owner: Pool): Promise<void> {
-  await owner.query(`DELETE FROM raw_transcripts WHERE call_id LIKE $1`, [`${KL_CALL}%`]);
-  await owner.query(`DELETE FROM token_vault WHERE call_id LIKE $1`, [`${KL_CALL}%`]);
+export async function cleanupKeyLifecycle(owner: Pool, rawOwner: Pool): Promise<void> {
+  // Raw/vault ciphertext lives on DB-B.
+  await rawOwner.query(`DELETE FROM raw_transcripts WHERE call_id LIKE $1`, [`${KL_CALL}%`]);
+  await rawOwner.query(`DELETE FROM token_vault WHERE call_id LIKE $1`, [`${KL_CALL}%`]);
+  // Key metadata + call_state stay on DB-A.
   await owner.query(`DELETE FROM call_state WHERE call_id LIKE $1`, [`${KL_CALL}%`]);
   await owner.query(`DELETE FROM key_lifecycle_events WHERE actor LIKE 'kl-%'`);
   await owner.query(`DELETE FROM key_versions WHERE kek_version LIKE $1`, [`${KL_KEK_PREFIX}%`]);

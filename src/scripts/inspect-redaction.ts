@@ -4,7 +4,7 @@ import type { Logger } from 'pino';
 import { loadConfig } from '../config/index.js';
 import type { Config } from '../config/schema.js';
 import { createBootLogger } from '../boot/logger.js';
-import { createAppPool } from '../db/index.js';
+import { createAppPool, createRawAppPool } from '../db/index.js';
 import type { KeyProvider } from '../crypto/index.js';
 import { getTranscript } from '../db/repositories/raw-transcripts-repo.js';
 import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
@@ -137,13 +137,16 @@ export interface InspectDeps {
   keyProvider: KeyProvider;
 }
 
-/** Decrypt one call's raw transcript and run the exact redaction-stage pipeline (read-only). */
+/**
+ * Decrypt one call's raw transcript and run the exact redaction-stage pipeline (read-only).
+ * `rawPool` is the raw-store (DB-B) pool — the only thing this reads is `raw_transcripts`.
+ */
 export async function inspectCall(
-  pool: Pool,
+  rawPool: Pool,
   callId: string,
   deps: InspectDeps,
 ): Promise<CallInspection> {
-  const raw = await getTranscript(pool, deps.keyProvider, callId);
+  const raw = await getTranscript(rawPool, deps.keyProvider, callId);
   if (raw === undefined) return { callId, present: false };
 
   const transcript = transcriptToRedactableText(raw);
@@ -207,11 +210,15 @@ export async function main(): Promise<void> {
   // BEFORE any DB connection or decrypt — this tool prints real content.
   assertStagingResources(config);
   if (!config.DATABASE_URL) throw new Error('DATABASE_URL is not set');
+  if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
 
   const { callIds, full } = parseArgs(process.argv.slice(2));
   const denyTerms = loadDenyList(config.REDACTION_DENY_LIST_PATH);
 
+  // DB-A pool: key metadata for the service key provider.
   const pool = createAppPool(config.DATABASE_URL);
+  // DB-B pool: the raw transcript store this tool decrypts and inspects.
+  const rawPool = createRawAppPool(config.RAW_DATABASE_URL);
   try {
     const keyProvider = await buildServiceKeyProvider({ config, pool });
     const detectors = buildDetectors(config, denyTerms);
@@ -221,11 +228,12 @@ export async function main(): Promise<void> {
       `\n=== redaction inspection (staging, PII-exposing) — ${callIds.length} call(s) ===\n`,
     );
     for (const callId of callIds) {
-      const inspection = await inspectCall(pool, callId, deps);
+      const inspection = await inspectCall(rawPool, callId, deps);
       process.stdout.write(`${formatCallInspection(inspection, { full })}\n\n`);
     }
     logger.info({ calls: callIds.length }, 'redaction inspection complete');
   } finally {
+    await rawPool.end();
     await pool.end();
   }
 }

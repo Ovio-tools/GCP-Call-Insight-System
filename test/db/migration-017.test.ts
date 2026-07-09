@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
-import { hasTestDb, makePool, migrate } from './_pg.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from './_pg.js';
 import { createAppPool } from '../../src/db/pool.js';
 import { TEST_DATABASE_URL } from './_pg.js';
 
@@ -10,15 +10,30 @@ import { TEST_DATABASE_URL } from './_pg.js';
  * table, the append-only `key_lifecycle_events` audit log, and the column-scoped `key_admin_role`
  * (metadata + audit ONLY — never raw/vault ciphertext).
  *
- * With migrations 018 (backfill run status, Task 11.2) and 019 (kek_versions app read grant)
- * stacked on top, ABOVE = 3: `down(3)` rolls back 019 + 018 then exposes the pre-017 schema,
- * `up(3)` re-applies 017 (re-running its preflight) + 018 + 019.
+ * With migrations 018 (backfill run status, Task 11.2), 019 (kek_versions app read grant), and
+ * 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) stacked on top, ABOVE = 4: `down(4)`
+ * rolls back the drop migration + 019 + 018 then exposes the pre-017 schema, `up(4)` re-applies
+ * 017 (re-running its preflight) + 018 + 019 + the drop. Crucially, the drop migration's `down()`
+ * RECREATES raw_transcripts + token_vault in DB-A, so at the rolled-down state (below 017) those
+ * tables exist in DB-A again — which is exactly what the zero-active-WITH-encrypted-rows preflight
+ * below relies on (it seeds a raw_transcripts row in DB-A to trigger migration 017's preflight,
+ * and 017 re-runs before the drop migration re-applies, so raw_transcripts is present then).
+ *
+ * Post-split, the key-administrator role can never reach raw/vault — a structural guarantee, not a
+ * runtime grant check: raw_transcripts + token_vault are ABSENT from DB-A (where key_admin_role
+ * lives — see backup-isolation-guard.test.ts), and DB-B (where raw/vault live) never grants
+ * key_admin_role anything. The test below asserts the DB-B half: key_admin_role has ZERO table
+ * grants on the raw store. (It uses the table ACLs rather than `pg_roles`, because roles are
+ * cluster-global shared catalog: on a shared local cluster key_admin_role is visible from DB-B
+ * too, so a `pg_roles` existence check is topology-dependent; an ACL-grant check is 0 in both the
+ * shared-local and separate-CI-cluster topologies and is not flaky under concurrent role drops.)
  */
-const ABOVE = 3;
+const ABOVE = 4;
 
 describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
   let owner!: Pool;
   let keyAdmin!: Pool;
+  let rawOwner: Pool | undefined;
 
   /** Snapshot key_versions status so preflight tests can restore shared state exactly. */
   async function snapshotKeyVersions(): Promise<Array<{ key_version: number; status: string }>> {
@@ -49,11 +64,16 @@ describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
     await migrate('up');
     owner = makePool();
     keyAdmin = createAppPool(TEST_DATABASE_URL as string, 'key_admin_role');
+    if (hasRawTestDb) {
+      await migrateRaw('up');
+      rawOwner = makeRawPool();
+    }
   });
   afterAll(async () => {
     await migrate('up'); // restore full schema for later suites
     await owner.end();
     await keyAdmin.end();
+    if (rawOwner) await rawOwner.end();
   });
 
   it('adds the recovery-window columns to key_versions', async () => {
@@ -207,8 +227,8 @@ describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
     }
   });
 
-  it('key_admin_role can INSERT key_versions + events but has NO raw/vault grants', async () => {
-    // INSERT a rotating key_version via key_admin_role (column-scoped grant).
+  it('key_admin_role can INSERT key_versions + events but has no raw/vault grants (DB-A)', async () => {
+    // INSERT a rotating key_version via key_admin_role (column-scoped grant) on DB-A.
     await keyAdmin.query(
       `INSERT INTO key_versions (key_version, status, wrapped_dek_ref, kek_version)
        VALUES (9401, 'rotating', 'ref', 'kek')`,
@@ -221,16 +241,33 @@ describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
     await expect(
       keyAdmin.query(`UPDATE key_versions SET status = 'retired' WHERE key_version = 9401`),
     ).resolves.toBeDefined();
-    // NO access to raw_transcripts / token_vault.
-    await expect(keyAdmin.query(`SELECT ciphertext FROM raw_transcripts LIMIT 1`)).rejects.toThrow(
-      /permission denied/i,
-    );
-    await expect(keyAdmin.query(`SELECT ciphertext FROM token_vault LIMIT 1`)).rejects.toThrow(
-      /permission denied/i,
-    );
     await owner.query(`DELETE FROM key_lifecycle_events WHERE actor = 'key-admin'`);
     await owner.query(`DELETE FROM key_versions WHERE key_version = 9401`);
   });
+
+  it.skipIf(!hasRawTestDb)(
+    'key_admin_role has ZERO raw/vault footprint in the raw store (DB-B)',
+    async () => {
+      // The key-administrator role can NEVER reach raw/vault. Structural, post-split (ADR 0008 Move
+      // 2): key_admin_role is a DB-A-only role (created by migration 017; migrations-raw never
+      // creates it) and raw_transcripts + token_vault live ONLY in DB-B (asserted absent from DB-A
+      // by backup-isolation-guard.test.ts). DB-B never grants key_admin_role anything, so it has
+      // ZERO ACL entries on the raw store's tables. Asserted via the table ACLs (aclexplode) rather
+      // than `pg_roles`, because roles are cluster-global shared catalog — on a shared local cluster
+      // key_admin_role is visible from DB-B, so a role-existence check is topology-dependent; an
+      // ACL-grant count is 0 in BOTH the shared-local and separate-CI-cluster topologies.
+      const grants = await rawOwner!.query<{ n: number }>(
+        `SELECT count(*)::int AS n
+           FROM pg_class c
+           CROSS JOIN LATERAL aclexplode(c.relacl) a
+           JOIN pg_roles r ON r.oid = a.grantee
+          WHERE c.relnamespace = 'public'::regnamespace
+            AND c.relname IN ('raw_transcripts', 'token_vault')
+            AND r.rolname = 'key_admin_role'`,
+      );
+      expect(grants.rows[0]?.n).toBe(0);
+    },
+  );
 
   it('down removes the 016 objects; up restores them (round-trip)', async () => {
     const snap = await snapshotKeyVersions();

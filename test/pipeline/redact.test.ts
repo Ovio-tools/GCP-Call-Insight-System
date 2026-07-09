@@ -13,7 +13,10 @@ import {
 } from '../../src/db/repositories/clean-transcripts-repo.js';
 import { getFindings } from '../../src/db/repositories/redaction-findings-repo.js';
 import { putTranscript } from '../../src/db/repositories/raw-transcripts-repo.js';
-import { createRestrictedRunner } from '../../src/db/restricted/restricted-context.js';
+import {
+  type RestrictedRunner,
+  createRestrictedRunner,
+} from '../../src/db/restricted/restricted-context.js';
 import { getToken } from '../../src/db/restricted/token-vault-repo.js';
 import { ConfigError } from '../../src/config/index.js';
 import { assertNoContentFields } from '../../src/logging/redaction.js';
@@ -24,8 +27,8 @@ import { mergeDetections } from '../../src/redaction/spans.js';
 import { tokenize } from '../../src/redaction/tokenize.js';
 import type { Detector, DetectorResult } from '../../src/redaction/types.js';
 import { makeTestConfig } from '../_config.js';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
-import { cleanupCalls, makeAppPool } from '../db/_dal.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
+import { cleanupCalls, cleanupRawCalls, makeAppPool, makeRawAppPool } from '../db/_dal.js';
 
 const PATTERN = 'test-rd-%';
 const HASH_KEY = Buffer.alloc(32, 0x5a).toString('base64');
@@ -68,9 +71,12 @@ function collectingLogger(): { lines: string[]; logger: ReturnType<typeof create
   return { lines, logger: createRootLogger({ level: 'debug', destination: stream }) };
 }
 
-describe.skipIf(!hasTestDb)('redact stage', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('redact stage', () => {
   let owner!: Pool;
   let app!: Pool;
+  // DB-B (raw store): raw_transcripts + token_vault now live only here.
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
   const keyProvider = new LocalKeyProvider({
     masterKey: Buffer.alloc(DEK_BYTES, 0x07),
     activeKeyVersion: 1,
@@ -101,7 +107,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
       currentStage: 'redact',
       status: 'processing',
     });
-    await putTranscript(app, keyProvider, { callId, transcript });
+    await putTranscript(rawApp, keyProvider, { callId, transcript });
   };
 
   const makeHandler = (
@@ -112,6 +118,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     createRedactionHandler({
       keyProvider,
       config: { ...config, ...overrides },
+      rawPool: rawApp,
       detectors,
       denyTerms: [],
       ...(compose ? { compose } : {}),
@@ -143,8 +150,11 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
     await owner.query(
       `INSERT INTO key_versions (key_version, status, wrapped_dek_ref, kek_version)
        VALUES (1, 'active', 'local:test', 'kek-test') ON CONFLICT (key_version) DO NOTHING`,
@@ -152,11 +162,14 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.query(`DELETE FROM alert_events WHERE error_code = 'REDACTION_LOW_CONFIDENCE'`);
   });
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
   });
 
   it('happy path: vault round-trips byte-exact, findings carry refs/hashes only, clean row written, advances', async () => {
@@ -174,7 +187,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     expect(Number(clean?.redaction_risk_score)).toBe(0);
 
     // Vault round-trip through the envelope helper is byte-exact.
-    const runner = createRestrictedRunner(app);
+    const runner = createRestrictedRunner(rawApp);
     const name = await getToken(runner, keyProvider, { callId, token: '[NAME_1]' });
     const phone = await getToken(runner, keyProvider, { callId, token: '[PHONE_1]' });
     expect(name?.toString('utf8')).toBe('John Smith');
@@ -261,7 +274,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     expect(clean?.redacted_text).not.toContain('example.com');
 
     // The repaired value is vaulted like any detector hit.
-    const runner = createRestrictedRunner(app);
+    const runner = createRestrictedRunner(rawApp);
     const vaulted = await getToken(runner, keyProvider, { callId, token: '[EMAIL_1]' });
     expect(vaulted?.toString('utf8')).toBe('john＠example.com');
   });
@@ -346,7 +359,7 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     // The clean row is byte-for-byte unchanged and NOTHING was written for the call.
     const after = await owner.query(`SELECT * FROM clean_transcripts WHERE call_id = $1`, [callId]);
     expect(after.rows).toEqual(before.rows);
-    const vault = await owner.query<{ n: string }>(
+    const vault = await rawOwner.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM token_vault WHERE call_id = $1`,
       [callId],
     );
@@ -443,13 +456,13 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
     const findings = await getFindings(app, callId);
     expect(findings).toHaveLength(3); // active set only — the replace soft-deleted the old one
 
-    const vaultRows = await owner.query<{ n: string }>(
+    const vaultRows = await rawOwner.query<{ n: string }>(
       `SELECT count(*)::text AS n FROM token_vault WHERE call_id = $1`,
       [callId],
     );
     expect(Number(vaultRows.rows[0]?.n)).toBe(2);
 
-    const runner = createRestrictedRunner(app);
+    const runner = createRestrictedRunner(rawApp);
     const name = await getToken(runner, keyProvider, { callId, token: '[NAME_1]' });
     expect(name?.toString('utf8')).toBe('John Smith');
   });
@@ -559,9 +572,94 @@ describe.skipIf(!hasTestDb)('redact stage', () => {
       createRedactionHandler({
         keyProvider,
         config: makeTestConfig(),
+        rawPool: rawApp,
         detectors: [happyDetector()],
         denyTerms: [],
       }),
     ).toThrow(ConfigError);
+  });
+
+  /**
+   * Task 8.2d — the raw store (DB-B, raw_transcripts + token_vault) is now a
+   * SEPARATE Postgres. A DB-B outage during redact must be FAIL-CLOSED: the raw
+   * read (step 1) or the vault write (step 4a) throws BEFORE any DB-A findings /
+   * clean-transcript write, so the handler rejects, the call never advances, and
+   * no redacted (clean) text is ever written or egressed. The rejection is a
+   * retryable stage failure (runner → BullMQ retry → dead-letter + alert),
+   * identical to a mid-stage DB-A outage — never a partial egress, never a hold.
+   */
+  describe('fail-closed on a raw-store (DB-B) outage', () => {
+    /** Count active-or-not rows on DB-A for a call (owner pool — app_role has no such reach). */
+    const dbACount = async (table: string, callId: string): Promise<number> => {
+      const r = await owner.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM ${table} WHERE call_id = $1`,
+        [callId],
+      );
+      return Number(r.rows[0]?.n);
+    };
+
+    it('raw read (step 1) fails: rejects, zero clean/findings egress on DB-A', async () => {
+      const callId = 'test-rd-dbb-read';
+      // call_state on DB-A so the retention preflight passes; no raw row needed — the
+      // fake DB-B pool rejects the read as if the raw store were unreachable.
+      await upsertCallState(app, {
+        callId,
+        source: 'test',
+        currentStage: 'redact',
+        status: 'processing',
+      });
+
+      const connErr = Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:5432'), {
+        code: 'ECONNREFUSED',
+      });
+      // A pg-Pool stand-in whose every query/connect rejects with a connection-style error.
+      const downRawPool = {
+        query: () => Promise.reject(connErr),
+        connect: () => Promise.reject(connErr),
+      } as unknown as Pool;
+
+      const handler = createRedactionHandler({
+        keyProvider,
+        config,
+        rawPool: downRawPool,
+        detectors: [happyDetector()],
+        denyTerms: [],
+      });
+
+      await expect(handler(ctx(callId))).rejects.toThrow(/ECONNREFUSED/);
+
+      // Zero egress: getTranscript threw before any DB-A write ran.
+      expect(await dbACount('clean_transcripts', callId)).toBe(0);
+      expect(await dbACount('redaction_findings', callId)).toBe(0);
+    });
+
+    it('vault write (step 4a) fails: rejects, zero clean/findings egress on DB-A', async () => {
+      const callId = 'test-rd-dbb-vault';
+      // Raw transcript IS readable on DB-B — the failure is the vault write, exercising
+      // the vault-FIRST ordering: putToken must run (and here throw) before any findings
+      // or clean-transcript write on DB-A.
+      await seedProcessing(callId);
+
+      const connErr = Object.assign(new Error('Connection terminated unexpectedly'), {
+        code: '08006', // pg connection_failure SQLSTATE
+      });
+      const downRunner: RestrictedRunner = { run: () => Promise.reject(connErr) };
+
+      const handler = createRedactionHandler({
+        keyProvider,
+        config,
+        rawPool: rawApp,
+        detectors: [happyDetector()], // yields vault entries, so putToken is reached
+        denyTerms: [],
+        makeRestrictedRunner: () => downRunner,
+      });
+
+      await expect(handler(ctx(callId))).rejects.toThrow(/Connection terminated/);
+
+      // The key privacy property: a DB-B failure mid-vault cannot leak a partially
+      // redacted clean row, because vault precedes and gates the DB-A writes.
+      expect(await dbACount('clean_transcripts', callId)).toBe(0);
+      expect(await dbACount('redaction_findings', callId)).toBe(0);
+    });
   });
 });

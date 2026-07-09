@@ -1,14 +1,17 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
-import { hasTestDb, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, migrate, migrateRaw } from '../db/_pg.js';
 import { makeReviewHarness, type ReviewHarness } from './_harness.js';
 import type { ReviewDetail } from '../../src/review/dto.js';
 
 const PATTERN = 'test-rvdet-%';
 
-describe.skipIf(!hasTestDb)('review detail content + raw availability (Task 6.2)', () => {
+const DESC = 'review detail content + raw availability (Task 6.2)';
+
+describe.skipIf(!hasTestDb || !hasRawTestDb)(DESC, () => {
   let h!: ReviewHarness;
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     h = await makeReviewHarness();
   });
   afterEach(() => h.cleanup(PATTERN));

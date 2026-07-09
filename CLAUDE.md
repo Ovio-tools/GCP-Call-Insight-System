@@ -94,8 +94,12 @@ only from de-identified stores (never `raw_transcripts`/`token_vault`, sentiment
 gated), and `markSample`→`seedLabeledBaseline` seeding the Phase 6.3 corpus via the existing
 `syncLabeledExamples` (no duplicated label logic). The
 remaining work (the historical backfill runner Task 11.2, and the ServiceTitan write-back Phase 12)
-does not yet exist. The NER model is vendored by
-`npm run model:fetch` into `models/` (gitignored); model stages read ONLY
+does not yet exist. ADR 0008 Move 2 (raw-store DB isolation) moved `raw_transcripts` +
+`token_vault` out of the main DB (DB-A) into a separate backups-off Postgres (DB-B),
+reached via `RAW_DATABASE_URL` with its own pool family (`src/db/raw-store.ts`) and
+migration set (`migrations-raw/`); see
+`docs/adr/0008-railway-secret-key-store-and-raw-store-isolation.md`. The NER model is
+vendored by `npm run model:fetch` into `models/` (gitignored); model stages read ONLY
 `clean_transcripts` (enforced by `test/pipeline/model-stage-import-guard.test.ts`).
 
 ## 1. Architecture
@@ -131,7 +135,10 @@ Only redacted text crosses to the Anthropic API. Raw transcripts, the token vaul
 and recordings never leave Railway — a hard line with tests that assert it. Two
 extra checks back it up: a residual-PII scan over the redacted text before it is
 sent, and a second PII scan over any extracted verbatim `customer_language` phrases
-before they are stored.
+before they are stored. Raw transcripts and the token vault are also PHYSICALLY
+isolated in a separate backups-off Postgres (DB-B; ADR 0008 Move 2), so the
+highest-sensitivity data never enters a long-lived backup — a physical complement to
+the crypto-shred promise.
 
 ## 2. Data stores
 
@@ -145,8 +152,9 @@ are minimized in logs, dead-letter rows, and raw webhook events.
 | ---------------------- | ------------------------------------------------------------------------ | ----------- | ------------------------------------------ |
 | `call_state`           | per-call status, current stage, metadata, drop_reason (set when skipped) | low         | indefinite (not purged)                    |
 | `raw_webhook_events`   | allowlisted metadata only; phone/name hashed; no message content         | low–medium  | short, purgeable                           |
-| `raw_transcripts`      | original transcript text, envelope-encrypted                             | high        | short, purged after window                 |
-| `token_vault`          | token→value map, envelope-encrypted; restricted role only                | highest     | tight access, purged with raw              |
+| `raw_transcripts`      | original transcript text, envelope-encrypted; in DB-B (backups OFF)      | high        | short, purged after window                 |
+| `token_vault`          | token→value map, envelope-encrypted; restricted role only; in DB-B       | highest     | tight access, purged with raw              |
+| `raw_purge_tombstone`  | DB-B-only finality marker: a purged call can never be repopulated        | low         | indefinite (in DB-B)                       |
 | `clean_transcripts`    | redacted text, risk score, reasons                                       | medium      | kept for re-runs, purgeable                |
 | `redaction_findings`   | detected entities + residual-scan results; no raw values in clear        | medium      | purged with the clean transcript           |
 | `structured_knowledge` | extracted records, schema + prompt version                               | medium      | the durable asset                          |
@@ -285,7 +293,8 @@ boundary with zod.
 **Config** — 12-factor; configuration from environment variables only. A zod schema
 validates at boot; the process exits with `CONFIG_MISSING_OR_INVALID` that **names
 the missing value**. Keep `.env.example` current — schema and example change
-together. No secrets in the repo.
+together. No secrets in the repo. `RAW_DATABASE_URL` is the DB-B (raw store)
+connection; boot readiness requires and probes it in staging/prod (ADR 0008 Move 2).
 
 **Logging** — structured JSON via pino. A `call_id` flows through every stage. No
 transcript content or PII in any log line, ever; the redaction guard refuses to log

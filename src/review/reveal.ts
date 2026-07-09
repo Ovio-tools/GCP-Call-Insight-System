@@ -12,6 +12,8 @@ import { ReviewConflictError, ReviewNotFoundError } from './errors.js';
 
 export interface PerformRevealInput {
   pool: Pool;
+  /** Raw-store (DB-B) app pool — the raw transcript reads run here, off the DB-A review-lock tx. */
+  rawPool: Pool;
   runner: RestrictedRunner;
   keyProvider: KeyProvider;
   config: Config;
@@ -62,14 +64,14 @@ export async function performReveal(input: PerformRevealInput): Promise<RevealRe
     if (review.status !== 'open' && review.status !== 'in_review') throw new ReviewConflictError();
     const callId = review.call_id;
 
-    const present = await transcriptExists(client, callId);
+    const present = await transcriptExists(input.rawPool, callId);
     if (!rawTranscriptRevealAllowed(review, now, config, present)) {
       // Purged, past the time-based cap (even with raw_purged_at still null), or transcript missing:
       // no decrypt, no audit row.
       return { raw_available: false };
     }
 
-    const transcript = await getTranscript(client, input.keyProvider, callId);
+    const transcript = await getTranscript(input.rawPool, input.keyProvider, callId);
     if (transcript === undefined) {
       // Raced with a purge between the existence check and the read — treat as unavailable.
       return { raw_available: false };
@@ -78,8 +80,9 @@ export async function performReveal(input: PerformRevealInput): Promise<RevealRe
     let vaultValue: string | undefined;
     if (token !== undefined) {
       // Reject a token that does not belong to THIS call BEFORE decrypting — no cross-call pivot.
-      // The restricted vault reads run on their own connection but the review row stays locked by
-      // this tx throughout, so the reveal still cannot outlive an active review.
+      // The restricted vault reads (and, since DB isolation, the raw transcript read above) run on
+      // their own DB-B connection, but the review row stays locked by this DB-A tx throughout, so
+      // the reveal still cannot outlive an active review.
       const belongs = await tokenExistsForCall(input.runner, { callId, token });
       if (!belongs) throw new ReviewConflictError('Token does not belong to this call.');
       const plaintext = await getToken(input.runner, input.keyProvider, { callId, token });

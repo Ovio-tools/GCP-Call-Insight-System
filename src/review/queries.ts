@@ -50,6 +50,7 @@ export async function buildReviewList(pool: Pool, now: Date): Promise<ReviewList
  */
 export async function buildReviewDetail(
   pool: Pool,
+  rawPool: Pool,
   config: Config,
   now: Date,
   reviewId: string,
@@ -60,7 +61,8 @@ export async function buildReviewDetail(
   const callId = review.call_id;
   const isActive = review.status === 'open' || review.status === 'in_review';
 
-  const present = await transcriptExists(pool, callId);
+  // raw_transcripts lives in the isolated raw store (DB-B); its presence check reads DB-B.
+  const present = await transcriptExists(rawPool, callId);
   const rawAvailable = rawTranscriptRevealAllowed(review, now, config, present);
 
   // Redacted content: only from a LIVE clean row, and only if it passes a value-level residual

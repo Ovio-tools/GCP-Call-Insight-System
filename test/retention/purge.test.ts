@@ -2,11 +2,21 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import type { Pool, PoolClient } from 'pg';
 import { RetentionPurgeError, runPurge } from '../../src/retention/purge.js';
 import { createAppPool } from '../../src/db/index.js';
+import { createRawPurgePool } from '../../src/db/raw-store.js';
 import type { Config } from '../../src/config/schema.js';
 import { makeTestConfig } from '../_config.js';
 import { makeCapturingLogger } from '../http/_helpers.js';
-import { hasTestDb, makePool, migrate, TEST_DATABASE_URL } from '../db/_pg.js';
-import { cleanupCalls, seedKeyVersion } from '../db/_dal.js';
+import {
+  hasRawTestDb,
+  hasTestDb,
+  makePool,
+  makeRawPool,
+  migrate,
+  migrateRaw,
+  TEST_DATABASE_URL,
+  TEST_RAW_DATABASE_URL,
+} from '../db/_pg.js';
+import { cleanupCalls, cleanupRawCalls, seedKeyVersion } from '../db/_dal.js';
 
 describe('RetentionPurgeError sanitization', () => {
   it('never leaks the underlying cause text into message or String()', () => {
@@ -53,12 +63,15 @@ function purgeConfig(over: Partial<Config> = {}): Config {
   });
 }
 
-describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
-  let owner!: Pool;
-  let purge!: Pool;
+describe.skipIf(!hasTestDb || !hasRawTestDb)('runPurge (Task 8.1 / 8.2d two-pool)', () => {
+  let owner!: Pool; // DB-A owner (call_state, review_queue, clean_transcripts, …)
+  let rawOwner!: Pool; // DB-B owner (raw_transcripts, token_vault, tombstone)
+  let purge!: Pool; // DB-A purge_role
+  let rawPurge!: Pool; // DB-B purge_role
   const logger = makeCapturingLogger().logger;
 
-  const run = (config = purgeConfig(), now = NOW) => runPurge({ pool: purge, config, logger, now });
+  const run = (config = purgeConfig(), now = NOW) =>
+    runPurge({ pool: purge, rawPool: rawPurge, config, logger, now });
 
   // --- seeders (owner, explicit timestamps) ---
   async function ensureCall(callId: string, status = 'processing'): Promise<void> {
@@ -68,13 +81,15 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
       [callId, status],
     );
   }
+  // raw_transcripts + token_vault live ONLY in DB-B → seed on the DB-B owner pool. Their
+  // key_version is a plain column there (no cross-DB FK), so no DB-B key_versions seed is needed.
   async function seedRaw(
     callId: string,
     eligible: Date | null,
     soft: Date | null = null,
   ): Promise<void> {
     await ensureCall(callId);
-    await owner.query(
+    await rawOwner.query(
       `INSERT INTO raw_transcripts (call_id, ciphertext, key_version, retention_eligible_at, soft_deleted_at)
        VALUES ($1, $2, 1, $3, $4)`,
       [callId, Buffer.from('cipher'), eligible, soft],
@@ -85,7 +100,7 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     eligible: Date | null,
     soft: Date | null = null,
   ): Promise<void> {
-    await owner.query(
+    await rawOwner.query(
       `INSERT INTO token_vault (call_id, token, ciphertext, key_version, retention_eligible_at, soft_deleted_at)
        VALUES ($1, '[NAME_1]', $2, 1, $3, $4)`,
       [callId, Buffer.from('cipher'), eligible, soft],
@@ -135,28 +150,39 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     return rows[0]!.id;
   }
 
+  // raw_transcripts / token_vault / raw_purge_tombstone live in DB-B; everything else in DB-A.
+  const RAW_TABLES = new Set(['raw_transcripts', 'token_vault', 'raw_purge_tombstone']);
+  const poolFor = (table: string): Pool => (RAW_TABLES.has(table) ? rawOwner : owner);
   const col = async (table: string, callId: string, c: string): Promise<unknown> =>
     (
-      await owner.query<{ v: unknown }>(`SELECT ${c} AS v FROM ${table} WHERE call_id = $1`, [
-        callId,
-      ])
+      await poolFor(table).query<{ v: unknown }>(
+        `SELECT ${c} AS v FROM ${table} WHERE call_id = $1`,
+        [callId],
+      )
     ).rows[0]?.v;
   const rowExists = async (table: string, callId: string): Promise<boolean> =>
-    ((await owner.query(`SELECT 1 FROM ${table} WHERE call_id = $1`, [callId])).rowCount ?? 0) > 0;
+    ((await poolFor(table).query(`SELECT 1 FROM ${table} WHERE call_id = $1`, [callId])).rowCount ??
+      0) > 0;
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
+    rawOwner = makeRawPool();
     purge = createAppPool(TEST_DATABASE_URL as string, 'purge_role');
+    rawPurge = createRawPurgePool(TEST_RAW_DATABASE_URL as string);
     await seedKeyVersion(owner);
   });
   afterEach(async () => {
     await cleanupCalls(owner, PATTERN);
+    await cleanupRawCalls(rawOwner, PATTERN);
     await owner.query(`DELETE FROM raw_webhook_events WHERE source = 'dialpad'`);
   });
   afterAll(async () => {
     await owner.end();
+    await rawOwner.end();
     await purge.end();
+    await rawPurge.end();
   });
 
   it('leaves rows inside their soft window untouched', async () => {
@@ -296,6 +322,8 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     expect(await rowExists('raw_transcripts', 'test-purge-cap')).toBe(false);
     expect(await rowExists('token_vault', 'test-purge-cap')).toBe(false);
     expect(await rowExists('clean_transcripts', 'test-purge-cap')).toBe(true);
+    // The DB-B-local finality marker the recreate/write guards depend on is present.
+    expect(await rowExists('raw_purge_tombstone', 'test-purge-cap')).toBe(true);
     expect(
       (
         await owner.query<{ raw_purged_at: Date | null }>(
@@ -393,7 +421,7 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     // dry-run and the real run must agree.
     await ensureCall('test-purge-orphan-calls');
     for (const token of ['[NAME_1]', '[NAME_2]']) {
-      await owner.query(
+      await rawOwner.query(
         `INSERT INTO token_vault (call_id, token, ciphertext, key_version, retention_eligible_at)
          VALUES ($1, $2, $3, 1, $4)`,
         ['test-purge-orphan-calls', token, Buffer.from('cipher'), daysAgo(20)],
@@ -445,6 +473,102 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     expect(capAction?.count).toBe(2);
   });
 
+  it('held-cap converges when the DB-A raw_purged_at stamp fails after the DB-B commit', async () => {
+    // Simulate a crash/failure AFTER the DB-B delete+tombstone commit but BEFORE the DB-A audit
+    // stamp: a faulty DB-A purge pool whose markRawPurged UPDATE rejects. The DB-B tombstone is
+    // the authoritative finality, so the run is fail-loud, and a later run converges idempotently.
+    const id = await seedReview('test-purge-converge', 'unresolvable', daysAgo(5)); // > 72h
+    await seedRaw('test-purge-converge', null);
+    await seedVault('test-purge-converge', null);
+
+    const faultyDbAPool = createAppPool(TEST_DATABASE_URL as string, 'purge_role');
+    const faultyDbA = {
+      connect: async () => {
+        const client = await faultyDbAPool.connect();
+        const orig = client.query.bind(client);
+        (client as unknown as { query: unknown }).query = (text: unknown, params: unknown) => {
+          if (
+            typeof text === 'string' &&
+            text.includes('UPDATE review_queue') &&
+            text.includes('raw_purged_at')
+          ) {
+            return Promise.reject(
+              Object.assign(new Error('injected markRawPurged failure'), { code: 'XX000' }),
+            );
+          }
+          return (orig as (t: unknown, p: unknown) => unknown)(text, params);
+        };
+        return client;
+      },
+    } as unknown as Pool;
+
+    // First run: fail-loud after the DB-B commit.
+    try {
+      await expect(
+        runPurge({ pool: faultyDbA, rawPool: rawPurge, config: purgeConfig(), logger, now: NOW }),
+      ).rejects.toThrow(/retention purge failed/);
+    } finally {
+      await faultyDbAPool.end();
+    }
+
+    // DB-B finality already landed: raw/vault gone, tombstone present.
+    expect(await rowExists('raw_transcripts', 'test-purge-converge')).toBe(false);
+    expect(await rowExists('token_vault', 'test-purge-converge')).toBe(false);
+    expect(await rowExists('raw_purge_tombstone', 'test-purge-converge')).toBe(true);
+    // …but the DB-A audit stamp did NOT land (the UPDATE was rejected).
+    expect(
+      (
+        await owner.query<{ raw_purged_at: Date | null }>(
+          `SELECT raw_purged_at FROM review_queue WHERE id = $1`,
+          [id],
+        )
+      ).rows[0]?.raw_purged_at,
+    ).toBeNull();
+
+    // A second, healthy run converges with no double effect: DB-B DELETEs are no-ops, the
+    // tombstone stays a single ON-CONFLICT-DO-NOTHING row, and the DB-A stamp finally lands.
+    await run();
+    expect(await rowExists('raw_purge_tombstone', 'test-purge-converge')).toBe(true);
+    expect(
+      (
+        await rawOwner.query<{ n: string }>(
+          `SELECT count(*)::text AS n FROM raw_purge_tombstone WHERE call_id = $1`,
+          ['test-purge-converge'],
+        )
+      ).rows[0]?.n,
+    ).toBe('1');
+    expect(
+      (
+        await owner.query<{ raw_purged_at: Date | null }>(
+          `SELECT raw_purged_at FROM review_queue WHERE id = $1`,
+          [id],
+        )
+      ).rows[0]?.raw_purged_at,
+    ).not.toBeNull();
+  });
+
+  it('RAW block→unblock→purge: a blocking review defers the raw purge until it is resolved', async () => {
+    // Symmetric to the CLEAN "held call that never completes" case, for the DB-A pre-filter.
+    await seedReview('test-purge-raw-unblock', 'open', daysAgo(1)); // active → blocks
+    await seedRaw('test-purge-raw-unblock', daysAgo(20)); // normally soft-eligible (past soft 10)
+    await seedVault('test-purge-raw-unblock', daysAgo(20));
+    await run();
+    // Blocked by the open review → NOT purged despite being past window.
+    expect(await col('raw_transcripts', 'test-purge-raw-unblock', 'soft_deleted_at')).toBeNull();
+    expect(await col('token_vault', 'test-purge-raw-unblock', 'soft_deleted_at')).toBeNull();
+
+    // Resolve the review → no longer blocking → a later run soft-purges the raw + vault.
+    await owner.query(
+      `UPDATE review_queue SET status = 'resolved', resolved_at = now() WHERE call_id = $1`,
+      ['test-purge-raw-unblock'],
+    );
+    await run();
+    expect(
+      await col('raw_transcripts', 'test-purge-raw-unblock', 'soft_deleted_at'),
+    ).not.toBeNull();
+    expect(await col('token_vault', 'test-purge-raw-unblock', 'soft_deleted_at')).not.toBeNull();
+  });
+
   it('CLEAN indefinite mode (never/never) never soft- or hard-deletes clean/findings', async () => {
     await seedClean('test-purge-indef', daysAgo(400));
     await seedFinding('test-purge-indef', daysAgo(400));
@@ -463,7 +587,7 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     await seedRaw('test-purge-restore', daysAgo(20));
     await run();
     expect(await col('raw_transcripts', 'test-purge-restore', 'soft_deleted_at')).not.toBeNull();
-    await owner.query(`UPDATE raw_transcripts SET soft_deleted_at = NULL WHERE call_id = $1`, [
+    await rawOwner.query(`UPDATE raw_transcripts SET soft_deleted_at = NULL WHERE call_id = $1`, [
       'test-purge-restore',
     ]);
     const cipher = (await col('raw_transcripts', 'test-purge-restore', 'ciphertext')) as Buffer;
@@ -484,12 +608,13 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
     await seedRaw('test-purge-atomic', daysAgo(50), daysAgo(45));
     await seedVault('test-purge-atomic', daysAgo(50), daysAgo(45));
 
-    // A DEDICATED pool (ended below) so the monkeypatched connection never leaks back into the
-    // shared `purge` pool. The token_vault HARD update throws mid-transaction.
-    const faultyPool = createAppPool(TEST_DATABASE_URL as string, 'purge_role');
-    const faulty = {
+    // The RAW group (incl. token_vault) runs on the DB-B rawPool now, so the fault is injected
+    // there. A DEDICATED DB-B purge pool (ended below) so the monkeypatched connection never leaks
+    // back into the shared `rawPurge` pool. The token_vault HARD update throws mid-transaction.
+    const faultyRawPool = createRawPurgePool(TEST_RAW_DATABASE_URL as string);
+    const faultyRaw = {
       connect: async () => {
-        const client = await faultyPool.connect();
+        const client = await faultyRawPool.connect();
         const orig = client.query.bind(client);
         (client as unknown as { query: unknown }).query = (text: unknown, params: unknown) => {
           if (
@@ -509,10 +634,10 @@ describe.skipIf(!hasTestDb)('runPurge (Task 8.1)', () => {
 
     try {
       await expect(
-        runPurge({ pool: faulty, config: purgeConfig(), logger, now: NOW }),
+        runPurge({ pool: purge, rawPool: faultyRaw, config: purgeConfig(), logger, now: NOW }),
       ).rejects.toThrow(/retention purge failed/);
     } finally {
-      await faultyPool.end();
+      await faultyRawPool.end();
     }
 
     // The raw scrub was rolled back with the failed vault write — raw ciphertext intact.

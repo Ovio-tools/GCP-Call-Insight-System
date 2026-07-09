@@ -28,22 +28,22 @@ import type { StageContext, StageHandler, StageResult } from './stages.js';
  * remaining stamp.
  */
 export interface MarkRetentionEligibleDeps {
+  /** DB-B app pool (Task 8a): raw_transcripts + token_vault live only in the raw store. */
+  rawPool: Pool;
   /** Test injection. Default: createRestrictedRunner (the audited restricted-role choke point). */
   makeRestrictedRunner?: (pool: Pool) => RestrictedRunner;
 }
 
-export function createMarkRetentionEligibleHandler(
-  deps: MarkRetentionEligibleDeps = {},
-): StageHandler {
+export function createMarkRetentionEligibleHandler(deps: MarkRetentionEligibleDeps): StageHandler {
   const makeRunner = deps.makeRestrictedRunner ?? createRestrictedRunner;
 
   return async (ctx: StageContext): Promise<StageResult> => {
-    const { callId, stage, logger, pool } = ctx;
+    const { callId, stage, logger } = ctx;
 
     // Raw transcript first (app_role), then the vault (restricted_role). Both monotonic +
     // hard-delete-guarded, so partial completion + retry is safe and never re-stamps.
-    await markTranscriptRetentionEligible(pool, callId);
-    await markTokensRetentionEligible(makeRunner(pool), callId);
+    await markTranscriptRetentionEligible(deps.rawPool, callId);
+    await markTokensRetentionEligible(makeRunner(deps.rawPool), callId);
 
     logger.info({ stage }, 'marked raw transcript + vault retention-eligible — completing');
     return { action: 'continue' };

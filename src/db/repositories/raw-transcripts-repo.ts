@@ -14,14 +14,17 @@ const TABLE = 'raw_transcripts';
  * current key_version.
  *
  * TWO retention-finality guards (Task 8.1 §6), both fail-closed at the writer (the physical
- * held-cap delete leaves NO tombstone, so we cannot rely on callers remembering the preflight):
- *   1. held-cap: a guarded `INSERT ... SELECT ... WHERE NOT EXISTS (a review with raw_purged_at
- *      set)` inserts nothing for a cap-purged call — so a fresh insert after the physical delete
- *      matches zero rows;
- *   2. tombstone: the conflict update is gated `WHERE raw_transcripts.hard_deleted_at IS NULL`,
+ * held-cap delete leaves NO row of its own, so we cannot rely on callers remembering the preflight):
+ *   1. DB-B-local tombstone: a guarded `INSERT ... SELECT ... WHERE NOT EXISTS (a
+ *      raw_purge_tombstone row)` inserts nothing for a physically-purged call — so a fresh insert
+ *      after the held-cap delete matches zero rows;
+ *   2. hard-delete: the conflict update is gated `WHERE raw_transcripts.hard_deleted_at IS NULL`,
  *      so a stamp-and-scrub tombstone is never overwritten.
  * Either guard matching zero rows throws `retention conflict` rather than silently succeeding
- * (mirrors `putToken`). `app_role` may read `review_queue`, so the subquery is in-role.
+ * (mirrors `putToken`). The tombstone lives in the SAME DB (DB-B) as this write — no more cross-DB
+ * `review_queue` read (ADR 0008 Move 2). Under READ COMMITTED a concurrent purge still leaves a
+ * theoretical TOCTOU window, but the tombstone is PERMANENT: once the purge's tombstone insert
+ * commits, every subsequent write durably fails closed, so steady-state finality holds.
  */
 export async function putTranscript(
   pool: Pool,
@@ -36,7 +39,7 @@ export async function putTranscript(
     `INSERT INTO raw_transcripts (call_id, ciphertext, key_version)
      SELECT $1, $2, $3
      WHERE NOT EXISTS (
-       SELECT 1 FROM review_queue WHERE call_id = $1 AND raw_purged_at IS NOT NULL
+       SELECT 1 FROM raw_purge_tombstone WHERE call_id = $1
      )
      ON CONFLICT (call_id) DO UPDATE SET
        ciphertext = EXCLUDED.ciphertext,

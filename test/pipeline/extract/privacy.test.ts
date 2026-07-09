@@ -20,8 +20,21 @@ import { upsertDailyCost } from '../../../src/db/repositories/daily-cost-usage-r
 import { createRootLogger } from '../../../src/logging/logger.js';
 import { utcDay } from '../../../src/model/cost.js';
 import { makeTestConfig } from '../../_config.js';
-import { hasTestDb, makePool, migrate } from '../../db/_pg.js';
-import { cleanupCalls, makeAppPool, seedKeyVersion } from '../../db/_dal.js';
+import {
+  hasRawTestDb,
+  hasTestDb,
+  makePool,
+  makeRawPool,
+  migrate,
+  migrateRaw,
+} from '../../db/_pg.js';
+import {
+  cleanupCalls,
+  cleanupRawCalls,
+  makeAppPool,
+  makeRawAppPool,
+  seedKeyVersion,
+} from '../../db/_dal.js';
 
 /**
  * Extract-stage privacy suite (Task 5.2, mirrors test/pipeline/classify/privacy.test.ts).
@@ -116,9 +129,13 @@ function collectingLogger(): { lines: string[]; logger: ReturnType<typeof create
   return { lines, logger: createRootLogger({ level: 'debug', destination: stream }) };
 }
 
-describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('extract stage privacy boundary', () => {
   let owner!: Pool;
   let app!: Pool;
+  // DB-B (raw store): the planted RAW_PII_MARKER lives in raw_transcripts (now DB-B only), and
+  // the full production set ends in mark-retention-eligible, which touches raw/vault.
+  let rawOwner!: Pool;
+  let rawApp!: Pool;
 
   const keyProvider = new LocalKeyProvider({
     masterKey: Buffer.alloc(DEK_BYTES, 0x07),
@@ -139,7 +156,7 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
       status: 'processing',
     });
     await upsertCleanTranscript(app, { callId, redactedText: redacted, redactionRiskScore: 0.1 });
-    await putTranscript(app, keyProvider, {
+    await putTranscript(rawApp, keyProvider, {
       callId,
       transcript: `Raw caller words with real PII ${RAW_PII_MARKER} that only the raw store holds.`,
     });
@@ -178,6 +195,7 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
       config,
       clock,
       getExtractModel: getModel,
+      rawPool: rawApp,
     });
   }
 
@@ -206,8 +224,11 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
     app = makeAppPool();
+    rawOwner = makeRawPool();
+    rawApp = makeRawAppPool();
     await seedKeyVersion(owner, 1);
   });
   afterEach(async () => {
@@ -218,10 +239,13 @@ describe.skipIf(!hasTestDb)('extract stage privacy boundary', () => {
          'MODEL_RATE_LIMITED','CONFIG_MISSING_OR_INVALID','VERBATIM_PII_DETECTED')`,
     );
     await owner.query(`DELETE FROM daily_cost_usage WHERE day = $1`, [FIXED_DAY]);
+    await cleanupRawCalls(rawOwner, PATTERN);
   });
   afterAll(async () => {
     await owner.end();
     await app.end();
+    await rawOwner.end();
+    await rawApp.end();
   });
 
   // ---- outbound payload containment --------------------------------------------

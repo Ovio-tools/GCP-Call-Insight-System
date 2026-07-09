@@ -2,7 +2,7 @@ import { pathToFileURL } from 'node:url';
 import { loadConfig } from '../config/index.js';
 import { createBootLogger } from '../boot/logger.js';
 import { assertDependenciesReady } from '../boot/readiness.js';
-import { createAppPool } from '../db/index.js';
+import { createAppPool, createRawAppPool } from '../db/index.js';
 import { requireRedactionConfig } from '../redaction/config.js';
 import { buildServiceKeyProvider } from '../key-lifecycle/readiness.js';
 import { createDialpadClient, RedisDualWindowLimiter } from '../dialpad/client/index.js';
@@ -200,33 +200,43 @@ export async function main(): Promise<void> {
           );
         },
       };
-      const handlers = buildProductionStageHandlers({
-        client,
-        keyProvider,
-        queue: noEnqueueQueue,
-        config,
-      });
-      await runBackfill({
-        pool,
-        config,
-        logger,
-        window: { fromMs: args.fromMs, toMs: args.toMs },
-        client,
-        ingestFor: (runId) =>
-          createPgBackfillInlineIngest({
-            pool,
-            runId,
-            runCall: (callId) =>
-              runPipeline(pool, callId, logger, {
-                handlers,
-                slaMinutesFor: (reason) => slaMinutesFor(config, reason),
-              }),
-          }),
-        monitor,
-        emitCheckpointAlert,
-        ...(args.resume !== undefined ? { resume: args.resume } : {}),
-        ...(args.restartFromScratch ? { restartFromScratch: true } : {}),
-      });
+      // DB-B app pool (Task 8a): the in-process synthetic path runs the FULL pipeline here (no
+      // worker), so it needs the raw store for the raw/vault stages. The production/queue mode
+      // above only enqueues — raw/vault happen on the worker fleet — so it needs no raw pool.
+      if (!config.RAW_DATABASE_URL) throw new Error('RAW_DATABASE_URL is not set');
+      const rawPool = createRawAppPool(config.RAW_DATABASE_URL);
+      try {
+        const handlers = buildProductionStageHandlers({
+          client,
+          keyProvider,
+          queue: noEnqueueQueue,
+          config,
+          rawPool,
+        });
+        await runBackfill({
+          pool,
+          config,
+          logger,
+          window: { fromMs: args.fromMs, toMs: args.toMs },
+          client,
+          ingestFor: (runId) =>
+            createPgBackfillInlineIngest({
+              pool,
+              runId,
+              runCall: (callId) =>
+                runPipeline(pool, callId, logger, {
+                  handlers,
+                  slaMinutesFor: (reason) => slaMinutesFor(config, reason),
+                }),
+            }),
+          monitor,
+          emitCheckpointAlert,
+          ...(args.resume !== undefined ? { resume: args.resume } : {}),
+          ...(args.restartFromScratch ? { restartFromScratch: true } : {}),
+        });
+      } finally {
+        await rawPool.end();
+      }
     }
   } finally {
     monitor.stop();

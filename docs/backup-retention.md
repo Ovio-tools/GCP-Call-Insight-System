@@ -16,6 +16,28 @@ actual Railway/Postgres settings and dated, not assumed.** The restore-drill che
   destroyed, the ciphertext in a restored backup is permanently unreadable — even though the backup
   is otherwise intact.
 
+## Two-DB layout (ADR 0008 Move 2)
+
+Raw/vault are physically isolated into a separate database, so backup policy is now
+per-store:
+
+- **DB-A (main)** keeps deep PITR/backups, but holds de-identified stores + key
+  METADATA only (`clean_transcripts`, `redaction_findings`, `structured_knowledge`,
+  `review_queue`, audit/metrics, and `key_versions` / `kek_versions` — references, no
+  key bytes). No raw PII lives here, so its long-lived backups carry no raw PII.
+- **DB-B (raw store)** holds `raw_transcripts`, `token_vault`, and the DB-B-local
+  `raw_purge_tombstone`, with **backups OFF** (or ≤ ~1 day). Raw/vault therefore never
+  enter a long-lived backup at all — the PHYSICAL complement to crypto-shredding
+  (which makes any residual ciphertext unreadable). Set DB-B's backup window to
+  off/minimal in the provider; the "max backup lifetime of a purged raw/vault row"
+  below is bounded by DB-B's window, not DB-A's.
+- **Restore is per-store.** DB-A restores independently from its own backups. DB-B has
+  little or no backup to restore, by design — a restored DB-B, where it exists at all,
+  spans only its short window.
+- **Operational requirement.** The DB-B login user must be a NOINHERIT member of
+  `app_role`, `restricted_role`, and `purge_role` (the pool family issues `SET ROLE`,
+  whose membership is checked against the login user), the same arrangement as DB-A.
+
 ## Provider-sourced retention table (REQUIRED — fill from the provider, do not guess)
 
 | Field                                                                               | Value       | Source / evidence                         | Checked (date) | Owner    |

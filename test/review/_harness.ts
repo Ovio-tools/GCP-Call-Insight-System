@@ -11,8 +11,8 @@ import type { HeldReason } from '../../src/db/enums.js';
 import type { PipelineJobData, ReprocessQueue } from '../../src/queue/pipeline-queue.js';
 import { makeTestConfig } from '../_config.js';
 import { makeCapturingLogger, FakeAuthProvider, login, type LoggedIn } from '../http/_helpers.js';
-import { makePool } from '../db/_pg.js';
-import { makeAppPool, seedKeyVersion } from '../db/_dal.js';
+import { makePool, makeRawPool } from '../db/_pg.js';
+import { makeAppPool, makeRawAppPool, cleanupRawCalls, seedKeyVersion } from '../db/_dal.js';
 
 export const REVIEW_KEY_PROVIDER = new LocalKeyProvider({
   masterKey: Buffer.alloc(DEK_BYTES, 0x09),
@@ -58,6 +58,10 @@ export interface ReviewHarness {
   provider: FakeAuthProvider;
   owner: Pool;
   appPool: Pool;
+  /** Raw-store (DB-B) owner pool — setup/cleanup of raw_transcripts + token_vault. */
+  rawOwner: Pool;
+  /** Raw-store (DB-B) app pool — passed as the review deps' rawPool. */
+  rawPool: Pool;
   runner: ReturnType<typeof createRestrictedRunner>;
   config: ReturnType<typeof makeTestConfig>;
   lines: string[];
@@ -87,7 +91,11 @@ export async function makeReviewHarness(
   const { logger, lines } = makeCapturingLogger();
   const owner = makePool();
   const appPool = makeAppPool();
-  const runner = createRestrictedRunner(appPool);
+  // raw_transcripts + token_vault live in the isolated raw store (DB-B): its app pool is the
+  // review deps' rawPool, and the restricted runner (vault reveal) wraps that DB-B pool.
+  const rawOwner = makeRawPool();
+  const rawPool = makeRawAppPool();
+  const runner = createRestrictedRunner(rawPool);
   const { queue, enqueued } = makeCapturingQueue(queueFail);
   const now = { value: new Date('2026-07-03T12:00:00.000Z') };
 
@@ -101,6 +109,7 @@ export async function makeReviewHarness(
   });
   registerReviewRoutes(app, {
     pool: appPool,
+    rawPool,
     config,
     logger,
     keyProvider: REVIEW_KEY_PROVIDER,
@@ -116,6 +125,8 @@ export async function makeReviewHarness(
     provider,
     owner,
     appPool,
+    rawOwner,
+    rawPool,
     runner,
     config,
     lines,
@@ -160,7 +171,7 @@ export async function makeReviewHarness(
       );
     },
     async seedRawTranscript(callId, text): Promise<void> {
-      await putTranscript(appPool, REVIEW_KEY_PROVIDER, { callId, transcript: text });
+      await putTranscript(rawPool, REVIEW_KEY_PROVIDER, { callId, transcript: text });
     },
     async seedVaultToken(callId, token, plaintext): Promise<void> {
       await putToken(runner, REVIEW_KEY_PROVIDER, {
@@ -176,8 +187,8 @@ export async function makeReviewHarness(
         [pattern],
       );
       await owner.query(`DELETE FROM review_queue WHERE call_id LIKE $1`, [pattern]);
-      await owner.query(`DELETE FROM token_vault WHERE call_id LIKE $1`, [pattern]);
-      await owner.query(`DELETE FROM raw_transcripts WHERE call_id LIKE $1`, [pattern]);
+      // raw_transcripts + token_vault now live only in the raw store (DB-B).
+      await cleanupRawCalls(rawOwner, pattern);
       await owner.query(`DELETE FROM clean_transcripts WHERE call_id LIKE $1`, [pattern]);
       await owner.query(`DELETE FROM extraction_candidates WHERE call_id LIKE $1`, [pattern]);
       await owner.query(`DELETE FROM structured_knowledge WHERE call_id LIKE $1`, [pattern]);
@@ -188,6 +199,8 @@ export async function makeReviewHarness(
       await app.close();
       await owner.end();
       await appPool.end();
+      await rawOwner.end();
+      await rawPool.end();
     },
   };
 }

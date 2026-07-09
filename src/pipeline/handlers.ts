@@ -1,3 +1,4 @@
+import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
 import type { DialpadClient } from '../dialpad/client/index.js';
@@ -40,6 +41,10 @@ export interface ProductionHandlerDeps {
   queue: DelayedRetryQueue;
   config: Config;
   clock?: Clock;
+  /** DB-B app pool (Task 8a): raw_transcripts + token_vault live only in the raw store. The
+   * raw/vault-touching stages (fetch-transcript, transcript-availability, redact,
+   * mark-retention-eligible) use this; all DB-A access stays on the per-call StageContext pool. */
+  rawPool: Pool;
   /** Override the classify model client (tests inject a fake); production builds the
    * Anthropic client lazily so a missing ANTHROPIC_API_KEY only fails a real classify call,
    * never boot or an earlier stage. */
@@ -82,10 +87,17 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
     ...defaultStageHandlers,
     'metadata-pre-filter': metadataPreFilterHandler,
     'fetch-transcript': createFetchTranscriptHandler(deps),
-    'transcript-availability': createTranscriptAvailabilityHandler({ config: deps.config }),
+    'transcript-availability': createTranscriptAvailabilityHandler({
+      config: deps.config,
+      rawPool: deps.rawPool,
+    }),
     // Validates redaction config (hash key, deny-list readability) at factory time —
     // a bad config fails handler construction, never a per-call retry loop.
-    redact: createRedactionHandler({ keyProvider: deps.keyProvider, config: deps.config }),
+    redact: createRedactionHandler({
+      keyProvider: deps.keyProvider,
+      config: deps.config,
+      rawPool: deps.rawPool,
+    }),
     classify: createClassifyHandler({
       getModel: getClassifyModel,
       config: deps.config,
@@ -101,6 +113,6 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
     // Task 5.3: copy the verified candidate into structured_knowledge (durable), then the
     // final stage stamps raw transcript + vault retention-eligible (deletes nothing).
     store: storeHandler,
-    'mark-retention-eligible': createMarkRetentionEligibleHandler(),
+    'mark-retention-eligible': createMarkRetentionEligibleHandler({ rawPool: deps.rawPool }),
   };
 }

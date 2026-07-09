@@ -1,9 +1,9 @@
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { Pool } from 'pg';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { hasTestDb, makePool, migrate } from '../db/_pg.js';
+import { hasRawTestDb, hasTestDb, makePool, makeRawPool, migrate, migrateRaw } from '../db/_pg.js';
 import { makeTestConfig } from '../_config.js';
 import { checkLaunchGate } from '../../src/key-lifecycle/launch-gate.js';
 import {
@@ -15,19 +15,26 @@ import {
 
 let seq = 0;
 
-describe.skipIf(!hasTestDb)('checkLaunchGate', () => {
+describe.skipIf(!hasTestDb || !hasRawTestDb)('checkLaunchGate', () => {
   let owner!: Pool;
+  let rawOwner!: Pool;
   const dev = makeTestConfig({ NODE_ENV: 'development', CRYPTO_KEY_PROVIDER: 'keystore' });
 
   beforeAll(async () => {
     await migrate('up');
+    await migrateRaw('up');
     owner = makePool();
+    rawOwner = makeRawPool();
+  });
+  afterAll(async () => {
+    await owner.end();
+    await rawOwner.end();
   });
   beforeEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
   afterEach(async () => {
-    await cleanupKeyLifecycle(owner);
+    await cleanupKeyLifecycle(owner, rawOwner);
   });
 
   it('passes with no destroyed keys in dev', async () => {

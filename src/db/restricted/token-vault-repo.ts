@@ -14,13 +14,16 @@ const TABLE = 'token_vault';
  *
  * TWO retention-finality guards (crypto-shredding semantics — retention's removal is final and
  * redaction must not repopulate it):
- *   1. held-cap (Task 8.1 §6): a guarded `INSERT ... SELECT ... WHERE NOT EXISTS (a review with
- *      raw_purged_at set)` inserts nothing for a cap-purged call. The held-cap PHYSICALLY
- *      deletes the vault row (no tombstone), so the write path itself must fail closed;
- *      `restricted_role` is granted SELECT on the two non-sensitive review_queue columns
- *      (migration 013) to evaluate this.
- *   2. tombstone: the conflict update is gated `WHERE token_vault.hard_deleted_at IS NULL`.
- * Either guard matching zero rows throws instead of silently succeeding.
+ *   1. DB-B-local tombstone: a guarded `INSERT ... SELECT ... WHERE NOT EXISTS (a
+ *      raw_purge_tombstone row)` inserts nothing for a physically-purged call. The held-cap
+ *      PHYSICALLY deletes the vault row (leaving only the tombstone), so the write path itself
+ *      must fail closed; `restricted_role` has SELECT on `raw_purge_tombstone` in DB-B (Task 4
+ *      grants) to evaluate this — no more cross-DB `review_queue` read (ADR 0008 Move 2).
+ *   2. hard-delete: the conflict update is gated `WHERE token_vault.hard_deleted_at IS NULL`.
+ * Either guard matching zero rows throws instead of silently succeeding. The tombstone is in the
+ * SAME DB (DB-B) as this write. Under READ COMMITTED a concurrent purge still leaves a theoretical
+ * TOCTOU window, but the tombstone is PERMANENT: once the purge's tombstone insert commits, every
+ * subsequent write durably fails closed, so steady-state finality holds.
  */
 export async function putToken(
   runner: RestrictedRunner,
@@ -35,7 +38,7 @@ export async function putToken(
       `INSERT INTO token_vault (call_id, token, ciphertext, key_version)
        SELECT $1, $2, $3, $4
        WHERE NOT EXISTS (
-         SELECT 1 FROM review_queue WHERE call_id = $1 AND raw_purged_at IS NOT NULL
+         SELECT 1 FROM raw_purge_tombstone WHERE call_id = $1
        )
        ON CONFLICT (call_id, token) DO UPDATE SET
          ciphertext = EXCLUDED.ciphertext,
