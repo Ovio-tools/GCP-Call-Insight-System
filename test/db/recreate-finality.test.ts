@@ -69,9 +69,10 @@ describe.skipIf(!hasTestDb)('recreate finality guards — clean/findings (DB-A)'
       const callId = 'test-fin-find-hd';
       await seedCall(callId);
       await replaceFindings(app, callId, [{ entityType: 'NAME', tokenRef: '[NAME_1]' }]);
-      await owner.query(`UPDATE redaction_findings SET hard_deleted_at = now() WHERE call_id = $1`, [
-        callId,
-      ]);
+      await owner.query(
+        `UPDATE redaction_findings SET hard_deleted_at = now() WHERE call_id = $1`,
+        [callId],
+      );
       await expect(
         replaceFindings(app, callId, [{ entityType: 'PHONE', tokenRef: '[PHONE_1]' }]),
       ).rejects.toThrow(/retention conflict/);
@@ -156,7 +157,11 @@ describe.skipIf(!hasRawTestDb)('recreate finality guards — raw/vault (DB-B)', 
         callId,
       ]);
       await expect(
-        putToken(rawRunner, keyProvider, { callId, token: '[NAME_1]', plaintext: Buffer.from('y') }),
+        putToken(rawRunner, keyProvider, {
+          callId,
+          token: '[NAME_1]',
+          plaintext: Buffer.from('y'),
+        }),
       ).rejects.toThrow(/retention conflict/);
     });
   });

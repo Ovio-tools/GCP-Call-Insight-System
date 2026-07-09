@@ -45,7 +45,12 @@ exports.down = (pgm) => {
   pgm.createTable('raw_transcripts', {
     call_id: { type: 'text', primaryKey: true, references: 'call_state', onDelete: 'RESTRICT' },
     ciphertext: { type: 'bytea', notNull: true },
-    key_version: { type: 'integer', notNull: true, references: 'key_versions', onDelete: 'RESTRICT' },
+    key_version: {
+      type: 'integer',
+      notNull: true,
+      references: 'key_versions',
+      onDelete: 'RESTRICT',
+    },
     fetched_at: { type: 'timestamptz', notNull: true, default: now(pgm) },
     ...retentionColumns(),
   });
@@ -55,7 +60,12 @@ exports.down = (pgm) => {
       call_id: { type: 'text', notNull: true, references: 'call_state', onDelete: 'RESTRICT' },
       token: { type: 'text', notNull: true },
       ciphertext: { type: 'bytea', notNull: true },
-      key_version: { type: 'integer', notNull: true, references: 'key_versions', onDelete: 'RESTRICT' },
+      key_version: {
+        type: 'integer',
+        notNull: true,
+        references: 'key_versions',
+        onDelete: 'RESTRICT',
+      },
       created_at: { type: 'timestamptz', notNull: true, default: now(pgm) },
       ...retentionColumns(),
     },
@@ -67,8 +77,16 @@ exports.down = (pgm) => {
   pgm.sql('GRANT DELETE ON raw_transcripts, token_vault TO purge_role;');
   // Migration 013's column-scoped purge_role grants (still recorded as applied; src/retention/
   // purge.ts relies on them). Restored here so a single-step down() is a faithful pre-drop state.
-  pgm.sql('GRANT SELECT (call_id, retention_eligible_at, soft_deleted_at, hard_deleted_at) ON raw_transcripts TO purge_role;');
-  pgm.sql('GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON raw_transcripts TO purge_role;');
-  pgm.sql('GRANT SELECT (call_id, token, retention_eligible_at, soft_deleted_at, hard_deleted_at) ON token_vault TO purge_role;');
-  pgm.sql('GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON token_vault TO purge_role;');
+  pgm.sql(
+    'GRANT SELECT (call_id, retention_eligible_at, soft_deleted_at, hard_deleted_at) ON raw_transcripts TO purge_role;',
+  );
+  pgm.sql(
+    'GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON raw_transcripts TO purge_role;',
+  );
+  pgm.sql(
+    'GRANT SELECT (call_id, token, retention_eligible_at, soft_deleted_at, hard_deleted_at) ON token_vault TO purge_role;',
+  );
+  pgm.sql(
+    'GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON token_vault TO purge_role;',
+  );
 };

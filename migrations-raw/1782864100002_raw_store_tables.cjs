@@ -76,12 +76,16 @@ exports.up = (pgm) => {
   pgm.sql(
     'GRANT SELECT (call_id, retention_eligible_at, soft_deleted_at, hard_deleted_at) ON raw_transcripts TO purge_role;',
   );
-  pgm.sql('GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON raw_transcripts TO purge_role;');
+  pgm.sql(
+    'GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON raw_transcripts TO purge_role;',
+  );
   pgm.sql('GRANT DELETE ON raw_transcripts TO purge_role;');
   pgm.sql(
     'GRANT SELECT (call_id, token, retention_eligible_at, soft_deleted_at, hard_deleted_at) ON token_vault TO purge_role;',
   );
-  pgm.sql('GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON token_vault TO purge_role;');
+  pgm.sql(
+    'GRANT UPDATE (soft_deleted_at, hard_deleted_at, ciphertext) ON token_vault TO purge_role;',
+  );
   pgm.sql('GRANT DELETE ON token_vault TO purge_role;');
   pgm.sql('GRANT SELECT, INSERT ON raw_purge_tombstone TO purge_role;');
 };
