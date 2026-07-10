@@ -1,0 +1,7 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "startCommand": "node dist/services/status-surface.js",
+    "restartPolicyType": "ON_FAILURE"
+  }
+}

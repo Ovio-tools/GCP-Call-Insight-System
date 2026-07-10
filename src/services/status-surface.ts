@@ -38,6 +38,8 @@ async function main(): Promise<void> {
     authProvider: oidcProviderFromConfig(config),
     rateStore: new RedisRateStore(redis),
     sessionStore: new RedisSessionStore(redis, config.SESSION_TTL_MS),
+    // Land signed-in users on the status view; the shared default ('/') has no route here.
+    loginSuccessRedirect: '/status',
     logger,
   });
   registerStatusRoutes(app, { pool, config, logger });
