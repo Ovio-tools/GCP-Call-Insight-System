@@ -163,7 +163,11 @@ export const configObjectSchema = z.object({
   CRYPTO_WRAPPED_DEK_MATERIAL: z.string().min(1).optional(),
   /** Railway API token — CLIs only, to read/write the two secrets and trigger a redeploy. */
   RAILWAY_API_TOKEN: z.string().min(1).optional(),
-  /** Railway environment + service the CLIs mutate secrets on. CLIs validate presence. */
+  /** Railway project + environment + service the CLIs mutate secrets on. Railway's variable
+   * query/upsert is scoped by projectId + environmentId (+ serviceId). Railway auto-injects
+   * RAILWAY_PROJECT_ID/RAILWAY_ENVIRONMENT_ID/RAILWAY_SERVICE_ID into running services; the CLIs
+   * validate presence. */
+  RAILWAY_PROJECT_ID: z.string().min(1).optional(),
   RAILWAY_ENVIRONMENT_ID: z.string().min(1).optional(),
   RAILWAY_SERVICE_ID: z.string().min(1).optional(),
 

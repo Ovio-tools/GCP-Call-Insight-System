@@ -4,6 +4,7 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export interface RailwayApiSecretBackendOptions {
   token: string;
+  projectId: string;
   environmentId: string;
   serviceId: string;
   fetch?: FetchLike;
@@ -18,14 +19,15 @@ const DEFAULT_ENDPOINT = 'https://backboard.railway.app/graphql/v2';
  * EnvSecretBackend. Never logs variable values (key material). After a CLI mutates secrets, the
  * operator must redeploy the encrypting services so they pick up the new material (ADR 0008).
  *
- * NOTE: the GraphQL field/argument names below (`variables`, `variableUpsert`) are provisional and
- * MUST be re-verified against Railway's current public GraphQL schema before production use. This
- * environment cannot reach Railway's live API/docs, so the shapes are assumed from the documented
- * contract; the tests assert BEHAVIOR (a variableUpsert-style mutation is issued, values are never
- * logged, reads return the variable), not the exact field spelling.
+ * The `variables` query and `variableUpsert` mutation shapes follow Railway's documented public
+ * GraphQL API (https://docs.railway.com/guides/manage-variables): both are scoped by
+ * `projectId` + `environmentId` (+ `serviceId` to target one service rather than a shared
+ * variable). The tests assert BEHAVIOR (the scoping ids are sent, a variableUpsert mutation is
+ * issued, values are never logged, reads return the variable).
  */
 export class RailwayApiSecretBackend implements SecretBackend {
   readonly #token: string;
+  readonly #projectId: string;
   readonly #environmentId: string;
   readonly #serviceId: string;
   readonly #fetch: FetchLike;
@@ -33,6 +35,7 @@ export class RailwayApiSecretBackend implements SecretBackend {
 
   constructor(opts: RailwayApiSecretBackendOptions) {
     this.#token = opts.token;
+    this.#projectId = opts.projectId;
     this.#environmentId = opts.environmentId;
     this.#serviceId = opts.serviceId;
     this.#fetch = opts.fetch ?? globalThis.fetch;
@@ -56,10 +59,14 @@ export class RailwayApiSecretBackend implements SecretBackend {
 
   async read(name: string): Promise<string | undefined> {
     const data = await this.#gql<{ variables: Record<string, string> }>(
-      `query($environmentId: String!, $serviceId: String!) {
-         variables(environmentId: $environmentId, serviceId: $serviceId)
+      `query($projectId: String!, $environmentId: String!, $serviceId: String!) {
+         variables(projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId)
        }`,
-      { environmentId: this.#environmentId, serviceId: this.#serviceId },
+      {
+        projectId: this.#projectId,
+        environmentId: this.#environmentId,
+        serviceId: this.#serviceId,
+      },
     );
     return data.variables[name];
   }
@@ -67,10 +74,16 @@ export class RailwayApiSecretBackend implements SecretBackend {
   async write(name: string, value: string): Promise<void> {
     try {
       await this.#gql<{ variableUpsert: boolean }>(
-        `mutation($environmentId: String!, $serviceId: String!, $name: String!, $value: String!) {
-           variableUpsert(input: { environmentId: $environmentId, serviceId: $serviceId, name: $name, value: $value })
+        `mutation($projectId: String!, $environmentId: String!, $serviceId: String!, $name: String!, $value: String!) {
+           variableUpsert(input: { projectId: $projectId, environmentId: $environmentId, serviceId: $serviceId, name: $name, value: $value })
          }`,
-        { environmentId: this.#environmentId, serviceId: this.#serviceId, name, value },
+        {
+          projectId: this.#projectId,
+          environmentId: this.#environmentId,
+          serviceId: this.#serviceId,
+          name,
+          value,
+        },
       );
     } catch {
       // Rethrow a GENERIC error: #gql folds the upstream GraphQL errors[].message in verbatim, and
