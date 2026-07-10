@@ -8,16 +8,21 @@ function fetchReturning(json: unknown) {
     json: () => Promise.resolve(json),
   });
 }
-const opts = { token: 't', environmentId: 'env-1', serviceId: 'svc-1' };
+const opts = { token: 't', projectId: 'proj-1', environmentId: 'env-1', serviceId: 'svc-1' };
 
 describe('RailwayApiSecretBackend', () => {
-  it('read returns the decoded variable value', async () => {
+  it('read returns the decoded variable value and scopes by projectId', async () => {
     const fetchMock = fetchReturning({
       data: { variables: { CRYPTO_KEK_MATERIAL: '{"active":{}}' } },
     });
     const backend = new RailwayApiSecretBackend({ ...opts, fetch: fetchMock });
     expect(await backend.read('CRYPTO_KEK_MATERIAL')).toBe('{"active":{}}');
     expect(fetchMock).toHaveBeenCalledOnce();
+    // Railway's variables query requires projectId alongside environmentId/serviceId.
+    const readBody = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string) as {
+      variables: { projectId: string };
+    };
+    expect(readBody.variables.projectId).toBe('proj-1');
   });
   it('read returns undefined for an absent variable', async () => {
     const backend = new RailwayApiSecretBackend({
@@ -32,10 +37,12 @@ describe('RailwayApiSecretBackend', () => {
     await backend.write('CRYPTO_KEK_MATERIAL', '{"active":{"kek-1":{"bytes":"x"}}}');
     const body = JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string) as {
       query: string;
-      variables: { value: string };
+      variables: { value: string; projectId: string };
     };
     expect(body.query).toMatch(/variableUpsert/);
     expect(body.variables.value).toBe('{"active":{"kek-1":{"bytes":"x"}}}');
+    // Railway's variableUpsert input requires projectId; omitting it makes the write fail.
+    expect(body.variables.projectId).toBe('proj-1');
   });
   it('throws on a GraphQL error response', async () => {
     const backend = new RailwayApiSecretBackend({
