@@ -51,20 +51,30 @@ function safeReturnTo(candidate: unknown, fallback: string): string {
   return fallback;
 }
 
+/** True for a top-level browser navigation (an HTML GET) — the only case we bounce to login. */
+function acceptsHtml(accept: string | undefined): boolean {
+  return typeof accept === 'string' && accept.includes('text/html');
+}
+
 /** preHandler: refuse anonymous access to non-public routes; expose `request.user`. */
 export function requireAuth(environment: string): preHandlerHookHandler {
-  return (request, _reply, done) => {
+  return async (request, reply) => {
     if (request.routeOptions.config.public) {
-      done();
       return;
     }
     const user = request.session.user;
     if (!user) {
-      done(httpFailure('AUTH_REQUIRED', environment));
-      return;
+      // A browser navigation (HTML GET) is bounced to the login page with a same-origin
+      // returnTo, so the user lands back where they aimed after signing in. API/XHR/JSON
+      // callers and non-GET requests keep the machine-readable 401 AUTH_REQUIRED: a login
+      // redirect is meaningless to them, and a POST cannot be safely replayed post-login.
+      if (request.method === 'GET' && acceptsHtml(request.headers.accept)) {
+        const returnTo = safeReturnTo(request.url, '/');
+        return reply.redirect(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+      }
+      throw httpFailure('AUTH_REQUIRED', environment);
     }
     request.user = user;
-    done();
   };
 }
 
