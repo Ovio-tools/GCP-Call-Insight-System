@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "true"
+  },
+  "deploy": {
+    "startCommand": "node deploy/railway/rehome-keys.cjs",
+    "restartPolicyType": "NEVER"
+  }
+}

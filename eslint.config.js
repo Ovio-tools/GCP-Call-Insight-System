@@ -8,7 +8,16 @@ export default tseslint.config(
     // node-pg-migrate from the raw repo-root dir, never compiled or type-checked. Type-aware
     // linting can't resolve them (not in tsconfig) and would flag CJS `exports`/`require`, so skip.
     // (migrations-raw is the DB-B raw-store set — ADR 0008 Move 2.)
-    ignores: ['dist/**', 'node_modules/**', 'coverage/**', 'migrations/**', 'migrations-raw/**'],
+    // deploy/railway/*.cjs are dependency-free one-off ops scripts run as a Railway startCommand,
+    // likewise plain CommonJS outside tsconfig.
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      'coverage/**',
+      'migrations/**',
+      'migrations-raw/**',
+      'deploy/railway/*.cjs',
+    ],
   },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
