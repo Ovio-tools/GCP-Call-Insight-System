@@ -151,6 +151,43 @@ export function replayKeyFor(result: DialpadJwtResult): string {
   return typeof claims.iat === 'number' ? `sig:${digest}:${claims.iat}` : `sig:${digest}`;
 }
 
+// --- Payload shape diagnostic (issue #31) -----------------------------------------------------
+// The claim field names are still PROVISIONAL. To reconcile them against what Dialpad REALLY
+// sends, we need to see the structure of a live payload — but never its values (there is PII in
+// there). `describePayloadShape` walks the decoded claims and returns ONLY the key paths and each
+// leaf's TYPE (e.g. `call.id:number`, `contact.name:string`), never a value. The result is an
+// array of strings so the logging redaction guard (which throws on an object KEY named `name` /
+// `phone` / `transcript`) cannot trip on it: the payload's key names appear only inside string
+// leaves, never as object keys. Off by default; enabled deliberately in staging via
+// DIALPAD_WEBHOOK_LOG_PAYLOAD_SHAPE while capturing real deliveries.
+
+/**
+ * Structural fingerprint of a decoded payload: a sorted, deduped list of `path:type` entries with
+ * NO values. Arrays are described once under a `[]`-suffixed path (union of element shapes); an
+ * empty array is `path:array(empty)`; null is `path:null`. Pure and total — never throws.
+ */
+export function describePayloadShape(node: unknown, prefix = ''): string[] {
+  const label = (kind: string): string => (prefix === '' ? kind : `${prefix}:${kind}`);
+  if (node === null) return [label('null')];
+  if (Array.isArray(node)) {
+    if (node.length === 0) return [label('array(empty)')];
+    const out = new Set<string>();
+    for (const item of node) {
+      for (const entry of describePayloadShape(item, `${prefix}[]`)) out.add(entry);
+    }
+    return [...out].sort();
+  }
+  if (typeof node === 'object') {
+    const out = new Set<string>();
+    for (const [key, value] of Object.entries(node)) {
+      const childPrefix = prefix === '' ? key : `${prefix}.${key}`;
+      for (const entry of describePayloadShape(value, childPrefix)) out.add(entry);
+    }
+    return [...out].sort();
+  }
+  return [label(typeof node)];
+}
+
 /** Field-name sets (lowercased) that may carry PII. Values found under these keys are hashed. */
 const PHONE_FIELDS = new Set([
   'phone',

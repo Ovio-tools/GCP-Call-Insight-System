@@ -216,8 +216,11 @@ describe('Dialpad webhook route — rejections (no enqueue)', () => {
     expect(h.sink.events).toHaveLength(0);
   });
 
-  it('rejects a stale timestamp with WEBHOOK_TIMESTAMP_INVALID', async () => {
-    const h = await setup({ WEBHOOK_TIMESTAMP_SKEW_MS: 1000 });
+  it('rejects a stale timestamp with WEBHOOK_TIMESTAMP_INVALID (only when freshness is required)', async () => {
+    const h = await setup({
+      WEBHOOK_TIMESTAMP_SKEW_MS: 1000,
+      DIALPAD_WEBHOOK_TIMESTAMP_REQUIRED: true,
+    });
     const staleIat = Math.floor((h.clock.now() - 5000) / 1000);
     const res = await h.inject(signJwt({ call_id: '555', event_id: 'e', iat: staleIat }, PRIMARY));
     expect(res.statusCode).toBe(400);
@@ -307,6 +310,87 @@ describe('Dialpad webhook route — privacy', () => {
     expect(joined).toContain('"webhook_key_slot":"primary"');
     expect(joined).toContain('"webhook_key_slot":"previous"');
     expect(joined).not.toContain('+1555');
+  });
+});
+
+describe('Dialpad webhook route — timestamp freshness gate (issue #31)', () => {
+  it('accepts an event with NO iat by default (freshness not required until confirmed)', async () => {
+    const h = await setup();
+    const res = await h.inject(signJwt({ call_id: '555', event_id: 'no-iat' }, PRIMARY));
+    expect(res.statusCode).toBe(200);
+    expect(h.sink.events).toHaveLength(1);
+    expect((h.sink.events[0] as DialpadIngestEvent).callId).toBe('555');
+  });
+
+  it('does NOT reject a stale iat by default (freshness gate off until DIALPAD confirms iat)', async () => {
+    const h = await setup({ WEBHOOK_TIMESTAMP_SKEW_MS: 1000 });
+    const staleIat = Math.floor((h.clock.now() - 5000) / 1000);
+    const res = await h.inject(signJwt({ call_id: '555', event_id: 's', iat: staleIat }, PRIMARY));
+    expect(res.statusCode).toBe(200);
+    expect(h.sink.events).toHaveLength(1);
+  });
+
+  it('rejects a missing iat with WEBHOOK_TIMESTAMP_INVALID when freshness IS required', async () => {
+    const h = await setup({ DIALPAD_WEBHOOK_TIMESTAMP_REQUIRED: true });
+    const res = await h.inject(signJwt({ call_id: '555', event_id: 'no-iat' }, PRIMARY));
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: 'WEBHOOK_TIMESTAMP_INVALID' });
+    expect(h.sink.events).toHaveLength(0);
+  });
+
+  it('accepts a fresh iat when freshness IS required', async () => {
+    const h = await setup({ DIALPAD_WEBHOOK_TIMESTAMP_REQUIRED: true });
+    const res = await h.inject(signJwt(freshClaims(h.clock), PRIMARY));
+    expect(res.statusCode).toBe(200);
+    expect(h.sink.events).toHaveLength(1);
+  });
+});
+
+describe('Dialpad webhook route — payload-shape diagnostic (issue #31)', () => {
+  it('does NOT log the payload shape by default', async () => {
+    const h = await setup();
+    await h.inject(signJwt(freshClaims(h.clock, { call: { id: 555 } }), PRIMARY));
+    expect(h.lines.join('\n')).not.toContain('payload_shape');
+  });
+
+  it('logs field names + types (no values) when DIALPAD_WEBHOOK_LOG_PAYLOAD_SHAPE=true', async () => {
+    const h = await setup({ DIALPAD_WEBHOOK_LOG_PAYLOAD_SHAPE: true });
+    const res = await h.inject(
+      signJwt(
+        {
+          event_id: 'evt-shape',
+          iat: Math.floor(h.clock.now() / 1000),
+          call: { id: 4917123, direction: 'inbound' },
+          contact: { name: 'Jane Doe', phone: '+15551234567' },
+          transcript: 'the caller said secret words',
+        },
+        PRIMARY,
+      ),
+    );
+    expect(res.statusCode).toBe(200); // shape logging must not trip the redaction guard
+    const joined = h.lines.join('\n');
+    expect(joined).toContain('payload_shape');
+    expect(joined).toContain('call.id:number');
+    expect(joined).toContain('contact.name:string');
+    // The real values must never appear in the log.
+    for (const value of ['Jane Doe', '+15551234567', 'secret words']) {
+      expect(joined).not.toContain(value);
+    }
+  });
+
+  it('logs the shape even when call_id is unresolvable, then still rejects REQUEST_MALFORMED', async () => {
+    const h = await setup({ DIALPAD_WEBHOOK_LOG_PAYLOAD_SHAPE: true });
+    const res = await h.inject(
+      signJwt(
+        { event_id: 'evt-noid', iat: Math.floor(h.clock.now() / 1000), weird_id: 'x-9' },
+        PRIMARY,
+      ),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.json()).toMatchObject({ error: 'REQUEST_MALFORMED' });
+    expect(h.sink.events).toHaveLength(0);
+    // The whole point of the diagnostic: we can see the real id key even on the reject path.
+    expect(h.lines.join('\n')).toContain('weird_id:string');
   });
 });
 

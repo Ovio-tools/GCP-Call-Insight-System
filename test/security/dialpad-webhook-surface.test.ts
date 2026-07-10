@@ -184,7 +184,10 @@ describe('Dialpad webhook surface — rejections before any work (matrix)', () =
   });
 
   it('rejects a stale timestamp → WEBHOOK_TIMESTAMP_INVALID, sink un-called', async () => {
-    const h = await setup({ WEBHOOK_TIMESTAMP_SKEW_MS: 1000 });
+    const h = await setup({
+      WEBHOOK_TIMESTAMP_SKEW_MS: 1000,
+      DIALPAD_WEBHOOK_TIMESTAMP_REQUIRED: true,
+    });
     const staleIat = Math.floor((h.clock.now() - 5000) / 1000);
     const res = await h.inject(signJwt({ call_id: '555', event_id: 'e', iat: staleIat }, PRIMARY));
     expectMiddlewareError(res, 'WEBHOOK_TIMESTAMP_INVALID');
