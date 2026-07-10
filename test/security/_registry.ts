@@ -92,7 +92,12 @@ export const SURFACES: readonly SurfaceSpec[] = [
     status: 'live',
     sharedFactorySuite: 'internal-surfaces',
     liveSuite: 'internal-surfaces',
-    routes: [readOnly('/status'), readOnly('/status.json')],
+    routes: [
+      readOnly('/status'),
+      readOnly('/status.json'),
+      readOnly('/calls'),
+      readOnly('/calls.json'),
+    ],
     authMode: 'session',
     surfaceChecks: [
       'read-only — no state-changing route, no CSRF surface',

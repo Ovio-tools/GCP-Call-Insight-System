@@ -171,6 +171,7 @@ export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {})
     refresh +
     `<title>Pipeline status</title><style>${STYLE}</style></head><body><main>` +
     `<h1>Pipeline status</h1>` +
+    `<p class="nav"><a href="/calls">View all calls &amp; outcomes &rarr;</a></p>` +
     `<p class="summary state-${esc(s.pipeline_state)}">${esc(summarySentence(dto))}</p>` +
     `<div class="counts">` +
     `<div class="tile"><div class="k">Processed today</div><div class="v">${esc(fmtCount(s.calls_processed_today))}</div></div>` +

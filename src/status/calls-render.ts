@@ -1,0 +1,128 @@
+import {
+  OUTCOME_FILTERS,
+  type CallListItem,
+  type CallOutcomeKey,
+  type CallsPage,
+} from './calls.js';
+
+/**
+ * Server-rendered, self-contained per-call pipeline page (companion to /status). READ-ONLY:
+ * a GET filter form, an outcome-badged table, and a pager. Inline CSS, no external assets, no
+ * JS. Every interpolated value is HTML-escaped; the DTO carries only ids, enums, and timestamps
+ * (no content/PII — see calls.ts).
+ */
+
+function esc(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function humanizeStage(stage: string): string {
+  const spaced = stage.replace(/-/g, ' ');
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1);
+}
+
+/** Badge accent colour per outcome so the table scans at a glance. */
+const BADGE_COLOR: Record<CallOutcomeKey, string> = {
+  customer_completed: '#1f7a4d',
+  non_customer: '#5a4b7a',
+  spam: '#7a4b4b',
+  filtered: '#4b566a',
+  held: '#7a6a3a',
+  review_closed: '#3a5a6a',
+  processing: '#3a4a5a',
+};
+
+function badge(item: CallListItem): string {
+  const color = BADGE_COLOR[item.outcome.key];
+  return `<span class="badge" style="background:${color}">${esc(item.outcome.label)}</span>`;
+}
+
+function rowHtml(item: CallListItem): string {
+  const cells = [
+    esc(item.call_id),
+    esc(item.created_at),
+    badge(item),
+    esc(item.outcome.reason ?? ''),
+    esc(humanizeStage(item.current_stage)),
+    esc(item.updated_at),
+  ];
+  return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+}
+
+const STYLE = `
+:root { color-scheme: light dark; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  background: #0f1216; color: #e7ecf2; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+h1 { font-size: 1.4rem; margin: 0 0 4px; }
+a { color: #93c5fd; }
+.nav { margin: 0 0 12px; font-size: 0.85rem; }
+form.filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+  background: #161b22; border: 1px solid #2a323d; border-radius: 10px; padding: 12px; }
+form.filters label { display: flex; flex-direction: column; font-size: 0.8rem; gap: 2px; }
+form.filters select { padding: 6px 8px; border-radius: 8px; border: 1px solid #2a323d;
+  background: #0f1216; color: inherit; min-width: 180px; }
+form.filters button { padding: 8px 14px; border-radius: 8px; border: 1px solid #2a323d; background: #22303f;
+  color: #e7ecf2; font-weight: 600; }
+.table-wrap { overflow: auto; max-height: calc(100vh - 220px); margin-top: 12px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a323d; vertical-align: top;
+  font-size: 0.85rem; }
+th { position: sticky; top: 0; z-index: 1; background: #161b22; box-shadow: inset 0 -1px 0 #2a323d; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem;
+  font-weight: 600; color: #eef2f7; white-space: nowrap; }
+.pager { margin: 12px 0; display: flex; gap: 12px; align-items: center; }
+.foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
+`;
+
+export function renderCallsPage(dto: CallsPage): string {
+  const qs = dto.filter && dto.filter !== 'all' ? `?outcome=${encodeURIComponent(dto.filter)}` : '';
+
+  const options = OUTCOME_FILTERS.map(
+    (f) =>
+      `<option value="${esc(f.key)}"${f.key === dto.filter ? ' selected' : ''}>${esc(f.label)}</option>`,
+  ).join('');
+  const form =
+    `<form class="filters" method="get" action="/calls">` +
+    `<label>Outcome<select name="outcome">${options}</select></label>` +
+    `<button type="submit">Filter</button>` +
+    `</form>`;
+
+  const header = `<tr>${['Call', 'Created', 'Outcome', 'Reason', 'Stage', 'Updated']
+    .map((h) => `<th>${esc(h)}</th>`)
+    .join('')}</tr>`;
+  const body =
+    dto.items.length > 0
+      ? dto.items.map(rowHtml).join('')
+      : `<tr><td colspan="6">No calls match this filter yet.</td></tr>`;
+  const table = `<div class="table-wrap"><table><thead>${header}</thead><tbody>${body}</tbody></table></div>`;
+
+  const prevHref = dto.page > 1 ? esc(`/calls${qs ? `${qs}&` : '?'}page=${dto.page - 1}`) : '';
+  const nextHref =
+    dto.page < dto.total_pages ? esc(`/calls${qs ? `${qs}&` : '?'}page=${dto.page + 1}`) : '';
+  const pager =
+    `<div class="pager">` +
+    (prevHref ? `<a href="${prevHref}">&larr; Prev</a>` : '<span></span>') +
+    `<span>Page ${esc(String(dto.page))} of ${esc(String(dto.total_pages))} · ${esc(String(dto.total))} total</span>` +
+    (nextHref ? `<a href="${nextHref}">Next &rarr;</a>` : '<span></span>') +
+    `</div>`;
+
+  return (
+    `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width, initial-scale=1">` +
+    `<title>Calls</title><style>${STYLE}</style></head><body><main>` +
+    `<p class="nav"><a href="/status">&larr; Health</a></p>` +
+    `<h1>Calls — full pipeline</h1>` +
+    form +
+    pager +
+    table +
+    `<p class="foot">Read-only. Call outcomes only — no transcript content or PII.</p>` +
+    `</main></body></html>`
+  );
+}

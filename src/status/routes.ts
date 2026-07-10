@@ -5,6 +5,8 @@ import type { Config } from '../config/schema.js';
 import { buildStatus } from './aggregate.js';
 import { serializeStatus } from './serialize.js';
 import { renderStatusPage } from './render.js';
+import { listCalls } from './calls.js';
+import { renderCallsPage } from './calls-render.js';
 
 /**
  * The authenticated status surface routes (Task 7.3, plan §5). Mounted on an app from
@@ -41,6 +43,29 @@ export function registerStatusRoutes(app: FastifyInstance, deps: StatusRouteDeps
   // The same DTO as JSON.
   app.get('/status.json', async (_request, reply) => {
     const dto = await build();
+    return reply.type('application/json; charset=utf-8').send(JSON.stringify(dto));
+  });
+
+  // Per-call pipeline view: every call and its outcome (customer/non-customer/spam/filtered/held/
+  // processing), filterable + paginated. De-identified by construction (see calls.ts).
+  const parsePage = (raw: unknown): number => {
+    const n = Number.parseInt(typeof raw === 'string' ? raw : '1', 10);
+    return Number.isFinite(n) && n > 0 ? n : 1;
+  };
+  const buildCalls = (query: unknown): ReturnType<typeof listCalls> => {
+    const q = (query ?? {}) as { outcome?: string; page?: string };
+    const opts: { filter?: string; page: number } = { page: parsePage(q.page) };
+    if (typeof q.outcome === 'string') opts.filter = q.outcome;
+    return listCalls(deps.pool, opts);
+  };
+
+  app.get('/calls', async (request, reply) => {
+    const dto = await buildCalls(request.query);
+    return reply.type('text/html; charset=utf-8').send(renderCallsPage(dto));
+  });
+
+  app.get('/calls.json', async (request, reply) => {
+    const dto = await buildCalls(request.query);
     return reply.type('application/json; charset=utf-8').send(JSON.stringify(dto));
   });
 }
