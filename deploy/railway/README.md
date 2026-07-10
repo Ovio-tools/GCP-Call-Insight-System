@@ -25,6 +25,17 @@ bootstrap on that volume, and the five §0.2 consent gates recorded in `consent_
 `restartPolicyType: NEVER` makes it a run-to-completion job — you "trigger" a run by redeploying /
 restarting the service, and the PII-free report prints to the service logs.
 
+## One-off: re-home file-keystore keys into the worker's Railway secrets
+
+`rehome-keys.json` + `rehome-keys.cjs` are a **one-off** migration for an environment first set up
+with the `keystore` provider (keys on the `sample-validation` volume) that is moving the worker to
+the `railway` key provider. To run it: point the **sample-validation** service's config-as-code path
+at `deploy/railway/rehome-keys.json` and redeploy (that service mounts the keystore volume). It reads
+`/data/keystore/kek/kek-1.key` + `/data/keystore/dek/1.key`, writes `CRYPTO_KEK_MATERIAL` /
+`CRYPTO_WRAPPED_DEK_MATERIAL` to the worker via Railway's API, and exits — printing only success to the
+deploy logs, never key bytes. Needs `REHOME_TOKEN` (a Railway account API token) set on the service.
+Afterward, restore sample-validation's config path to `sample-validation.json` and delete the token.
+
 ## By-hand dashboard steps (build plan Task 0.3)
 
 - Add Postgres and Redis. Turn on Postgres point-in-time recovery and Redis
