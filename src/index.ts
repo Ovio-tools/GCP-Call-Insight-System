@@ -1,17 +1,23 @@
-import { loadConfig } from './config/index.js';
-import { createRootLogger } from './logging/logger.js';
+import { entrypointSpecifierFor, resolveServiceRole } from './service-dispatch.js';
 
 /**
- * Entrypoint. Scaffolding only — no business logic yet.
+ * Multi-service entrypoint. Every Railway service runs the same start command
+ * (`node dist/index.js`); the `SERVICE_ROLE` variable selects which service boots, so services
+ * differ only by a variable (CLI-settable) rather than a per-service start command. The chosen
+ * module (`dist/services/<role>.js`) self-runs its own boot sequence on import — validating config,
+ * wiring dependencies, and installing its own heartbeats.
  *
- * Boot sequence: validate configuration (exits naming any missing/invalid var),
- * then build the root logger and emit a single startup line.
+ * An unset or unknown `SERVICE_ROLE` fails fast with a named `CONFIG_MISSING_OR_INVALID` (below),
+ * never a silent no-op boot.
  */
-function main(): void {
-  const config = loadConfig();
-
-  const log = createRootLogger({ level: config.LOG_LEVEL, name: config.SERVICE_NAME });
-  log.info({ node_env: config.NODE_ENV, port: config.PORT }, 'service booted');
+async function main(): Promise<void> {
+  const role = resolveServiceRole(process.env);
+  // Breadcrumb before the child's own structured logger starts — the role name is not sensitive.
+  process.stderr.write(`entrypoint: booting SERVICE_ROLE=${role}\n`);
+  await import(entrypointSpecifierFor(role));
 }
 
-main();
+main().catch((err: unknown) => {
+  process.stderr.write(`entrypoint failed: ${String(err)}\n`);
+  process.exit(1);
+});
