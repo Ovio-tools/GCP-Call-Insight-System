@@ -17,6 +17,29 @@ describe('knowledge surface auth (Task 10.1)', () => {
     }
     await harness.app.close();
   });
+
+  it('redirects an unauthenticated browser (HTML) GET to the login page with returnTo', async () => {
+    const harness = await makeKnowledgeHarness({} as unknown as Pool);
+    const res = await harness.app.inject({
+      method: 'GET',
+      url: '/knowledge?q=pump',
+      headers: { accept: 'text/html,application/xhtml+xml' },
+    });
+    expect(res.statusCode).toBe(302);
+    expect(res.headers.location).toBe(`/auth/login?returnTo=${encodeURIComponent('/knowledge?q=pump')}`);
+    await harness.app.close();
+  });
+
+  it('still returns 401 (not a redirect) for a non-GET browser request', async () => {
+    const harness = await makeKnowledgeHarness({} as unknown as Pool);
+    const res = await harness.app.inject({
+      method: 'POST',
+      url: '/knowledge',
+      headers: { accept: 'text/html' },
+    });
+    expect(res.statusCode).toBe(401);
+    await harness.app.close();
+  });
 });
 
 describe.skipIf(!hasTestDb)('knowledge surface authenticated (Task 10.1)', () => {

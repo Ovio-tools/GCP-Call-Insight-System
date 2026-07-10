@@ -89,11 +89,12 @@ form.filters button { padding: 8px 14px; border-radius: 8px; border: 1px solid #
   color: #e7ecf2; font-weight: 600; }
 .summary { margin: 12px 0; padding: 12px; border-radius: 10px; background: #1a2029; border: 1px solid #2a323d; }
 .exports { margin: 8px 0 16px; }
-.table-wrap { overflow-x: auto; }
+.table-wrap { overflow: auto; max-height: calc(100vh - 220px); }
 table { border-collapse: collapse; width: 100%; }
 th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a323d; vertical-align: top;
   font-size: 0.85rem; }
-th { position: sticky; top: 0; background: #161b22; }
+th { position: sticky; top: 0; z-index: 1; background: #161b22;
+  box-shadow: inset 0 -1px 0 #2a323d; }
 .pager { margin: 12px 0; display: flex; gap: 12px; align-items: center; }
 .foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
 `;
