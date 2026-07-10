@@ -58,8 +58,9 @@ function acceptsHtml(accept: string | undefined): boolean {
 
 /** preHandler: refuse anonymous access to non-public routes; expose `request.user`. */
 export function requireAuth(environment: string): preHandlerHookHandler {
-  return async (request, reply) => {
+  return (request, reply, done) => {
     if (request.routeOptions.config.public) {
+      done();
       return;
     }
     const user = request.session.user;
@@ -70,11 +71,16 @@ export function requireAuth(environment: string): preHandlerHookHandler {
       // redirect is meaningless to them, and a POST cannot be safely replayed post-login.
       if (request.method === 'GET' && acceptsHtml(request.headers.accept)) {
         const returnTo = safeReturnTo(request.url, '/');
-        return reply.redirect(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+        // Fastify: sending a reply from a callback hook and NOT calling done() stops the
+        // lifecycle (the login redirect short-circuits the request).
+        void reply.redirect(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+        return;
       }
-      throw httpFailure('AUTH_REQUIRED', environment);
+      done(httpFailure('AUTH_REQUIRED', environment));
+      return;
     }
     request.user = user;
+    done();
   };
 }
 
