@@ -63,6 +63,43 @@ describe('makeViewQuerySchema', () => {
     expect(schema.parse({ q: '  leak  ' }).q).toBe('leak');
     expect(schema.safeParse({ q: 'x'.repeat(1000) }).success).toBe(false);
   });
+
+  it('treats empty-string filter values (an untouched HTML form field) as absent', () => {
+    // A GET form submits every unset select as `name=` and every blank date box as `from=`. That
+    // empty string must parse as "no filter", not fail `.strict()` as an invalid enum/date.
+    const parsed = schema.parse({
+      q: '',
+      service_category: '',
+      call_intent: '',
+      urgency: '',
+      from: '',
+      to: '',
+    });
+    expect(parsed.service_category).toBeUndefined();
+    expect(parsed.call_intent).toBeUndefined();
+    expect(parsed.urgency).toBeUndefined();
+    expect(parsed.from).toBeUndefined();
+    expect(parsed.to).toBeUndefined();
+  });
+
+  it('parses a real text search alongside untouched (empty) dropdowns and dates', () => {
+    // The exact shape the form submits when a user types in `q` and leaves everything else on "Any".
+    const parsed = schema.parse({
+      q: 'leak',
+      service_category: '',
+      call_intent: '',
+      urgency: '',
+      from: '',
+      to: '',
+    });
+    expect(parsed.q).toBe('leak');
+    expect(parsed.service_category).toBeUndefined();
+  });
+
+  it('still rejects a non-empty invalid enum value', () => {
+    // Emptiness is the only tolerance — a real bogus value must still fail.
+    expect(schema.safeParse({ service_category: 'nope' }).success).toBe(false);
+  });
 });
 
 describe('makeExportQuerySchema', () => {
@@ -77,5 +114,13 @@ describe('makeExportQuerySchema', () => {
   it('rejects page / page_size (export returns all rows)', () => {
     expect(schema.safeParse({ page: '2' }).success).toBe(false);
     expect(schema.safeParse({ page_size: '5' }).success).toBe(false);
+  });
+
+  it('treats empty-string filter values as absent (export href built from a filtered form)', () => {
+    const parsed = schema.parse({ service_category: '', urgency: '', from: '', to: '' });
+    expect(parsed.service_category).toBeUndefined();
+    expect(parsed.urgency).toBeUndefined();
+    expect(parsed.from).toBeUndefined();
+    expect(parsed.to).toBeUndefined();
   });
 });
