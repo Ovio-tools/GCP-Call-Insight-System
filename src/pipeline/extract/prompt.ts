@@ -8,7 +8,8 @@
 
 // v2: the prompt family now includes the ADR 0007 schema-failure retry suffix
 // (buildExtractRetryUserMessage); both attempts record under this version.
-export const EXTRACT_PROMPT_VERSION = 'extract-v2';
+// v3: added the grinder_pump service_category (with a sump-pump disambiguation line).
+export const EXTRACT_PROMPT_VERSION = 'extract-v3';
 
 export const EXTRACT_SCHEMA_VERSION = 1;
 
@@ -28,8 +29,10 @@ Fields (return exactly these, no more, no fewer):
 - service_category: one of water_heater, drain_blockage, leak_detection_or_repair,
   sewer_or_septic, toilet, faucet_sink_or_fixture, shower_or_tub, gas_line,
   sump_pump_or_drainage, water_quality_or_treatment, repipe_or_pipe_repair,
-  appliance_install_or_hookup, inspection_or_maintenance, other. You NEVER invent a
-  category; when nothing fits, use other.
+  appliance_install_or_hookup, inspection_or_maintenance, grinder_pump, other. You
+  NEVER invent a category; when nothing fits, use other. Use grinder_pump for a pump
+  that grinds and moves sewage or wastewater out of a home (a sewage ejector); this is
+  DISTINCT from sump_pump_or_drainage, which handles groundwater or basement drainage.
 - problem_statement: a short plain-language statement of what the caller needs.
 - symptoms: array of concrete symptoms described (empty array when none stated).
 - customer_language: array of VERBATIM, PII-FREE phrases quoted exactly from the

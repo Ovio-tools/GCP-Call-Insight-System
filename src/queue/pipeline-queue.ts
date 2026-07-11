@@ -97,6 +97,37 @@ export async function enqueueReprocess(
   );
 }
 
+/**
+ * Deterministic job id for a one-shot RE-EXTRACT backfill (recategorize historical calls, e.g.
+ * after adding a service_category). Like {@link reprocessJobId} it is distinct from the base
+ * {@link jobIdForCall} id so it never dedups against a retained COMPLETED base job in the
+ * `removeOnComplete` set, and distinct from the reprocess id so a review reprocess and a backfill
+ * of the same call don't collide. Scoped by a per-run token so re-running the backfill (new run)
+ * creates fresh jobs while a single run stays idempotent. Clean `[A-Za-z0-9_-]` token (no `:`).
+ */
+export function reextractJobId(callId: string, runId: string): string {
+  return `${jobIdForCall(callId)}-reextract-${runId}`;
+}
+
+/**
+ * Enqueue a re-extract of a call for the recategorize backfill. The `call_state` transition that
+ * precedes this already moved the call to `status='processing'` at `current_stage='extract'`, so
+ * the runner resumes at extract; this only schedules the job. Uses {@link reextractJobId} so a
+ * retained completed base job can never dedup it away.
+ */
+export async function enqueueReextract(
+  queue: ReprocessQueue,
+  callId: string,
+  config: Config,
+  runId: string,
+): Promise<void> {
+  await queue.add(
+    PIPELINE_JOB_NAME,
+    { callId },
+    { ...pipelineJobOptions(config, callId), jobId: reextractJobId(callId, runId) },
+  );
+}
+
 /** Minimal queue surface the fetch-transcript stage needs — BullMQ's `Queue` satisfies it. */
 export interface DelayedRetryQueue {
   add(

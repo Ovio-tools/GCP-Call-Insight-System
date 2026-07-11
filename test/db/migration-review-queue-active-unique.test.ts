@@ -11,9 +11,9 @@ import { hasTestDb, makePool, migrate } from './_pg.js';
  * 012 + 013 (retention purge grants, Task 8.1) + 014 (reveal_raw enum) + 015 (reprocess_requests,
  * Task 6.2) + 016 (labeled_examples, Task 6.3) + 017 (key lifecycle, Task 8.2) + 018 (backfill run
  * status, Task 11.2) + 019 (kek_versions app read grant) + 1782864100000 (drop raw/vault from
- * DB-A, ADR 0008 Move 2) = 9.
+ * DB-A, ADR 0008 Move 2) + 1782864100001 (grinder_pump service_category) = 10.
  */
-const ABOVE = 9;
+const ABOVE = 10;
 const PATTERN = 'test-rqau-%';
 
 describe.skipIf(!hasTestDb)('migration 012 review_queue active-row invariants', () => {

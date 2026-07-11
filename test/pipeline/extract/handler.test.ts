@@ -866,7 +866,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
       urgency: 'routine',
       sentiment: 'neutral',
       schema_version: 1,
-      prompt_version: 'extract-v2',
+      prompt_version: 'extract-v3',
       model_id: makeTestConfig().EXTRACT_MODEL_ID,
       pii_scan_status: 'pending',
     });
@@ -876,7 +876,7 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     expect(invocations[0]).toMatchObject({
       stage: 'extract',
       model_id: makeTestConfig().EXTRACT_MODEL_ID,
-      prompt_version: 'extract-v2',
+      prompt_version: 'extract-v3',
       outcome: 'success',
       input_tokens: 2000,
       output_tokens: 300,
