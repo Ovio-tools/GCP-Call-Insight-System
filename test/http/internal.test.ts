@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { makeInternalApp, login, FakeAuthProvider } from './_helpers.js';
+import { makeInternalApp, login, FakeAuthProvider, cookieHeader } from './_helpers.js';
 
 const PII = {
   email: 'jane.doe@example.com',
@@ -107,6 +107,40 @@ describe('internal app — auth & session', () => {
     expect(setCookie).toContain('Secure');
     expect(setCookie).toContain('SameSite=Lax');
     expect(setCookie).toContain('Path=/');
+  });
+
+  it('sends a post-login returnTo of "/" to the app home, not the route-less root', async () => {
+    // A browser opening the bare domain is bounced to login with returnTo=/. After login the
+    // callback must NOT drop the user back on "/" (no surface has a root route → NOT_FOUND);
+    // it lands them on the configured app home instead.
+    const harness = await makeInternalApp({}, new FakeAuthProvider(), undefined, {
+      loginSuccessRedirect: '/knowledge',
+    });
+    const r1 = await harness.app.inject({ method: 'GET', url: '/auth/login?returnTo=%2F' });
+    const r2 = await harness.app.inject({
+      method: 'GET',
+      url: '/auth/callback?code=good',
+      headers: { cookie: cookieHeader(r1) },
+    });
+    expect(r2.statusCode).toBeGreaterThanOrEqual(300);
+    expect(r2.statusCode).toBeLessThan(400);
+    expect(r2.headers.location).toBe('/knowledge');
+  });
+
+  it('still honors a real same-origin returnTo sub-path after login', async () => {
+    const harness = await makeInternalApp({}, new FakeAuthProvider(), undefined, {
+      loginSuccessRedirect: '/knowledge',
+    });
+    const r1 = await harness.app.inject({
+      method: 'GET',
+      url: '/auth/login?returnTo=%2Fknowledge%2Fexport.csv',
+    });
+    const r2 = await harness.app.inject({
+      method: 'GET',
+      url: '/auth/callback?code=good',
+      headers: { cookie: cookieHeader(r1) },
+    });
+    expect(r2.headers.location).toBe('/knowledge/export.csv');
   });
 
   it('rejects a callback with a failed exchange (bad state/nonce/PKCE)', async () => {

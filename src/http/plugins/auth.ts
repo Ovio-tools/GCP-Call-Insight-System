@@ -43,9 +43,19 @@ function constantTimeEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
-/** A safe local redirect target (same-origin path), or the default. Blocks open redirects. */
+/**
+ * A safe local redirect target (same-origin path), or the default. Blocks open redirects
+ * (`//host`, absolute URLs). The bare root `/` is treated as "no target" and falls back: no
+ * internal surface has a `/` route, so honoring it post-login would bounce the user to a
+ * NOT_FOUND — the fallback (`loginSuccessRedirect`) is the real app home.
+ */
 function safeReturnTo(candidate: unknown, fallback: string): string {
-  if (typeof candidate === 'string' && candidate.startsWith('/') && !candidate.startsWith('//')) {
+  if (
+    typeof candidate === 'string' &&
+    candidate.startsWith('/') &&
+    !candidate.startsWith('//') &&
+    candidate !== '/'
+  ) {
     return candidate;
   }
   return fallback;
