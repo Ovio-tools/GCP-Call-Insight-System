@@ -84,15 +84,31 @@ export function toDateBounds(filters: { from?: string; to?: string }): {
   };
 }
 
+/**
+ * Treat an empty string as an absent value BEFORE the inner schema runs. An HTML GET `<form>`
+ * submits every untouched `<select>` as `name=` and every blank date box as `from=`, so an empty
+ * string reaches us for filters the user never set. Without this, that empty string fails the enum/
+ * date validation (and `.strict()`) and the whole search is rejected as `REQUEST_MALFORMED`. The
+ * key itself is unchanged, so `.strict()` still rejects genuinely unknown query keys, and a NON-empty
+ * bad value (e.g. `service_category=nope`) still fails.
+ */
+function emptyToUndefined<T extends z.ZodTypeAny>(schema: T) {
+  return z.preprocess((v) => (v === '' ? undefined : v), schema);
+}
+
 /** The filter fields shared by the view and the export schemas. */
 function filterShape() {
   return {
     q: z.string().trim().max(MAX_Q_LENGTH).optional(),
-    service_category: serviceCategorySchema.optional(),
-    call_intent: callIntentSchema.optional(),
-    urgency: urgencySchema.optional(),
-    from: z.string().refine(isValidDateInput, { message: 'invalid date' }).optional(),
-    to: z.string().refine(isValidDateInput, { message: 'invalid date' }).optional(),
+    service_category: emptyToUndefined(serviceCategorySchema.optional()),
+    call_intent: emptyToUndefined(callIntentSchema.optional()),
+    urgency: emptyToUndefined(urgencySchema.optional()),
+    from: emptyToUndefined(
+      z.string().refine(isValidDateInput, { message: 'invalid date' }).optional(),
+    ),
+    to: emptyToUndefined(
+      z.string().refine(isValidDateInput, { message: 'invalid date' }).optional(),
+    ),
   };
 }
 
