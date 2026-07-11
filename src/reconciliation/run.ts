@@ -141,7 +141,11 @@ export async function runReconciliation(deps: ReconciliationDeps): Promise<Recon
     // A cursor that never advances would loop forever — that is a listing-contract break,
     // surfaced as api_changed rather than hidden as a hung cron.
     if (page.cursor !== undefined && page.cursor === cursor) {
-      throw new DialpadError('api_changed', { endpoint: 'calls', attempts: 1 });
+      throw new DialpadError('api_changed', {
+        endpoint: 'calls',
+        attempts: 1,
+        detail: 'cursor did not advance',
+      });
     }
     cursor = page.cursor;
   } while (cursor !== undefined);

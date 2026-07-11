@@ -84,11 +84,14 @@ export function classifyTranscript(parsed: TranscriptResponse): TranscriptReadin
 export const recentCallSchema = z
   .object({
     call_id: z.union([z.string(), z.number()]),
-    state: z.string().optional(),
-    direction: z.string().optional(),
-    duration: z.number().optional(),
-    date_started: z.union([z.string(), z.number()]).optional(),
-    date_ended: z.union([z.string(), z.number()]).optional(),
+    // `.nullish()` (not `.optional()`): Dialpad sends explicit `null` for an unanswered/voicemail
+    // call's duration or date_ended. `.optional()` would REJECT null → DIALPAD_API_CHANGED and crash
+    // the sweep on every run until that call ages out of the window. null is treated as absent.
+    state: z.string().nullish(),
+    direction: z.string().nullish(),
+    duration: z.number().nullish(),
+    date_started: z.union([z.string(), z.number()]).nullish(),
+    date_ended: z.union([z.string(), z.number()]).nullish(),
   })
   .passthrough();
 
@@ -100,7 +103,7 @@ export const recentCallSchema = z
 export const recentCallsResponseSchema = z
   .object({
     items: z.array(recentCallSchema),
-    cursor: z.string().optional(),
+    cursor: z.string().nullish(),
   })
   .passthrough();
 

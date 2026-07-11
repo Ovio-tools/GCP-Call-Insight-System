@@ -175,6 +175,11 @@ async function main(): Promise<void> {
               severity: failure.severity,
               processing_state: failure.processing_state,
               remediation_now: failure.remediation_now,
+              // PII-free Dialpad diagnostics so a contract drift is pinpointable from one log line:
+              // endpoint + HTTP status + the offending field path/reason (never a value).
+              dialpad_endpoint: err.endpoint,
+              dialpad_status: err.status,
+              dialpad_detail: err.detail,
             },
             'reconciliation sweep failed',
           );

@@ -227,4 +227,33 @@ describe('DialpadClient.listRecentlyConcludedCalls', () => {
       kind: 'api_changed',
     });
   });
+
+  it('treats null-valued optional fields as absent (a missed/voicemail call)', async () => {
+    // Real call APIs send explicit null for an unanswered call's duration/date_ended. That must
+    // parse cleanly, not fail as api_changed (Zod .optional() rejects null; .nullish() accepts it).
+    const body = {
+      items: [
+        { call_id: 999, state: 'missed', direction: 'inbound', duration: null, date_ended: null },
+      ],
+    };
+    const { client } = clientWith([json(body)]);
+    const page = await client.listRecentlyConcludedCalls({ since: 1000 });
+    expect(page.calls).toEqual([{ callId: '999', state: 'missed', direction: 'inbound' }]);
+  });
+
+  it('accepts a null cursor as "no more pages"', async () => {
+    const { client } = clientWith([json({ items: [], cursor: null })]);
+    const page = await client.listRecentlyConcludedCalls({ since: 1000 });
+    expect(page.cursor).toBeUndefined();
+  });
+
+  it('carries a PII-free field path in the error detail when a field type is wrong', async () => {
+    // A genuinely wrong type (string where a number is required) still fails — and the detail
+    // names the field path + issue code (never the value) so the failure is diagnosable.
+    const { client } = clientWith([json({ items: [{ call_id: 'c-1', duration: 'not-a-number' }] })]);
+    await expect(client.listRecentlyConcludedCalls({ since: 1000 })).rejects.toMatchObject({
+      kind: 'api_changed',
+      detail: expect.stringContaining('items.0.duration'),
+    });
+  });
 });
