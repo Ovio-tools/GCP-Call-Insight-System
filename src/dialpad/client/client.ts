@@ -1,3 +1,4 @@
+import type { ZodError } from 'zod';
 import type { Logger } from 'pino';
 import type { Config } from '../../config/schema.js';
 import { buildDialpadAuthHeaders, requireDialpadApiKey } from './auth.js';
@@ -72,8 +73,8 @@ const realSleep = (ms: number): Promise<void> => new Promise((resolve) => setTim
 /** Parse a Dialpad timestamp (`date_started` / `date_ended`: epoch ms number, numeric string, or
  * ISO string) into epoch ms; undefined when absent or unrecognisable — never a throw, so the
  * sweep fails open. Shared by both start and end so the two axes parse identically. */
-function parseEpochMs(raw: string | number | undefined): number | undefined {
-  if (raw === undefined) return undefined;
+function parseEpochMs(raw: string | number | null | undefined): number | undefined {
+  if (raw == null) return undefined;
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined;
   const asNumber = Number(raw);
   if (raw.trim() !== '' && Number.isFinite(asNumber)) return asNumber;
@@ -87,6 +88,39 @@ function retryAfterMs(res: Response): number | null {
   if (raw === null) return null;
   const seconds = Number(raw);
   return Number.isFinite(seconds) && seconds >= 0 ? Math.round(seconds * 1000) : null;
+}
+
+/**
+ * PII-free summary of a Zod parse failure for diagnostics: the offending field PATHS + issue
+ * CODES only (e.g. `items.0.duration:invalid_type`), capped at five — NEVER a field value or
+ * the response body. Safe to log so a contract drift is diagnosable in one line.
+ */
+function zodDetail(error: ZodError): string {
+  return error.issues
+    .slice(0, 5)
+    .map((i) => {
+      // For a type mismatch, append the RECEIVED type name (e.g. `null`, `undefined`, `string`) —
+      // a Zod type name, not a value, so it stays PII-free and pinpoints the drift.
+      const recv = i.code === 'invalid_type' ? `(${i.received})` : '';
+      return `${i.path.map(String).join('.')}:${i.code}${recv}`;
+    })
+    .join('; ');
+}
+
+/**
+ * True when `json` carries a non-empty array of call-like objects under SOME key — used only to
+ * distinguish a renamed collection field (fail loud) from a genuinely empty page (items null/
+ * absent → empty). Inspects structure only; never logs or returns any value.
+ */
+function hasCallLikeArray(json: unknown): boolean {
+  if (typeof json !== 'object' || json === null) return false;
+  for (const value of Object.values(json as Record<string, unknown>)) {
+    if (Array.isArray(value) && value.length > 0) {
+      const first = value[0] as unknown;
+      if (typeof first === 'object' && first !== null && 'call_id' in first) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -245,22 +279,42 @@ export function createDialpadClient(opts: CreateDialpadClientOptions): DialpadCl
       }
       const parsed = recentCallsResponseSchema.safeParse(json);
       if (!parsed.success) {
-        throw new DialpadError('api_changed', { endpoint: 'calls', status, attempts: 1 });
+        throw new DialpadError('api_changed', {
+          endpoint: 'calls',
+          status,
+          attempts: 1,
+          detail: zodDetail(parsed.error),
+        });
       }
 
-      const calls: RecentCall[] = parsed.data.items.map((item) => {
+      // Dialpad returns `items: null` (or omits it) for an empty page — treat as no calls. But if
+      // the collection was RENAMED (a call-like array lives under a different key), fail loud so
+      // reconciliation never silently misses every call.
+      const itemsRaw = parsed.data.items;
+      if (itemsRaw == null && hasCallLikeArray(json)) {
+        throw new DialpadError('api_changed', {
+          endpoint: 'calls',
+          status,
+          attempts: 1,
+          detail: 'items absent but a call-like array exists under another key (possible rename)',
+        });
+      }
+
+      const calls: RecentCall[] = (itemsRaw ?? []).map((item) => {
         const startedAt = parseEpochMs(item.date_started);
         const endedAt = parseEpochMs(item.date_ended);
         return {
           callId: String(item.call_id),
-          ...(item.state !== undefined ? { state: item.state } : {}),
-          ...(item.direction !== undefined ? { direction: item.direction } : {}),
-          ...(item.duration !== undefined ? { duration: item.duration } : {}),
+          // `!= null` so an explicit null (now accepted by .nullish()) is treated as absent, like
+          // a missing field — a null-valued optional never leaks a `null` into the RecentCall.
+          ...(item.state != null ? { state: item.state } : {}),
+          ...(item.direction != null ? { direction: item.direction } : {}),
+          ...(item.duration != null ? { duration: item.duration } : {}),
           ...(startedAt !== undefined ? { startedAt } : {}),
           ...(endedAt !== undefined ? { endedAt } : {}),
         };
       });
-      return { calls, ...(parsed.data.cursor !== undefined ? { cursor: parsed.data.cursor } : {}) };
+      return { calls, ...(parsed.data.cursor != null ? { cursor: parsed.data.cursor } : {}) };
     },
   };
 }

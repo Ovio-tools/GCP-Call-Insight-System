@@ -84,23 +84,30 @@ export function classifyTranscript(parsed: TranscriptResponse): TranscriptReadin
 export const recentCallSchema = z
   .object({
     call_id: z.union([z.string(), z.number()]),
-    state: z.string().optional(),
-    direction: z.string().optional(),
-    duration: z.number().optional(),
-    date_started: z.union([z.string(), z.number()]).optional(),
-    date_ended: z.union([z.string(), z.number()]).optional(),
+    // `.nullish()` (not `.optional()`): Dialpad sends explicit `null` for an unanswered/voicemail
+    // call's duration or date_ended. `.optional()` would REJECT null → DIALPAD_API_CHANGED and crash
+    // the sweep on every run until that call ages out of the window. null is treated as absent.
+    state: z.string().nullish(),
+    direction: z.string().nullish(),
+    duration: z.number().nullish(),
+    date_started: z.union([z.string(), z.number()]).nullish(),
+    date_ended: z.union([z.string(), z.number()]).nullish(),
   })
   .passthrough();
 
 /**
  * GET /calls — a paginated page of concluded calls, newest first, with a `cursor` to continue.
- * `items` is REQUIRED (an empty array is valid): if Dialpad renames/removes the collection
- * field, parsing fails → DIALPAD_API_CHANGED, so reconciliation never silently misses calls.
+ *
+ * `items` is `.nullish()`, NOT required: Dialpad returns `items: null` (or omits it) for an EMPTY
+ * page — common on a quiet overnight window — and a required-array schema would reject that null
+ * and crash the sweep every run. Null/absent is treated as an empty page in the client. The
+ * "never silently miss calls on a RENAME" guard is preserved there instead: a call-like array
+ * under a different key still fails loud. A wrong TYPE (string/object) stays → DIALPAD_API_CHANGED.
  */
 export const recentCallsResponseSchema = z
   .object({
-    items: z.array(recentCallSchema),
-    cursor: z.string().optional(),
+    items: z.array(recentCallSchema).nullish(),
+    cursor: z.string().nullish(),
   })
   .passthrough();
 

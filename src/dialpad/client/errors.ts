@@ -24,6 +24,13 @@ export interface DialpadErrorContext {
   status?: number;
   /** Total HTTP attempts made (1 + retries). */
   attempts: number;
+  /**
+   * PII-free diagnostic: for a schema rejection, the offending field PATH + issue CODE
+   * (e.g. `items.0.duration:invalid_type`) — never a field VALUE. For other api_changed
+   * causes, a short reason (e.g. `cursor did not advance`, `invalid json`). Kept OUT of the
+   * error message so message stays fixed; logged as its own field by the caller.
+   */
+  detail?: string;
 }
 
 export class DialpadError extends Error {
@@ -31,6 +38,7 @@ export class DialpadError extends Error {
   readonly endpoint: string;
   readonly status: number | undefined;
   readonly attempts: number;
+  readonly detail: string | undefined;
 
   constructor(kind: DialpadFailureKind, ctx: DialpadErrorContext) {
     const statusPart = ctx.status !== undefined ? ` status ${ctx.status},` : '';
@@ -42,6 +50,7 @@ export class DialpadError extends Error {
     this.endpoint = ctx.endpoint;
     this.status = ctx.status;
     this.attempts = ctx.attempts;
+    this.detail = ctx.detail;
   }
 }
 
