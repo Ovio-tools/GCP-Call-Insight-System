@@ -97,12 +97,16 @@ export const recentCallSchema = z
 
 /**
  * GET /calls — a paginated page of concluded calls, newest first, with a `cursor` to continue.
- * `items` is REQUIRED (an empty array is valid): if Dialpad renames/removes the collection
- * field, parsing fails → DIALPAD_API_CHANGED, so reconciliation never silently misses calls.
+ *
+ * `items` is `.nullish()`, NOT required: Dialpad returns `items: null` (or omits it) for an EMPTY
+ * page — common on a quiet overnight window — and a required-array schema would reject that null
+ * and crash the sweep every run. Null/absent is treated as an empty page in the client. The
+ * "never silently miss calls on a RENAME" guard is preserved there instead: a call-like array
+ * under a different key still fails loud. A wrong TYPE (string/object) stays → DIALPAD_API_CHANGED.
  */
 export const recentCallsResponseSchema = z
   .object({
-    items: z.array(recentCallSchema),
+    items: z.array(recentCallSchema).nullish(),
     cursor: z.string().nullish(),
   })
   .passthrough();

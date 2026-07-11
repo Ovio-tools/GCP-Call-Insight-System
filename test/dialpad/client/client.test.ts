@@ -212,6 +212,19 @@ describe('DialpadClient.listRecentlyConcludedCalls', () => {
     expect(page.cursor).toBeUndefined();
   });
 
+  it('treats items: null as an empty page (Dialpad returns null on a quiet window)', async () => {
+    const { client } = clientWith([json({ items: null, cursor: null })]);
+    const page = await client.listRecentlyConcludedCalls({ since: 1000 });
+    expect(page.calls).toEqual([]);
+    expect(page.cursor).toBeUndefined();
+  });
+
+  it('treats a fully absent items field as an empty page (nothing to miss)', async () => {
+    const { client } = clientWith([json({})]);
+    const page = await client.listRecentlyConcludedCalls({ since: 1000 });
+    expect(page.calls).toEqual([]);
+  });
+
   it('maps an unexpected list shape to DIALPAD_API_CHANGED', async () => {
     const { client } = clientWith([json({ items: 'not-an-array' })]);
     await expect(client.listRecentlyConcludedCalls({ since: 1000 })).rejects.toMatchObject({
@@ -251,9 +264,11 @@ describe('DialpadClient.listRecentlyConcludedCalls', () => {
     // A genuinely wrong type (string where a number is required) still fails — and the detail
     // names the field path + issue code (never the value) so the failure is diagnosable.
     const { client } = clientWith([json({ items: [{ call_id: 'c-1', duration: 'not-a-number' }] })]);
-    await expect(client.listRecentlyConcludedCalls({ since: 1000 })).rejects.toMatchObject({
-      kind: 'api_changed',
-      detail: expect.stringContaining('items.0.duration'),
-    });
+    const err = await client
+      .listRecentlyConcludedCalls({ since: 1000 })
+      .then(() => null)
+      .catch((e: unknown) => e);
+    expect(err).toMatchObject({ kind: 'api_changed' });
+    expect((err as { detail?: string }).detail).toContain('items.0.duration');
   });
 });

@@ -1,3 +1,4 @@
+import type { ZodError } from 'zod';
 import type { Logger } from 'pino';
 import type { Config } from '../../config/schema.js';
 import { buildDialpadAuthHeaders, requireDialpadApiKey } from './auth.js';
@@ -94,11 +95,32 @@ function retryAfterMs(res: Response): number | null {
  * CODES only (e.g. `items.0.duration:invalid_type`), capped at five — NEVER a field value or
  * the response body. Safe to log so a contract drift is diagnosable in one line.
  */
-function zodDetail(error: { issues: ReadonlyArray<{ path: PropertyKey[]; code: string }> }): string {
+function zodDetail(error: ZodError): string {
   return error.issues
     .slice(0, 5)
-    .map((i) => `${i.path.map(String).join('.')}:${i.code}`)
+    .map((i) => {
+      // For a type mismatch, append the RECEIVED type name (e.g. `null`, `undefined`, `string`) —
+      // a Zod type name, not a value, so it stays PII-free and pinpoints the drift.
+      const recv = i.code === 'invalid_type' ? `(${i.received})` : '';
+      return `${i.path.map(String).join('.')}:${i.code}${recv}`;
+    })
     .join('; ');
+}
+
+/**
+ * True when `json` carries a non-empty array of call-like objects under SOME key — used only to
+ * distinguish a renamed collection field (fail loud) from a genuinely empty page (items null/
+ * absent → empty). Inspects structure only; never logs or returns any value.
+ */
+function hasCallLikeArray(json: unknown): boolean {
+  if (typeof json !== 'object' || json === null) return false;
+  for (const value of Object.values(json as Record<string, unknown>)) {
+    if (Array.isArray(value) && value.length > 0) {
+      const first = value[0] as unknown;
+      if (typeof first === 'object' && first !== null && 'call_id' in first) return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -265,7 +287,20 @@ export function createDialpadClient(opts: CreateDialpadClientOptions): DialpadCl
         });
       }
 
-      const calls: RecentCall[] = parsed.data.items.map((item) => {
+      // Dialpad returns `items: null` (or omits it) for an empty page — treat as no calls. But if
+      // the collection was RENAMED (a call-like array lives under a different key), fail loud so
+      // reconciliation never silently misses every call.
+      const itemsRaw = parsed.data.items;
+      if (itemsRaw == null && hasCallLikeArray(json)) {
+        throw new DialpadError('api_changed', {
+          endpoint: 'calls',
+          status,
+          attempts: 1,
+          detail: 'items absent but a call-like array exists under another key (possible rename)',
+        });
+      }
+
+      const calls: RecentCall[] = (itemsRaw ?? []).map((item) => {
         const startedAt = parseEpochMs(item.date_started);
         const endedAt = parseEpochMs(item.date_ended);
         return {
