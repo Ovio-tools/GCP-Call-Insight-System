@@ -212,6 +212,92 @@ describe.skipIf(!hasTestDb)('buildStatus (DB integration, Task 7.3)', () => {
     expect(dto.pipeline_nodes.find((n) => n.key === 'redact')?.state).toBe('broken');
   });
 
+  it('auto-expires a component alert once that component reports healthy again (newer heartbeat)', async () => {
+    await seedCall('test-status-x', 'store', 'processing');
+    await recordAlert(app, {
+      errorCode: 'DIALPAD_API_CHANGED',
+      rootCauseCategory: 'DIALPAD_API_CHANGED',
+      severity: 'high',
+      dedupKey: 'DIALPAD_API_CHANGED:component:reconciliation-cron',
+      failureSnapshot: { context: { component: 'reconciliation-cron' } },
+    });
+    // The incident is in the past…
+    await owner.query(
+      `UPDATE alert_events SET created_at = now() - interval '1 hour' WHERE dedup_key = $1`,
+      ['DIALPAD_API_CHANGED:component:reconciliation-cron'],
+    );
+    // …and the component has since run successfully (a fresh, non-degraded heartbeat).
+    await recordHeartbeat(app, { component: 'reconciliation-cron' });
+    await recordHeartbeat(app, { component: 'worker' });
+
+    const dto = await buildStatus(app, {
+      config: makeTestConfig({ CLASSIFY_ENABLED: true, EXTRACT_ENABLED: true }),
+      now,
+      logger: silentLogger,
+    });
+    // Recovered → the banner clears; it does NOT keep showing the resolved incident.
+    expect(dto.summary.latest_issue).toBeNull();
+    expect(dto.summary.pipeline_state).toBe('running');
+  });
+
+  it('keeps a component alert while the component has NOT recovered (heartbeat older than the alert)', async () => {
+    await recordAlert(app, {
+      errorCode: 'DIALPAD_API_CHANGED',
+      rootCauseCategory: 'DIALPAD_API_CHANGED',
+      severity: 'high',
+      dedupKey: 'DIALPAD_API_CHANGED:component:reconciliation-cron',
+      failureSnapshot: { context: { component: 'reconciliation-cron' } },
+    });
+    await recordHeartbeat(app, { component: 'reconciliation-cron' });
+    // The last successful run predates the incident → not recovered.
+    await owner.query(
+      `UPDATE component_heartbeats SET last_run_at = now() - interval '2 hours' WHERE component = $1`,
+      ['reconciliation-cron'],
+    );
+    const dto = await buildStatus(app, {
+      config: makeTestConfig({ CLASSIFY_ENABLED: true, EXTRACT_ENABLED: true }),
+      now,
+      logger: silentLogger,
+    });
+    expect(dto.summary.latest_issue?.error_code).toBe('DIALPAD_API_CHANGED');
+    expect(dto.summary.pipeline_state).toBe('degraded');
+  });
+
+  it('falls through a recovered component alert to an older still-active issue', async () => {
+    // An older, still-active issue that is NOT component-scoped (cannot auto-recover here).
+    await recordAlert(app, {
+      errorCode: 'REVIEW_QUEUE_STALLED',
+      rootCauseCategory: 'REVIEW_QUEUE_STALLED',
+      severity: 'high',
+      dedupKey: 'REVIEW_QUEUE_STALLED:review_queue:r-1',
+      failureSnapshot: { context: {} },
+    });
+    await owner.query(
+      `UPDATE alert_events SET created_at = now() - interval '2 hours' WHERE dedup_key = $1`,
+      ['REVIEW_QUEUE_STALLED:review_queue:r-1'],
+    );
+    // A NEWER component alert that has since recovered → must be skipped, revealing the older one.
+    await recordAlert(app, {
+      errorCode: 'DIALPAD_API_CHANGED',
+      rootCauseCategory: 'DIALPAD_API_CHANGED',
+      severity: 'high',
+      dedupKey: 'DIALPAD_API_CHANGED:component:reconciliation-cron',
+      failureSnapshot: { context: { component: 'reconciliation-cron' } },
+    });
+    await owner.query(
+      `UPDATE alert_events SET created_at = now() - interval '1 hour' WHERE dedup_key = $1`,
+      ['DIALPAD_API_CHANGED:component:reconciliation-cron'],
+    );
+    await recordHeartbeat(app, { component: 'reconciliation-cron' }); // fresh → recovered
+
+    const dto = await buildStatus(app, {
+      config: makeTestConfig({ CLASSIFY_ENABLED: true, EXTRACT_ENABLED: true }),
+      now,
+      logger: silentLogger,
+    });
+    expect(dto.summary.latest_issue?.error_code).toBe('REVIEW_QUEUE_STALLED');
+  });
+
   it('healthy snapshot → running when model enabled, no alerts, spend under cap', async () => {
     await seedCall('test-status-p', 'store', 'processing');
     await recordHeartbeat(app, { component: 'worker' });

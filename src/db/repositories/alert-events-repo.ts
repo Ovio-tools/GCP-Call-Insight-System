@@ -114,6 +114,21 @@ export async function latestActive(pool: Pool): Promise<AlertEventRow | undefine
 }
 
 /**
+ * The newest unacknowledged alerts, newest first, bounded to `limit`. The status surface scans
+ * these and shows the newest whose underlying signal is STILL active — a component-scoped alert
+ * auto-expires from the banner once its component reports healthy again (see aggregate.ts). Same
+ * ordering as {@link latestActive} so the first non-recovered row is the banner issue.
+ */
+export async function recentUnacknowledged(pool: Pool, limit: number): Promise<AlertEventRow[]> {
+  const rows = await query<AlertEventRow>(
+    pool,
+    `SELECT * FROM alert_events WHERE acknowledged_at IS NULL ORDER BY created_at DESC LIMIT $1`,
+    [limit],
+  );
+  return rows.map((r) => parseOrThrow(TABLE, alertEventRowSchema, r));
+}
+
+/**
  * Alerts whose delivery is still owed and due (Task 7.3): `delivery_state` is `pending` or
  * `failed`, the backoff has elapsed (`COALESCE(next_attempt_at, created_at) <= now`, defensive
  * even though the column is NOT NULL), and the max-attempts cap has not been hit. Oldest first

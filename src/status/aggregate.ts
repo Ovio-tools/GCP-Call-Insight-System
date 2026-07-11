@@ -12,7 +12,7 @@ import { type HeldReasonCount, countOpenByReason } from '../db/repositories/revi
 import { countUncleared } from '../db/repositories/dead-letter-repo.js';
 import { getDay } from '../db/repositories/daily-cost-usage-repo.js';
 import { listHeartbeats } from '../db/repositories/component-heartbeats-repo.js';
-import { latestActive } from '../db/repositories/alert-events-repo.js';
+import { recentUnacknowledged } from '../db/repositories/alert-events-repo.js';
 import type { ComponentHeartbeatRow } from '../db/schemas/component-heartbeats.js';
 import {
   CLASSIFY_DTO_KEY,
@@ -79,6 +79,37 @@ function alertStageKey(row: AlertEventRow | undefined): string | undefined {
   return typeof stage === 'string' ? dbStageToDtoKey(stage) : undefined;
 }
 
+/** The component an alert names, from its sanitized `context.component`, or undefined (not
+ * component-scoped). Mirrors {@link alertStageKey}'s defensive snapshot access. */
+function alertComponent(row: AlertEventRow): string | undefined {
+  const snapshot = row.failure_snapshot;
+  if (snapshot === null || typeof snapshot !== 'object' || Array.isArray(snapshot))
+    return undefined;
+  const context = (snapshot as { context?: unknown }).context;
+  if (context === null || typeof context !== 'object' || Array.isArray(context)) return undefined;
+  const component = (context as { component?: unknown }).component;
+  return typeof component === 'string' ? component : undefined;
+}
+
+/**
+ * True when a COMPONENT-scoped alert has recovered and should auto-expire from the banner: its
+ * component has run successfully (a non-degraded heartbeat) MORE RECENTLY than the alert fired.
+ * The crons/worker ping their heartbeat only after a fully successful run, so a heartbeat newer
+ * than the incident is a true recovery signal. Conservative by design — a non-component alert, a
+ * missing heartbeat, or an unavailable heartbeats query all yield `false`, so a genuinely-active
+ * or unprovable issue is NEVER hidden.
+ */
+function isComponentAlertRecovered(
+  row: AlertEventRow,
+  heartbeats: ComponentHeartbeatRow[] | null,
+): boolean {
+  const component = alertComponent(row);
+  if (component === undefined || heartbeats === null) return false;
+  const hb = heartbeats.find((h) => h.component === component);
+  if (!hb) return false;
+  return hb.last_status !== 'degraded' && hb.last_run_at.getTime() > row.created_at.getTime();
+}
+
 function staleThresholdMs(config: Config, componentKey: string): number {
   switch (componentKey) {
     case 'worker':
@@ -91,6 +122,10 @@ function staleThresholdMs(config: Config, componentKey: string): number {
       return Number.POSITIVE_INFINITY; // never stale from idleness (webhook receiver)
   }
 }
+
+/** How many newest unacknowledged alerts to scan when picking the banner issue. Bounded so the
+ * page stays cheap; ample because active alerts are dedup'd (one row per dedup_key). */
+const RECENT_ALERT_SCAN_LIMIT = 50;
 
 export async function buildStatus(pool: Pool, deps: BuildStatusDeps): Promise<StatusDTO> {
   const { config, now, logger } = deps;
@@ -168,14 +203,18 @@ export async function buildStatus(pool: Pool, deps: BuildStatusDeps): Promise<St
   );
 
   const ALERT_FAIL = Symbol('alert-fail');
-  const alertResult = await attempt<AlertEventRow | undefined | typeof ALERT_FAIL>(
+  const alertResult = await attempt<AlertEventRow[] | typeof ALERT_FAIL>(
     logger,
     'latest_issue',
-    () => latestActive(pool),
+    () => recentUnacknowledged(pool, RECENT_ALERT_SCAN_LIMIT),
     ALERT_FAIL,
   );
   const alertQueryOk = alertResult !== ALERT_FAIL;
-  const latestRow = alertResult === ALERT_FAIL ? undefined : alertResult;
+  // The banner shows the newest unacknowledged issue whose underlying signal is STILL active: a
+  // component-scoped alert auto-expires once its component reports healthy again (a newer,
+  // non-degraded heartbeat), so a resolved incident stops lingering on the page.
+  const recentAlerts = alertResult === ALERT_FAIL ? [] : alertResult;
+  const latestRow = recentAlerts.find((r) => !isComponentAlertRecovered(r, heartbeats));
 
   // --- model pause, PER STAGE: a stage is paused when its own kill switch is off OR the daily
   // hard cap is reached; false only when its flag is on and spend is known under cap; null
