@@ -11,9 +11,11 @@ import { TEST_DATABASE_URL } from './_pg.js';
  * (metadata + audit ONLY — never raw/vault ciphertext).
  *
  * With migrations 018 (backfill run status, Task 11.2), 019 (kek_versions app read grant), and
- * 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) stacked on top, ABOVE = 4: `down(4)`
- * rolls back the drop migration + 019 + 018 then exposes the pre-017 schema, `up(4)` re-applies
- * 017 (re-running its preflight) + 018 + 019 + the drop. Crucially, the drop migration's `down()`
+ * 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) + 1782864100001 (grinder_pump
+ * service_category) stacked on top, ABOVE = 5: `down(5)`
+ * rolls back grinder_pump + the drop migration + 019 + 018 then exposes the pre-017 schema, `up(5)`
+ * re-applies 017 (re-running its preflight) + 018 + 019 + the drop + grinder_pump. Crucially, the
+ * drop migration's `down()`
  * RECREATES raw_transcripts + token_vault in DB-A, so at the rolled-down state (below 017) those
  * tables exist in DB-A again — which is exactly what the zero-active-WITH-encrypted-rows preflight
  * below relies on (it seeds a raw_transcripts row in DB-A to trigger migration 017's preflight,
@@ -28,7 +30,7 @@ import { TEST_DATABASE_URL } from './_pg.js';
  * too, so a `pg_roles` existence check is topology-dependent; an ACL-grant check is 0 in both the
  * shared-local and separate-CI-cluster topologies and is not flaky under concurrent role drops.)
  */
-const ABOVE = 4;
+const ABOVE = 5;
 
 describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
   let owner!: Pool;

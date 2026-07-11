@@ -11,13 +11,14 @@ import { makeAppPool } from './_dal.js';
  * the tracking table's PK + FKs + grants (SELECT/INSERT/DELETE — the restart contract deletes
  * tracking rows), and a clean down.
  *
- * With migration 019 (kek_versions app read grant) and 1782864100000 (drop raw/vault from DB-A,
- * ADR 0008 Move 2) stacked on top, ABOVE = 3: down(3) rolls back the drop migration + 019 then
- * exposes the pre-018 schema, up(3) re-applies 018 + 019 + the drop. (The drop's down() recreates
+ * With migration 019 (kek_versions app read grant), 1782864100000 (drop raw/vault from DB-A,
+ * ADR 0008 Move 2), and 1782864100001 (grinder_pump service_category) stacked on top, ABOVE = 4:
+ * down(4) rolls back those three then exposes the pre-018 schema, up(4) re-applies 018 + the three.
+ * (The drop's down() recreates
  * raw/vault in DB-A at the rolled-down state, but this test only touches backfill tables, so that
  * is harmless.)
  */
-const ABOVE = 3;
+const ABOVE = 4;
 
 describe.skipIf(!hasTestDb)('migration 018 — backfill run status + tracking', () => {
   let owner!: Pool;

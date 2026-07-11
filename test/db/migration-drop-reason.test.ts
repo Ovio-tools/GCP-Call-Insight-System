@@ -20,11 +20,12 @@ describe.skipIf(!hasTestDb)('migration 6 precondition (pre-existing skipped rows
   // cols), 12 (review_queue active-row invariants), 13 (retention purge grants, Task 8.1), 14
   // (reveal_raw enum), 15 (reprocess_requests, Task 6.2), 16 (labeled_examples, Task 6.3), 17
   // (key lifecycle, Task 8.2), 18 (backfill run status, Task 11.2), 19 (kek_versions app read
-  // grant), and 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) sit above 6, so we roll
-  // back 15 migrations to reach the pre-6 schema. (The drop migration's down() recreates
+  // grant), 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2), and 1782864100001
+  // (grinder_pump service_category) sit above 6, so we roll
+  // back 16 migrations to reach the pre-6 schema. (The drop migration's down() recreates
   // raw_transcripts+token_vault in DB-A at the rolled-down state, but this test only touches
   // call_state, so that is harmless here.)
-  const MIGRATIONS_ABOVE_6 = 15;
+  const MIGRATIONS_ABOVE_6 = 16;
 
   it('fails loudly if a skipped call_state row pre-exists', async () => {
     const callId = 'test-drop-preexisting-skipped';

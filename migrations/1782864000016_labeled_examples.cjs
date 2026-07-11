@@ -107,7 +107,7 @@ exports.up = (pgm) => {
           'water_heater', 'drain_blockage', 'leak_detection_or_repair', 'sewer_or_septic',
           'toilet', 'faucet_sink_or_fixture', 'shower_or_tub', 'gas_line',
           'sump_pump_or_drainage', 'water_quality_or_treatment', 'repipe_or_pipe_repair',
-          'appliance_install_or_hookup', 'inspection_or_maintenance', 'other'])
+          'appliance_install_or_hookup', 'inspection_or_maintenance', 'grinder_pump', 'other'])
         AND (expected_output->>'sentiment') = ANY(ARRAY[
           'positive', 'neutral', 'negative', 'frustrated'])
         AND (expected_output - ARRAY['call_intent', 'service_category', 'urgency', 'sentiment'])

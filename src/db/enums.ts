@@ -160,6 +160,7 @@ export const SERVICE_CATEGORIES = [
   'repipe_or_pipe_repair',
   'appliance_install_or_hookup',
   'inspection_or_maintenance',
+  'grinder_pump',
   'other',
 ] as const;
 
