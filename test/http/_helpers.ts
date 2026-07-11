@@ -76,6 +76,7 @@ export async function makeInternalApp(
   overrides: Partial<Config> = {},
   provider: FakeAuthProvider = new FakeAuthProvider(),
   extraRoutes?: (app: FastifyInstance) => void,
+  appOptions: { loginSuccessRedirect?: string } = {},
 ): Promise<InternalHarness> {
   const config = makeTestConfig({
     SESSION_SECRET,
@@ -91,6 +92,9 @@ export async function makeInternalApp(
     authProvider: provider,
     rateStore: new MemoryRateStore(),
     logger,
+    ...(appOptions.loginSuccessRedirect
+      ? { loginSuccessRedirect: appOptions.loginSuccessRedirect }
+      : {}),
   });
   registerInternalExampleRoutes(app);
   extraRoutes?.(app);
