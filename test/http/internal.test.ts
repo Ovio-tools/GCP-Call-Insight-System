@@ -174,6 +174,29 @@ describe('internal app — auth & session', () => {
     });
     expect(after.statusCode).toBe(401);
   });
+
+  it('returns the IdP logout URL as JSON for an XHR sign-out (for a top-level navigation)', async () => {
+    const provider = new FakeAuthProvider();
+    provider.endSession =
+      'https://idp.example/v2/logout?client_id=abc&returnTo=https%3A%2F%2Fapp%2F';
+    const harness = await makeInternalApp({}, provider);
+    const { cookie, csrfToken } = await login(harness);
+    const out = await harness.app.inject({
+      method: 'POST',
+      url: '/auth/logout',
+      headers: { cookie, 'x-csrf-token': csrfToken, 'x-requested-with': 'xhr' },
+    });
+    expect(out.statusCode).toBe(200);
+    const body: { next: string } = out.json();
+    expect(body.next).toBe(provider.endSession);
+    // Session is still destroyed regardless of the response shape.
+    const after = await harness.app.inject({
+      method: 'GET',
+      url: '/example/whoami',
+      headers: { cookie },
+    });
+    expect(after.statusCode).toBe(401);
+  });
 });
 
 describe('internal app — CSRF', () => {

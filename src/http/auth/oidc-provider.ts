@@ -119,8 +119,26 @@ export class OidcAuthProvider implements AuthProvider {
     return { id: claims.sub, roles: extractRoles(claims) };
   }
 
+  /**
+   * The IdP logout (RP-initiated logout) URL. Sending the browser here — not just destroying the
+   * local session — is what clears the IdP's own SSO cookie, so the user actually has to sign in
+   * again. Built from config: Auth0's logout endpoint (`{issuer}v2/logout`) with `client_id` and a
+   * `returnTo` derived from the redirect URI's origin (which must be in Auth0's Allowed Logout URLs).
+   * Returns undefined if the OIDC settings are incomplete, in which case logout falls back to a
+   * local-session-only sign-out.
+   */
   endSessionUrl(): string | undefined {
-    return undefined;
+    const { issuerUrl, clientId, redirectUri } = this.settings;
+    if (!issuerUrl || !clientId || !redirectUri) return undefined;
+    try {
+      const base = issuerUrl.endsWith('/') ? issuerUrl : `${issuerUrl}/`;
+      const url = new URL('v2/logout', base);
+      url.searchParams.set('client_id', clientId);
+      url.searchParams.set('returnTo', `${new URL(redirectUri).origin}/`);
+      return url.toString();
+    } catch {
+      return undefined;
+    }
   }
 }
 

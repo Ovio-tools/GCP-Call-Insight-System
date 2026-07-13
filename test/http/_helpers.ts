@@ -31,7 +31,13 @@ export class FakeClock implements Clock {
 export class FakeAuthProvider implements AuthProvider {
   user: AuthenticatedUser = { id: 'user-1', roles: ['reviewer'] };
   failCallback = false;
+  /** When set, `endSessionUrl()` returns it — for exercising the IdP-logout redirect/next. */
+  endSession?: string;
   private n = 0;
+
+  endSessionUrl(): string | undefined {
+    return this.endSession;
+  }
 
   createAuthorizationRequest(): Promise<AuthorizationRequest> {
     this.n += 1;

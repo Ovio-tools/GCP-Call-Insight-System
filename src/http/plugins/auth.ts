@@ -178,10 +178,20 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps): 
   // Fetch the CSRF token for API-style clients (authenticated, safe method).
   app.get('/auth/csrf', (request) => ({ csrfToken: request.session.csrfToken ?? null }));
 
-  // Logout: destroy the session, then optionally bounce through the IdP end-session URL.
+  // Logout: destroy the session, then bounce through the IdP end-session URL (so the IdP clears its
+  // SSO cookie too). The Sign-out button calls this via fetch and needs the destination URL back to
+  // do a TOP-LEVEL navigation — a fetch-followed redirect would not log the user out of the IdP — so
+  // an XHR/JSON caller gets `{ next }`; a plain navigation still gets a 302 redirect.
   app.post('/auth/logout', async (request, reply) => {
     const endSession = deps.provider.endSessionUrl?.();
     await request.session.destroy();
-    return reply.redirect(endSession ?? deps.loginSuccessRedirect);
+    const next = endSession ?? deps.loginSuccessRedirect;
+    const accept = request.headers.accept ?? '';
+    const wantsJson =
+      request.headers['x-requested-with'] === 'xhr' || accept.includes('application/json');
+    if (wantsJson) {
+      return reply.send({ next });
+    }
+    return reply.redirect(next);
   });
 }
