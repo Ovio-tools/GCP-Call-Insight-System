@@ -86,6 +86,29 @@ const stateChanging = (path: string): RouteSpec => ({
 
 export const SURFACES: readonly SurfaceSpec[] = [
   {
+    // The combined single-entry-point service. It mounts the status, knowledge-base, and review
+    // route modules (each already registered under its own surface below) plus its own `GET /`
+    // home page, all on one `createInternalApp` instance under one session. Listed FIRST so its
+    // unique `registerConsoleHomeRoute` marker maps `console-surface.ts` to THIS surface before the
+    // per-surface markers (which also match, since the file calls all three register functions).
+    name: 'console',
+    bootFile: 'src/services/console-surface.ts',
+    factory: 'internal',
+    status: 'live',
+    sharedFactorySuite: 'internal-surfaces',
+    liveSuite: 'internal-surfaces',
+    // Only the home route is NEW here; the mounted status/knowledge/review route literals are
+    // discovered from their own files and registered under their own surfaces.
+    routes: [readOnly('/')],
+    authMode: 'session',
+    surfaceChecks: [
+      'single entry point — mounts status + knowledge-base + review on one app under one session',
+      'home page (GET /) is read-only, self-contained HTML — no PII, no external assets',
+      'logout is CSRF-protected (POST /auth/logout via embedded per-session token)',
+      'inherits the shared createInternalApp hardening — no self-rolled protection',
+    ],
+  },
+  {
     name: 'status',
     bootFile: 'src/services/status-surface.ts',
     factory: 'internal',
