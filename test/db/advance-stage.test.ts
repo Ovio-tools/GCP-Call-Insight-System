@@ -33,6 +33,10 @@ describe.skipIf(!hasTestDb)('atomic stage-advance', () => {
     app = makeAppPool();
   });
   afterAll(async () => {
+    await owner.query(
+      `DELETE FROM alert_events WHERE failure_snapshot -> 'context' ->> 'call_id' LIKE $1`,
+      [PATTERN],
+    );
     await cleanupCalls(owner, PATTERN);
     await owner.end();
     await app.end();
@@ -67,6 +71,54 @@ describe.skipIf(!hasTestDb)('atomic stage-advance', () => {
     const state = await repositories.callState.getCallState(app, callId);
     expect(state?.current_stage).toBe('classify'); // unchanged
     expect(await logCount(callId)).toBe(before); // no orphan log row
+  });
+
+  // Seed an unacknowledged alert whose sanitized context names `callId`.
+  async function seedAlertFor(callId: string, dedupSuffix: string): Promise<void> {
+    await owner.query(
+      `INSERT INTO alert_events (error_code, root_cause_category, severity, dedup_key, failure_snapshot)
+       VALUES ('MODEL_MALFORMED_RESPONSE', 'MODEL_MALFORMED_RESPONSE', 'medium', $1, $2::jsonb)`,
+      [
+        `MODEL_MALFORMED_RESPONSE:${callId}:${dedupSuffix}`,
+        JSON.stringify({ context: { call_id: callId } }),
+      ],
+    );
+  }
+  const alertAckedFor = async (callId: string): Promise<boolean | undefined> =>
+    (
+      await owner.query<{ acked: boolean }>(
+        `SELECT acknowledged_at IS NOT NULL AS acked FROM alert_events
+          WHERE failure_snapshot -> 'context' ->> 'call_id' = $1`,
+        [callId],
+      )
+    ).rows[0]?.acked;
+
+  it("acknowledges the call's open alerts when it reaches completed (clears the banner)", async () => {
+    const callId = 'test-adv-complete';
+    await seedCall(callId, 'mark-retention-eligible');
+    await seedAlertFor(callId, 'a');
+    expect(await alertAckedFor(callId)).toBe(false);
+
+    await repositories.callState.advanceStage(app, {
+      callId,
+      toStage: 'mark-retention-eligible',
+      status: 'completed',
+      logEntry: { stage: 'mark-retention-eligible', outcome: 'completed' },
+    });
+    expect(await alertAckedFor(callId)).toBe(true);
+  });
+
+  it('does NOT acknowledge alerts on a non-final advance (call not yet completed)', async () => {
+    const callId = 'test-adv-midway';
+    await seedCall(callId, 'redact');
+    await seedAlertFor(callId, 'b');
+    await repositories.callState.advanceStage(app, {
+      callId,
+      fromStage: 'redact',
+      toStage: 'classify',
+      logEntry: { stage: 'classify', outcome: 'entered' },
+    });
+    expect(await alertAckedFor(callId)).toBe(false); // still open — call is mid-pipeline
   });
 
   it('rolls back the stage change when the log write fails (atomicity)', async () => {
