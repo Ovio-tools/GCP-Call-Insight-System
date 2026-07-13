@@ -4,7 +4,7 @@
     "buildCommand": "npm ci && npm run build"
   },
   "deploy": {
-    "startCommand": "node dist/scripts/ack-resolved-sla-alerts.js",
+    "startCommand": "node dist/scripts/ack-stale-alerts.js",
     "restartPolicyType": "NEVER"
   }
 }

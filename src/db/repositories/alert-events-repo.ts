@@ -105,6 +105,56 @@ export async function acknowledgeStalledAlertsForTerminalReviews(pool: Pool): Pr
   return rows.length;
 }
 
+/**
+ * Acknowledge every open alert whose sanitized `context.call_id` is `callId` (idempotent no-op when
+ * none). Accepts a `Queryable` so the completion transition can enlist it: when a call reaches its
+ * terminal success state, the incidents that held/flagged it along the way are resolved, so their
+ * banners must stop lingering. Component-scoped alerts (no `call_id` in context) are never matched.
+ */
+export async function acknowledgeAlertsForCall(db: Queryable, callId: string): Promise<number> {
+  const rows = await query<{ id: string }>(
+    db,
+    `UPDATE alert_events SET acknowledged_at = now()
+      WHERE acknowledged_at IS NULL
+        AND failure_snapshot -> 'context' ->> 'call_id' = $1
+      RETURNING id`,
+    [callId],
+  );
+  return rows.length;
+}
+
+/**
+ * One-off maintenance backfill sibling to {@link acknowledgeStalledAlertsForTerminalReviews}:
+ * acknowledge every still-open alert whose call has since reached `completed`. These are stale
+ * leftovers from before the completion-acknowledges-alerts rule existed — the call hit a snag,
+ * was worked through, and finished, but the alert was never cleared. A call not yet completed is
+ * left alone (its alert may be genuinely active). Returns the number acknowledged.
+ */
+export async function acknowledgeAlertsForCompletedCalls(pool: Pool): Promise<number> {
+  const rows = await query<{ id: string }>(
+    pool,
+    `UPDATE alert_events a SET acknowledged_at = now()
+       FROM call_state cs
+      WHERE a.acknowledged_at IS NULL
+        AND cs.call_id = a.failure_snapshot -> 'context' ->> 'call_id'
+        AND cs.status = 'completed'
+      RETURNING a.id`,
+  );
+  return rows.length;
+}
+
+/** Read-only count for the backfill's `--dry-run`: still-open alerts whose call is `completed`. */
+export async function countAlertsForCompletedCallsOpen(pool: Pool): Promise<number> {
+  const rows = await query<{ n: string }>(
+    pool,
+    `SELECT count(*)::text AS n
+       FROM alert_events a
+       JOIN call_state cs ON cs.call_id = a.failure_snapshot -> 'context' ->> 'call_id'
+      WHERE a.acknowledged_at IS NULL AND cs.status = 'completed'`,
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
 /** Read-only count for the backfill's `--dry-run`: how many still-open `REVIEW_QUEUE_STALLED`
  * alerts belong to an already-terminal review item (i.e. would be acknowledged). */
 export async function countTerminalReviewStalledOpen(pool: Pool): Promise<number> {

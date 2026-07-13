@@ -17,6 +17,7 @@ import {
   callStateRowSchema,
 } from '../schemas/call-state.js';
 import { appendLog } from './processing-log-repo.js';
+import { acknowledgeAlertsForCall } from './alert-events-repo.js';
 
 const TABLE = 'call_state';
 
@@ -157,6 +158,13 @@ export async function advanceStage(pool: Pool, input: AdvanceStageInput): Promis
         ? { failureSnapshot: v.logEntry.failureSnapshot as JsonValue }
         : {}),
     });
+
+    // On reaching terminal success, acknowledge any alerts that flagged this call along the way —
+    // the incident is resolved, so its status-page banner must not linger. Same tx as the state +
+    // log write, so it commits (or rolls back) atomically with the completion.
+    if (v.status === 'completed') {
+      await acknowledgeAlertsForCall(client, v.callId);
+    }
 
     return parseOrThrow(TABLE, callStateRowSchema, rows[0]);
   });
