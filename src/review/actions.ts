@@ -5,6 +5,8 @@ import type { JsonValue } from '../db/types.js';
 import { query, withTransaction } from '../db/sql.js';
 import { httpFailure } from '../http/failures.js';
 import { listByReview, recordOperatorAction } from '../db/repositories/operator-actions-repo.js';
+import { acknowledgeAlert } from '../db/repositories/alert-events-repo.js';
+import { reviewStalledDedupKey } from '../review-queue/sla.js';
 import { markUnresolvableByReviewId } from '../db/repositories/review-queue-repo.js';
 import { upsertExtractionCandidate } from '../db/repositories/extraction-candidates-repo.js';
 import { insertReprocessRequest } from '../db/repositories/reprocess-requests-repo.js';
@@ -309,6 +311,11 @@ export async function performReviewAction(
       };
       outbox = { targetStage };
     }
+
+    // The item has left the active queue (resolved or unresolvable), so it is no longer stalled:
+    // acknowledge any REVIEW_QUEUE_STALLED alert for it IN THIS TX, so the status-page banner clears
+    // atomically with the resolution (and rolls back with it on failure). A no-op when none is open.
+    await acknowledgeAlert(client, reviewStalledDedupKey(reviewId));
 
     const auditRow = await recordOperatorAction(client, {
       reviewQueueId: reviewId,

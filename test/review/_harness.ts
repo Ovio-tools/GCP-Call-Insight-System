@@ -186,6 +186,11 @@ export async function makeReviewHarness(
         `DELETE FROM operator_actions WHERE review_queue_id IN (SELECT id FROM review_queue WHERE call_id LIKE $1)`,
         [pattern],
       );
+      await owner.query(
+        `DELETE FROM alert_events WHERE dedup_key IN
+           (SELECT 'REVIEW_QUEUE_STALLED:review_queue:' || id FROM review_queue WHERE call_id LIKE $1)`,
+        [pattern],
+      );
       await owner.query(`DELETE FROM review_queue WHERE call_id LIKE $1`, [pattern]);
       // raw_transcripts + token_vault now live only in the raw store (DB-B).
       await cleanupRawCalls(rawOwner, pattern);
