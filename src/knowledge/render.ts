@@ -1,6 +1,7 @@
 import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY } from '../db/enums.js';
 import type { KnowledgeFilters, KnowledgeRecord, KnowledgeView } from './dto.js';
 import { humanizeLabel } from './summary.js';
+import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained knowledge page (Task 10.1). READ-ONLY: a GET `<form>` for the
@@ -71,7 +72,9 @@ function rowHtml(r: KnowledgeRecord): string {
   return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
 }
 
-const STYLE = `
+const STYLE =
+  THEME +
+  `
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -100,7 +103,7 @@ th { position: sticky; top: 0; z-index: 1; background: #161b22;
 .foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
 `;
 
-export function renderKnowledgePage(dto: KnowledgeView): string {
+export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): string {
   const f = dto.filters;
   const qs = filterQuery(f);
   const csvHref = esc(`/knowledge/export.csv${qs}`);
@@ -150,8 +153,9 @@ export function renderKnowledgePage(dto: KnowledgeView): string {
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>Knowledge base</title><style>${STYLE}</style></head><body><main>` +
-    `<p class="nav"><a href="/">&larr; Home</a></p>` +
+    `<title>Knowledge base</title><style>${STYLE}</style></head><body>` +
+    siteHeader('Knowledge base') +
+    `<main>` +
     `<h1>Knowledge base</h1>` +
     form +
     summaryBlock +
@@ -159,6 +163,8 @@ export function renderKnowledgePage(dto: KnowledgeView): string {
     pager +
     table +
     `<p class="foot">Read-only. De-identified records only.</p>` +
-    `</main></body></html>`
+    `</main>` +
+    logoutScript(chrome) +
+    `</body></html>`
   );
 }

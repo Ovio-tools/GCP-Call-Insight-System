@@ -41,8 +41,7 @@ export async function registerSecurity(
         // Keep `'self'` and add this request's nonce; all other directives stay at helmet defaults.
         scriptSrc: [
           "'self'",
-          (_req: IncomingMessage, res: ServerResponse) =>
-            `'nonce-${scriptNonces.get(res) ?? ''}'`,
+          (_req: IncomingMessage, res: ServerResponse) => `'nonce-${scriptNonces.get(res) ?? ''}'`,
         ],
       },
     },

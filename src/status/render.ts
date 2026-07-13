@@ -1,4 +1,5 @@
 import type { ComponentNode, StageNode, StatusDTO } from './dto.js';
+import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained status page (Task 7.3, plan §5). Inline CSS, no external
@@ -11,7 +12,7 @@ import type { ComponentNode, StageNode, StatusDTO } from './dto.js';
  * already the allowlist (plan §4), so nothing but labels/states/counts/summary strings can be
  * placed here.
  */
-export interface RenderStatusOptions {
+export interface RenderStatusOptions extends Chrome {
   /** `<meta http-equiv=refresh>` cadence in seconds; 0 (or absent) disables auto-refresh. */
   refreshSeconds?: number;
 }
@@ -94,7 +95,9 @@ function componentNodeHtml(node: ComponentNode): string {
   );
 }
 
-const STYLE = `
+const STYLE =
+  THEME +
+  `
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -171,8 +174,9 @@ export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {})
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     refresh +
-    `<title>Pipeline status</title><style>${STYLE}</style></head><body><main>` +
-    `<p class="nav"><a href="/">&larr; Home</a></p>` +
+    `<title>Pipeline status</title><style>${STYLE}</style></head><body>` +
+    siteHeader('Pipeline health') +
+    `<main>` +
     `<h1>Pipeline status</h1>` +
     `<p class="nav"><a href="/calls">View all calls &amp; outcomes &rarr;</a></p>` +
     `<p class="summary state-${esc(s.pipeline_state)}">${esc(summarySentence(dto))}</p>` +
@@ -187,6 +191,8 @@ export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {})
     `<h2>Held for review</h2>${heldBreakdown}` +
     `<h2>Dead-letter</h2><p>${esc(fmtCount(s.dead_letter_count))} job(s) in the dead-letter queue.</p>` +
     `<p class="foot">Generated at ${esc(dto.generated_at)}. <a href="">Refresh</a></p>` +
-    `</main></body></html>`
+    `</main>` +
+    logoutScript(opts) +
+    `</body></html>`
   );
 }

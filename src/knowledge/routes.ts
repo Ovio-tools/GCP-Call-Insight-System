@@ -3,6 +3,7 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import { httpFailure } from '../http/failures.js';
+import { getCsrfToken, scriptNonce } from '../http/index.js';
 import {
   aggregateStructuredKnowledge,
   countStructuredKnowledge,
@@ -141,7 +142,11 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: KnowledgeRou
   // --- View (HTML) ---
   app.get('/knowledge', async (request, reply) => {
     const dto = await buildView(parseView(request.query));
-    return reply.type('text/html; charset=utf-8').send(renderKnowledgePage(dto));
+    const html = renderKnowledgePage(dto, {
+      csrfToken: getCsrfToken(request) ?? '',
+      nonce: scriptNonce(reply),
+    });
+    return reply.type('text/html; charset=utf-8').send(html);
   });
 
   // --- View (JSON) ---

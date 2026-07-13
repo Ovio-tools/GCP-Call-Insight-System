@@ -4,6 +4,7 @@ import {
   type CallOutcomeKey,
   type CallsPage,
 } from './calls.js';
+import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained per-call pipeline page (companion to /status). READ-ONLY:
@@ -54,7 +55,9 @@ function rowHtml(item: CallListItem): string {
   return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
 }
 
-const STYLE = `
+const STYLE =
+  THEME +
+  `
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -81,7 +84,7 @@ th { position: sticky; top: 0; z-index: 1; background: #161b22; box-shadow: inse
 .foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
 `;
 
-export function renderCallsPage(dto: CallsPage): string {
+export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
   const qs = dto.filter && dto.filter !== 'all' ? `?outcome=${encodeURIComponent(dto.filter)}` : '';
 
   const options = OUTCOME_FILTERS.map(
@@ -116,13 +119,17 @@ export function renderCallsPage(dto: CallsPage): string {
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-    `<title>Calls</title><style>${STYLE}</style></head><body><main>` +
-    `<p class="nav"><a href="/">&larr; Home</a> &middot; <a href="/status">Health</a></p>` +
+    `<title>Calls</title><style>${STYLE}</style></head><body>` +
+    siteHeader('All calls') +
+    `<main>` +
+    `<p class="nav"><a href="/status">&larr; Pipeline health</a></p>` +
     `<h1>Calls — full pipeline</h1>` +
     form +
     pager +
     table +
     `<p class="foot">Read-only. Call outcomes only — no transcript content or PII.</p>` +
-    `</main></body></html>`
+    `</main>` +
+    logoutScript(chrome) +
+    `</body></html>`
   );
 }

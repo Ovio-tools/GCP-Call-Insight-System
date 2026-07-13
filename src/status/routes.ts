@@ -2,6 +2,7 @@ import type { FastifyInstance } from 'fastify';
 import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
+import { getCsrfToken, scriptNonce } from '../http/index.js';
 import { buildStatus } from './aggregate.js';
 import { serializeStatus } from './serialize.js';
 import { renderStatusPage } from './render.js';
@@ -32,10 +33,12 @@ export function registerStatusRoutes(app: FastifyInstance, deps: StatusRouteDeps
     );
 
   // Server-rendered HTML page.
-  app.get('/status', async (_request, reply) => {
+  app.get('/status', async (request, reply) => {
     const dto = await build();
     const html = renderStatusPage(dto, {
       refreshSeconds: deps.config.STATUS_PAGE_REFRESH_SECONDS,
+      csrfToken: getCsrfToken(request) ?? '',
+      nonce: scriptNonce(reply),
     });
     return reply.type('text/html; charset=utf-8').send(html);
   });
@@ -61,7 +64,11 @@ export function registerStatusRoutes(app: FastifyInstance, deps: StatusRouteDeps
 
   app.get('/calls', async (request, reply) => {
     const dto = await buildCalls(request.query);
-    return reply.type('text/html; charset=utf-8').send(renderCallsPage(dto));
+    const html = renderCallsPage(dto, {
+      csrfToken: getCsrfToken(request) ?? '',
+      nonce: scriptNonce(reply),
+    });
+    return reply.type('text/html; charset=utf-8').send(html);
   });
 
   app.get('/calls.json', async (request, reply) => {

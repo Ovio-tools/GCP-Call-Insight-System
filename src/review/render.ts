@@ -1,4 +1,5 @@
 import type { ReviewDetail, ReviewList } from './dto.js';
+import { THEME, siteHeader, logoutScript, humanizeReason, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained review pages (Task 6.2). READ-ONLY HTML: the shared middleware
@@ -23,7 +24,9 @@ function jsonForScript(value: unknown): string {
   return JSON.stringify(value).replace(/</g, '\\u003c').replace(/\//g, '\\/');
 }
 
-const STYLE = `
+const STYLE =
+  THEME +
+  `
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -65,16 +68,20 @@ function slaPill(item: { sla_state: string }): string {
   return `<span class="pill sla-${esc(item.sla_state)}">${esc(label)}</span>`;
 }
 
-const HEAD = (title: string): string =>
+const HEAD = (title: string, section: string): string =>
   `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
   `<meta name="viewport" content="width=device-width, initial-scale=1">` +
-  `<title>${esc(title)}</title><style>${STYLE}</style></head><body><main>`;
+  `<title>${esc(title)}</title><style>${STYLE}</style></head><body>` +
+  siteHeader(section) +
+  `<main>`;
 
-const FOOT = (generatedAt: string): string =>
+const FOOT = (generatedAt: string, chrome: Chrome): string =>
   `<p class="foot">Generated at ${esc(generatedAt)}. <a href="/review">Back to queue</a></p>` +
-  `</main></body></html>`;
+  `</main>` +
+  logoutScript(chrome) +
+  `</body></html>`;
 
-export function renderReviewListPage(list: ReviewList): string {
+export function renderReviewListPage(list: ReviewList, chrome: Chrome = {}): string {
   const rows =
     list.items.length === 0
       ? '<p>No calls are currently held for review.</p>'
@@ -82,7 +89,7 @@ export function renderReviewListPage(list: ReviewList): string {
           .map(
             (i) =>
               `<li><a class="item" href="/review/${esc(i.id)}">` +
-              `<span class="reason">${esc(i.held_reason)}</span>${slaPill(i)}` +
+              `<span class="reason">${esc(humanizeReason(i.held_reason))}</span>${slaPill(i)}` +
               `<div class="meta">${esc(i.explanation)}</div>` +
               `<div class="meta">status ${esc(i.status)} · held ${esc(i.created_at)}` +
               `${i.escalated ? ' · escalated' : ''}${i.raw_purged ? ' · raw purged' : ''}</div>` +
@@ -90,12 +97,11 @@ export function renderReviewListPage(list: ReviewList): string {
           )
           .join('')}</ul>`;
   return (
-    HEAD('Review queue') +
-    `<p class="nav"><a href="/">&larr; Home</a></p>` +
+    HEAD('Review queue', 'Review queue') +
     `<h1>Review queue</h1>` +
-    `<p class="meta">${list.items.length} open item(s).</p>` +
+    `<p class="meta">${list.items.length} call(s) waiting for a decision.</p>` +
     rows +
-    FOOT(list.generated_at)
+    FOOT(list.generated_at, chrome)
   );
 }
 
@@ -154,28 +160,33 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
 
   const revealButton =
     opts.elevated && detail.raw_available
-      ? `<button id="reveal">reveal raw (elevated)</button>`
+      ? `<button id="reveal" title="Show the original transcript (recorded, elevated access only)">Reveal original transcript</button>`
       : '';
 
   // The inline submitter: sets X-CSRF-Token from the embedded token. No external assets. The
-  // per-request CSP nonce lets this inline script run under `script-src 'self' 'nonce-…'`.
+  // per-request CSP nonce lets this inline script run under `script-src 'self' 'nonce-…'`. A resolve
+  // action returns to the queue on success; reveal shows the returned content in place. Errors read
+  // in plain language instead of a raw HTTP status + JSON body.
   const script =
     `<script nonce="${esc(opts.nonce)}">` +
     `const CSRF=${jsonForScript(opts.csrfToken)};const ID=${jsonForScript(detail.id)};` +
     `const out=document.getElementById('result');` +
-    `async function post(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':CSRF},body:JSON.stringify(body||{})});` +
-    `out.textContent=r.status+' '+(await r.text());}` +
-    `document.querySelectorAll('button[data-action]').forEach(function(b){b.onclick=function(){` +
-    `post('/review/'+encodeURIComponent(ID)+'/actions/'+b.dataset.action,{});};});` +
+    `function call(url){return fetch(url,{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':CSRF},body:'{}'});}` +
+    `document.querySelectorAll('button[data-action]').forEach(function(b){b.addEventListener('click',async function(){` +
+    `b.disabled=true;out.textContent='Working…';` +
+    `var r=await call('/review/'+encodeURIComponent(ID)+'/actions/'+b.dataset.action);` +
+    `if(r.ok){out.textContent='Done — returning to the queue…';setTimeout(function(){location.href='/review';},900);}` +
+    `else{b.disabled=false;out.textContent='Could not complete that action (error '+r.status+'). Please try again.';}` +
+    `});});` +
     (revealButton
-      ? `document.getElementById('reveal').onclick=function(){post('/review/'+encodeURIComponent(ID)+'/reveal-raw',{});};`
+      ? `document.getElementById('reveal').addEventListener('click',async function(){out.textContent='Revealing…';var r=await call('/review/'+encodeURIComponent(ID)+'/reveal-raw');out.textContent=(r.ok?await r.text():'Reveal failed (error '+r.status+').');});`
       : '') +
     `</script>`;
 
   return (
-    HEAD(`Review ${detail.id}`) +
-    `<p class="nav"><a href="/">&larr; Home</a> &middot; <a href="/review">Review queue</a></p>` +
-    `<h1>${esc(detail.held_reason)}</h1>${slaPill(detail)}` +
+    HEAD(`Review ${detail.id}`, 'Review') +
+    `<p class="nav"><a href="/review">&larr; Review queue</a></p>` +
+    `<h1>${esc(humanizeReason(detail.held_reason))}</h1>${slaPill(detail)}` +
     `<p>${esc(detail.explanation)}</p>` +
     `<div class="meta">call ${esc(detail.call_id)} · status ${esc(detail.status)} · ` +
     `assignee ${esc(detail.assignee ?? 'unassigned')} · raw ${detail.raw_available ? 'available' : 'unavailable'}</div>` +
@@ -186,6 +197,6 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
     `<div>${actionButtons}${revealButton}</div>` +
     `<div id="result" aria-live="polite"></div>` +
     script +
-    FOOT(detail.created_at)
+    FOOT(detail.created_at, opts)
   );
 }

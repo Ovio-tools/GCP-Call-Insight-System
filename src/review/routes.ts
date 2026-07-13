@@ -71,9 +71,13 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
     const list = await buildReviewList(deps.pool, nowFn());
     return reply.type('application/json; charset=utf-8').send(JSON.stringify(list));
   });
-  app.get('/review', async (_request, reply) => {
+  app.get('/review', async (request, reply) => {
     const list = await buildReviewList(deps.pool, nowFn());
-    return reply.type('text/html; charset=utf-8').send(renderReviewListPage(list));
+    const html = renderReviewListPage(list, {
+      csrfToken: getCsrfToken(request) ?? '',
+      nonce: scriptNonce(reply),
+    });
+    return reply.type('text/html; charset=utf-8').send(html);
   });
 
   // --- Detail ---
