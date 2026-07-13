@@ -178,12 +178,15 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
     `function call(url){return fetch(url,{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':CSRF},body:'{}'});}` +
     `document.querySelectorAll('button[data-action]').forEach(function(b){b.addEventListener('click',async function(){` +
     `b.disabled=true;out.textContent='Working…';` +
-    `var r=await call('/review/'+encodeURIComponent(ID)+'/actions/'+b.dataset.action);` +
+    `try{var r=await call('/review/'+encodeURIComponent(ID)+'/actions/'+b.dataset.action);` +
     `if(r.ok){out.textContent='Done — returning to the queue…';setTimeout(function(){location.href='/review';},900);}` +
     `else{b.disabled=false;out.textContent='Could not complete that action (error '+r.status+'). Please try again.';}` +
+    `}catch(e){b.disabled=false;out.textContent='Network error — please try again.';}` +
     `});});` +
     (revealButton
-      ? `document.getElementById('reveal').addEventListener('click',async function(){out.textContent='Revealing…';var r=await call('/review/'+encodeURIComponent(ID)+'/reveal-raw');out.textContent=(r.ok?await r.text():'Reveal failed (error '+r.status+').');});`
+      ? `document.getElementById('reveal').addEventListener('click',async function(){out.textContent='Revealing…';` +
+        `try{var r=await call('/review/'+encodeURIComponent(ID)+'/reveal-raw');out.textContent=(r.ok?await r.text():'Reveal failed (error '+r.status+').');}` +
+        `catch(e){out.textContent='Network error — please try again.';}});`
       : '') +
     `</script>`;
 

@@ -102,9 +102,9 @@ export function logoutScript(chrome: Chrome): string {
     `<script nonce="${esc(chrome.nonce ?? '')}">` +
     `var _so=document.getElementById('signout');` +
     `if(_so){_so.addEventListener('click',async function(){` +
-    `await fetch('/auth/logout',{method:'POST',headers:{'X-CSRF-Token':${jsonForScript(
+    `try{await fetch('/auth/logout',{method:'POST',headers:{'X-CSRF-Token':${jsonForScript(
       chrome.csrfToken ?? '',
-    )}}});` +
+    )}}});}catch(e){}` +
     `window.location.href='/';});}` +
     `</script>`
   );
