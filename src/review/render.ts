@@ -53,8 +53,16 @@ button:hover { background: #232b36; }
 .foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
 `;
 
+/** Plain-language SLA wording. "Overdue" reads clearer and less alarming than "breached". */
+const SLA_LABEL: Record<string, string> = {
+  ok: 'On time',
+  due_soon: 'Due soon',
+  breached: 'Overdue',
+};
+
 function slaPill(item: { sla_state: string }): string {
-  return `<span class="pill sla-${esc(item.sla_state)}">${esc(item.sla_state.replace('_', ' '))}</span>`;
+  const label = SLA_LABEL[item.sla_state] ?? item.sla_state.replace('_', ' ');
+  return `<span class="pill sla-${esc(item.sla_state)}">${esc(label)}</span>`;
 }
 
 const HEAD = (title: string): string =>
@@ -96,6 +104,8 @@ export interface RenderDetailOptions {
   csrfToken: string;
   /** Whether the current session may reveal raw (renders the elevated button). */
   elevated: boolean;
+  /** The per-request CSP script nonce; stamped on the inline `<script>` so it is allowed to run. */
+  nonce: string;
 }
 
 export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailOptions): string {
@@ -113,12 +123,33 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
 
   // Action buttons: reprocess/approve/correct_extraction/terminal actions all POST JSON with the
   // CSRF header. correct_extraction needs the four enum <select>s; reprocess needs a stage select.
+  // Plain-language labels + a hover tooltip so a reviewer isn't decoding raw action codes.
   const actions = detail.allowed_actions;
-  const btn = (action: string, label: string): string =>
-    `<button data-action="${esc(action)}">${esc(label)}</button>`;
+  const ACTION_LABELS: Record<string, { label: string; title: string }> = {
+    approve: {
+      label: 'Customer call',
+      title: 'Approve: treat as a genuine customer call and continue processing',
+    },
+    mark_non_customer: {
+      label: 'Non-customer call',
+      title: 'Mark as a non-customer call (internal, wrong number, etc.)',
+    },
+    mark_spam: { label: 'Spam', title: 'Mark as spam or a robocall' },
+    reject: { label: 'Discard', title: 'Reject and discard this call' },
+    mark_unresolvable: {
+      label: "Can't resolve",
+      title: 'Mark as unresolvable — keep for the record, no further action',
+    },
+  };
+  const btn = (action: string): string => {
+    const meta = ACTION_LABELS[action] ?? { label: action.replace(/_/g, ' '), title: action };
+    return `<button data-action="${esc(action)}" title="${esc(meta.title)}">${esc(
+      meta.label,
+    )}</button>`;
+  };
   const actionButtons = actions
     .filter((a) => a !== 'reprocess' && a !== 'correct_extraction')
-    .map((a) => btn(a, a.replace(/_/g, ' ')))
+    .map(btn)
     .join('');
 
   const revealButton =
@@ -126,9 +157,10 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
       ? `<button id="reveal">reveal raw (elevated)</button>`
       : '';
 
-  // The inline submitter: sets X-CSRF-Token from the embedded token. No external assets.
+  // The inline submitter: sets X-CSRF-Token from the embedded token. No external assets. The
+  // per-request CSP nonce lets this inline script run under `script-src 'self' 'nonce-…'`.
   const script =
-    `<script>` +
+    `<script nonce="${esc(opts.nonce)}">` +
     `const CSRF=${jsonForScript(opts.csrfToken)};const ID=${jsonForScript(detail.id)};` +
     `const out=document.getElementById('result');` +
     `async function post(url,body){const r=await fetch(url,{method:'POST',headers:{'content-type':'application/json','X-CSRF-Token':CSRF},body:JSON.stringify(body||{})});` +
@@ -149,7 +181,9 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
     `assignee ${esc(detail.assignee ?? 'unassigned')} · raw ${detail.raw_available ? 'available' : 'unavailable'}</div>` +
     `<h2>Redacted content</h2>${content}` +
     enums +
-    `<h2>Actions</h2><div>${actionButtons}${revealButton}</div>` +
+    `<h2>Resolve this call</h2>` +
+    `<p class="meta">Choose what this call is. Your choice is recorded and closes the review.</p>` +
+    `<div>${actionButtons}${revealButton}</div>` +
     `<div id="result" aria-live="polite"></div>` +
     script +
     FOOT(detail.created_at)

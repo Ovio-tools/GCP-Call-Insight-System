@@ -12,6 +12,8 @@
 export interface RenderHomeOptions {
   /** The per-session CSRF token, embedded so the inline logout submitter can set the header. */
   csrfToken?: string;
+  /** The per-request CSP script nonce; stamped on the inline `<script>` so it is allowed to run. */
+  nonce?: string;
 }
 
 /** Escape the five HTML-significant characters. */
@@ -92,7 +94,7 @@ export function renderHome(opts: RenderHomeOptions = {}): string {
   ).join('');
 
   const logoutScript =
-    `<script>` +
+    `<script nonce="${esc(opts.nonce ?? '')}">` +
     `const CSRF=${jsonForScript(opts.csrfToken ?? '')};` +
     `document.getElementById('logout').addEventListener('click',async function(){` +
     `await fetch('/auth/logout',{method:'POST',headers:{'X-CSRF-Token':CSRF}});` +

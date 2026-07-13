@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { getCsrfToken } from '../http/index.js';
+import { getCsrfToken, scriptNonce } from '../http/index.js';
 import { renderHome } from './home-render.js';
 
 /**
@@ -11,6 +11,7 @@ import { renderHome } from './home-render.js';
 export function registerConsoleHomeRoute(app: FastifyInstance): void {
   app.get('/', (request, reply) => {
     const csrfToken = getCsrfToken(request) ?? '';
-    return reply.type('text/html; charset=utf-8').send(renderHome({ csrfToken }));
+    const nonce = scriptNonce(reply);
+    return reply.type('text/html; charset=utf-8').send(renderHome({ csrfToken, nonce }));
   });
 }

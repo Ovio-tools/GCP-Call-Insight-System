@@ -4,7 +4,7 @@ import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
 import type { RestrictedRunner } from '../db/restricted/restricted-context.js';
-import { getCsrfToken } from '../http/index.js';
+import { getCsrfToken, scriptNonce } from '../http/index.js';
 import { httpFailure } from '../http/failures.js';
 import type { ReprocessQueue } from '../queue/pipeline-queue.js';
 import { buildReviewDetail, buildReviewList } from './queries.js';
@@ -102,9 +102,10 @@ export function registerReviewRoutes(app: FastifyInstance, deps: ReviewRouteDeps
     }
     const csrfToken = getCsrfToken(request) ?? '';
     const elevated = isElevatedReviewer(request.user, deps.config);
+    const nonce = scriptNonce(reply);
     return reply
       .type('text/html; charset=utf-8')
-      .send(renderReviewDetailPage(detail, { csrfToken, elevated }));
+      .send(renderReviewDetailPage(detail, { csrfToken, elevated, nonce }));
   });
 
   // --- Actions ---

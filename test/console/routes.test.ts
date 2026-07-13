@@ -50,6 +50,46 @@ describe('console home route — auth + landing', () => {
     expect(res.body).toContain('href="/review"');
   });
 
+  it('nonce-gates the inline script: CSP script-src nonce matches the <script> tag', async () => {
+    const h = await makeInternalApp({}, undefined, registerConsoleHomeRoute, {
+      loginSuccessRedirect: '/',
+    });
+    const session = await login(h);
+    const res = await h.app.inject({
+      method: 'GET',
+      url: '/',
+      headers: { cookie: session.cookie, accept: 'text/html' },
+    });
+    expect(res.statusCode).toBe(200);
+    const csp = String(res.headers['content-security-policy'] ?? '');
+    const headerNonce = /script-src[^;]*'nonce-([^']+)'/.exec(csp)?.[1];
+    expect(headerNonce, `no script nonce in CSP: ${csp}`).toBeTruthy();
+    // The SAME nonce must be stamped on the inline <script>, or the browser blocks it.
+    expect(res.body).toContain(`<script nonce="${headerNonce}">`);
+    // style-src must keep 'unsafe-inline' so the inline <style> is not collateral damage.
+    expect(csp).toMatch(/style-src[^;]*'unsafe-inline'/);
+  });
+
+  it('gives each request a distinct nonce', async () => {
+    const h = await makeInternalApp({}, undefined, registerConsoleHomeRoute, {
+      loginSuccessRedirect: '/',
+    });
+    const session = await login(h);
+    const nonceOf = async (): Promise<string | undefined> => {
+      const res = await h.app.inject({
+        method: 'GET',
+        url: '/',
+        headers: { cookie: session.cookie, accept: 'text/html' },
+      });
+      return /script-src[^;]*'nonce-([^']+)'/.exec(
+        String(res.headers['content-security-policy'] ?? ''),
+      )?.[1];
+    };
+    const [a, b] = [await nonceOf(), await nonceOf()];
+    expect(a).toBeTruthy();
+    expect(a).not.toBe(b);
+  });
+
   it('lands a freshly signed-in user on the home page (/)', async () => {
     const h = await makeInternalApp({}, undefined, registerConsoleHomeRoute, {
       loginSuccessRedirect: '/',
