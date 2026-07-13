@@ -102,6 +102,8 @@ body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", 
 main { max-width: 640px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
 h2 { font-size: 1.05rem; margin: 24px 0 8px; }
+a { color: #93c5fd; }
+.nav { margin: 0 0 12px; font-size: 0.85rem; }
 .summary { font-size: 1.1rem; margin: 8px 0 16px; padding: 12px; border-radius: 10px;
   background: #1a2029; border: 1px solid #2a323d; }
 .counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 8px; }
@@ -170,6 +172,7 @@ export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {})
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     refresh +
     `<title>Pipeline status</title><style>${STYLE}</style></head><body><main>` +
+    `<p class="nav"><a href="/">&larr; Home</a></p>` +
     `<h1>Pipeline status</h1>` +
     `<p class="nav"><a href="/calls">View all calls &amp; outcomes &rarr;</a></p>` +
     `<p class="summary state-${esc(s.pipeline_state)}">${esc(summarySentence(dto))}</p>` +

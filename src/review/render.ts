@@ -32,6 +32,7 @@ main { max-width: 720px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
 h2 { font-size: 1.05rem; margin: 20px 0 8px; }
 a { color: #93c5fd; }
+.nav { margin: 4px 0 12px; font-size: 0.85rem; }
 ul.items { list-style: none; padding: 0; margin: 0; }
 .item { display: block; padding: 12px; margin: 8px 0; border-radius: 10px; border: 1px solid #2a323d;
   background: #161b22; text-decoration: none; color: inherit; }
@@ -82,6 +83,7 @@ export function renderReviewListPage(list: ReviewList): string {
           .join('')}</ul>`;
   return (
     HEAD('Review queue') +
+    `<p class="nav"><a href="/">&larr; Home</a></p>` +
     `<h1>Review queue</h1>` +
     `<p class="meta">${list.items.length} open item(s).</p>` +
     rows +
@@ -140,6 +142,7 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
 
   return (
     HEAD(`Review ${detail.id}`) +
+    `<p class="nav"><a href="/">&larr; Home</a> &middot; <a href="/review">Review queue</a></p>` +
     `<h1>${esc(detail.held_reason)}</h1>${slaPill(detail)}` +
     `<p>${esc(detail.explanation)}</p>` +
     `<div class="meta">call ${esc(detail.call_id)} · status ${esc(detail.status)} · ` +

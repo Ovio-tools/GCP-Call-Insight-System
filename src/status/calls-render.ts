@@ -117,7 +117,7 @@ export function renderCallsPage(dto: CallsPage): string {
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>Calls</title><style>${STYLE}</style></head><body><main>` +
-    `<p class="nav"><a href="/status">&larr; Health</a></p>` +
+    `<p class="nav"><a href="/">&larr; Home</a> &middot; <a href="/status">Health</a></p>` +
     `<h1>Calls — full pipeline</h1>` +
     form +
     pager +

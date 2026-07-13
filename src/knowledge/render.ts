@@ -80,6 +80,7 @@ main { max-width: 1100px; margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
 h2 { font-size: 1.05rem; margin: 20px 0 8px; }
 a { color: #93c5fd; }
+.nav { margin: 0 0 12px; font-size: 0.85rem; }
 form.filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
   background: #161b22; border: 1px solid #2a323d; border-radius: 10px; padding: 12px; }
 form.filters label { display: flex; flex-direction: column; font-size: 0.8rem; gap: 2px; }
@@ -150,6 +151,7 @@ export function renderKnowledgePage(dto: KnowledgeView): string {
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     `<title>Knowledge base</title><style>${STYLE}</style></head><body><main>` +
+    `<p class="nav"><a href="/">&larr; Home</a></p>` +
     `<h1>Knowledge base</h1>` +
     form +
     summaryBlock +

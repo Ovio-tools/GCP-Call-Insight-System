@@ -19,6 +19,7 @@ export const SERVICE_ROLES = [
   'status-surface',
   'review-surface',
   'knowledge-surface',
+  'console-surface',
   'evaluation-run',
 ] as const;
 
