@@ -7,6 +7,7 @@ import {
   HUMAN_REVIEW_PROMPT_VERSION,
 } from '../../src/review/correction-constants.js';
 import { EXTRACT_SCHEMA_VERSION } from '../../src/pipeline/extract/prompt.js';
+import { reviewStalledDedupKey } from '../../src/review-queue/sla.js';
 
 const PATTERN = 'test-rvact-%';
 
@@ -56,6 +57,46 @@ describe.skipIf(!hasTestDb)('review actions (Task 6.2)', () => {
     expect(a).toHaveLength(1);
     expect(a[0]!.action).toBe('mark_non_customer');
     expect(a[0]!.after).toMatchObject({ action_params: {} });
+  });
+
+  // A stalled-review alert for `reviewId`, matching what scanStalledReviews would have raised.
+  const seedStalledAlert = async (reviewId: string) =>
+    h.owner.query(
+      `INSERT INTO alert_events (error_code, root_cause_category, severity, dedup_key)
+       VALUES ('REVIEW_QUEUE_STALLED', 'REVIEW_QUEUE_STALLED', 'medium', $1)`,
+      [reviewStalledDedupKey(reviewId)],
+    );
+  const alertAcknowledged = async (reviewId: string) =>
+    (
+      await h.owner.query<{ acked: boolean }>(
+        `SELECT acknowledged_at IS NOT NULL AS acked FROM alert_events WHERE dedup_key = $1`,
+        [reviewStalledDedupKey(reviewId)],
+      )
+    ).rows[0]?.acked;
+
+  it('resolving a held call acknowledges its REVIEW_QUEUE_STALLED alert (clears the banner)', async () => {
+    const callId = 'test-rvact-slaclear';
+    const reviewId = await h.seedHeld(callId, { reason: 'classified_spam', stage: 'classify' });
+    await seedStalledAlert(reviewId);
+    expect(await alertAcknowledged(reviewId)).toBe(false);
+
+    const session = await h.login();
+    const res = await postAction(h, session, reviewId, 'mark_spam');
+    expect(res.status).toBe(200);
+    expect((await reviewRow(reviewId))!.status).toBe('resolved');
+    // The stalled alert is now acknowledged, so the status-page banner stops lingering.
+    expect(await alertAcknowledged(reviewId)).toBe(true);
+  });
+
+  it('a 409 (no resolution) leaves the stalled alert unacknowledged', async () => {
+    const callId = 'test-rvact-slanoack';
+    // approve is disallowed for redaction_failed → 409, tx rolls back.
+    const reviewId = await h.seedHeld(callId, { reason: 'redaction_failed', stage: 'redact' });
+    await seedStalledAlert(reviewId);
+    const session = await h.login();
+    const res = await postAction(h, session, reviewId, 'approve');
+    expect(res.status).toBe(409);
+    expect(await alertAcknowledged(reviewId)).toBe(false);
   });
 
   it('reject and mark_spam both close the review (resolved + review_closed)', async () => {

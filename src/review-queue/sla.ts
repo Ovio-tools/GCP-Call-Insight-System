@@ -16,3 +16,12 @@ export function slaMinutesFor(config: Config, heldReason: HeldReason): number {
   }
   return minutes;
 }
+
+/**
+ * The dedup key for a review item's `REVIEW_QUEUE_STALLED` alert — scoped to the review ITEM (never
+ * the call), so a re-held call gets its own alert. Single source of truth shared by the stalled-scan
+ * that RAISES the alert and the review-resolution path that ACKNOWLEDGES it, so the two never drift.
+ */
+export function reviewStalledDedupKey(reviewId: string): string {
+  return `REVIEW_QUEUE_STALLED:review_queue:${reviewId}`;
+}

@@ -67,15 +67,58 @@ export async function recordAlert(db: Queryable, input: AlertEventInsert): Promi
   return row;
 }
 
-export async function acknowledgeAlert(pool: Pool, dedupKey: string): Promise<number> {
+/**
+ * Acknowledge the live alert for `dedupKey` (idempotent no-op when none is open). Accepts any
+ * `Queryable` so it can enlist in an open transaction — e.g. resolving a held review acknowledges
+ * that review's `REVIEW_QUEUE_STALLED` alert in the SAME tx, so the stalled banner clears atomically
+ * with the resolution (and rolls back with it if the resolution fails).
+ */
+export async function acknowledgeAlert(db: Queryable, dedupKey: string): Promise<number> {
   const rows = await query<{ id: string }>(
-    pool,
+    db,
     `UPDATE alert_events SET acknowledged_at = now()
       WHERE dedup_key = $1 AND acknowledged_at IS NULL
       RETURNING id`,
     [dedupKey],
   );
   return rows.length;
+}
+
+/**
+ * One-off maintenance backfill: acknowledge every still-open `REVIEW_QUEUE_STALLED` alert whose
+ * review item is already TERMINAL (resolved/unresolvable). This retroactively applies the
+ * resolve-clears-the-alert rule to items that were resolved before that rule existed, so their
+ * stale "breaching SLA" banner stops lingering. An item still in the active queue is left alone —
+ * its alert is genuinely active and clears when it is resolved. Returns the number acknowledged.
+ */
+export async function acknowledgeStalledAlertsForTerminalReviews(pool: Pool): Promise<number> {
+  const rows = await query<{ id: string }>(
+    pool,
+    `UPDATE alert_events a SET acknowledged_at = now()
+       FROM review_queue r
+      WHERE a.error_code = 'REVIEW_QUEUE_STALLED'
+        AND a.acknowledged_at IS NULL
+        AND a.dedup_key = 'REVIEW_QUEUE_STALLED:review_queue:' || r.id::text
+        AND r.status IN ('resolved', 'unresolvable')
+      RETURNING a.id`,
+  );
+  return rows.length;
+}
+
+/** Read-only count for the backfill's `--dry-run`: how many still-open `REVIEW_QUEUE_STALLED`
+ * alerts belong to an already-terminal review item (i.e. would be acknowledged). */
+export async function countTerminalReviewStalledOpen(pool: Pool): Promise<number> {
+  const rows = await query<{ n: string }>(
+    pool,
+    `SELECT count(*)::text AS n
+       FROM alert_events a
+       JOIN review_queue r
+         ON a.dedup_key = 'REVIEW_QUEUE_STALLED:review_queue:' || r.id::text
+      WHERE a.error_code = 'REVIEW_QUEUE_STALLED'
+        AND a.acknowledged_at IS NULL
+        AND r.status IN ('resolved', 'unresolvable')`,
+  );
+  return Number(rows[0]?.n ?? 0);
 }
 
 export async function listActive(pool: Pool): Promise<AlertEventRow[]> {

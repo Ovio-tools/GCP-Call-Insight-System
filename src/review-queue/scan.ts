@@ -6,6 +6,7 @@ import type { JsonValue, Queryable } from '../db/types.js';
 import { recordAlertWithInsertStatus } from '../db/repositories/alert-events-repo.js';
 import type { AlertEventInsert } from '../db/schemas/alert-events.js';
 import { createFailure } from '../failure-model/index.js';
+import { reviewStalledDedupKey } from './sla.js';
 
 /** Default drain batch size. Small in tests to exercise multi-batch draining. */
 const DEFAULT_BATCH_SIZE = 500;
@@ -129,7 +130,7 @@ export async function scanStalledReviews(
             errorCode: failure.error_code,
             rootCauseCategory: failure.root_cause_category,
             severity: failure.severity,
-            dedupKey: `REVIEW_QUEUE_STALLED:review_queue:${row.id}`,
+            dedupKey: reviewStalledDedupKey(row.id),
             failureSnapshot: buildSnapshot(failure, row),
           });
           // If recordAlert threw, this UPDATE never runs and the tx rolls back → eligible next run.
