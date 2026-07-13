@@ -45,16 +45,16 @@ const STYLE =
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--text); }
-main { max-width: 760px; margin: 0 auto; padding: 24px 16px 40px; }
+main { max-width: var(--content); margin: 0 auto; padding: 24px 16px 40px; }
 .lead { font-size: 0.95rem; margin: 0 0 20px; }
-ul.cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px;
+ul.cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
-a.card { display: block; padding: 16px; border-radius: var(--radius); border: 1px solid var(--border);
+a.card { display: block; padding: 16px 18px; border-radius: var(--radius); border: 1px solid var(--border);
   background: var(--panel); text-decoration: none; color: inherit; min-height: 44px;
   border-left: 3px solid var(--accent); }
 a.card:hover { background: var(--panel-3); border-color: var(--border-2); border-left-color: var(--accent); }
-a.card .title { font-weight: 600; font-size: 1.05rem; color: var(--accent); }
-a.card .blurb { font-size: 0.9rem; color: var(--muted); margin-top: 4px; }
+a.card .title { display: block; font-weight: 600; font-size: 1.08rem; line-height: 1.3; color: var(--accent); }
+a.card .blurb { display: block; font-size: 0.9rem; line-height: 1.45; color: var(--muted); margin-top: 6px; }
 .foot { margin-top: 28px; font-size: 0.8rem; color: var(--muted); }
 `;
 

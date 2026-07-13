@@ -45,9 +45,29 @@ export const THEME = `
   --ok-bg: #10391f; --ok-fg: #7ee2a8; --warn-bg: #3f3410; --warn-fg: #f5d67b;
   --bad-bg: #401a1a; --bad-fg: #f6a5a5; --info-bg: #22303f; --info-fg: #93c5fd;
   --radius: 12px;
+  /* Shared content widths: reading pages use --content; table pages opt into --content-wide, so the
+     width change between a form page and a table page reads as intentional, not accidental. */
+  --content: 820px; --content-wide: 1140px;
 }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .muted { color: var(--muted); }
+/* Monospace, tabular, non-wrapping cell — for IDs and timestamps so columns scan cleanly. */
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 0.82em; }
+/* Horizontal scroll container with edge shadows (the classic scroll-shadow) so users can SEE that
+   more columns exist off-screen, plus a styled thin scrollbar. */
+.table-scroll { overflow-x: auto; scrollbar-color: var(--border-2) transparent;
+  background-image:
+    linear-gradient(to right, var(--panel), rgba(22, 27, 34, 0)),
+    linear-gradient(to left, var(--panel), rgba(22, 27, 34, 0)),
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, 0.55), rgba(0, 0, 0, 0));
+  background-position: left center, right center, left center, right center;
+  background-repeat: no-repeat;
+  background-size: 28px 100%, 28px 100%, 14px 100%, 14px 100%;
+  background-attachment: local, local, scroll, scroll; }
+.table-scroll::-webkit-scrollbar { height: 10px; }
+.table-scroll::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 6px; }
 .site-header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
   padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel); }
 .site-header .brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 700;

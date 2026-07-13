@@ -44,16 +44,22 @@ function badge(item: CallListItem): string {
 }
 
 function rowHtml(item: CallListItem): string {
-  const cells = [
-    esc(item.call_id),
-    esc(item.created_at),
-    badge(item),
-    esc(item.outcome.reason ?? ''),
-    esc(humanizeStage(item.current_stage)),
-    esc(item.updated_at),
-  ];
-  return `<tr>${cells.map((c) => `<td>${c}</td>`).join('')}</tr>`;
+  return (
+    `<tr>` +
+    `<td class="mono">${esc(item.call_id)}</td>` +
+    `<td class="mono">${esc(item.created_at)}</td>` +
+    `<td>${badge(item)}</td>` +
+    `<td>${esc(item.outcome.reason ?? '')}</td>` +
+    `<td>${esc(humanizeStage(item.current_stage))}</td>` +
+    `<td class="mono">${esc(item.updated_at)}</td>` +
+    `</tr>`
+  );
 }
+
+/** Column sizing for the fixed-layout table: narrow non-wrapping id/time cols; text cols share the rest. */
+const COLGROUP =
+  `<colgroup><col class="c-id"><col class="c-time"><col class="c-outcome">` +
+  `<col><col class="c-stage"><col class="c-time"></colgroup>`;
 
 const STYLE =
   THEME +
@@ -62,26 +68,32 @@ const STYLE =
 * { box-sizing: border-box; }
 body { margin: 0; font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: #0f1216; color: #e7ecf2; }
-main { max-width: 1100px; margin: 0 auto; padding: 16px; }
+main { max-width: var(--content-wide); margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
-a { color: #93c5fd; }
+a { color: var(--accent); }
 .nav { margin: 0 0 12px; font-size: 0.85rem; }
 form.filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
-  background: #161b22; border: 1px solid #2a323d; border-radius: 10px; padding: 12px; }
-form.filters label { display: flex; flex-direction: column; font-size: 0.8rem; gap: 2px; }
-form.filters select { padding: 6px 8px; border-radius: 8px; border: 1px solid #2a323d;
-  background: #0f1216; color: inherit; min-width: 180px; }
-form.filters button { padding: 8px 14px; border-radius: 8px; border: 1px solid #2a323d; background: #22303f;
-  color: #e7ecf2; font-weight: 600; }
-.table-wrap { overflow: auto; max-height: calc(100vh - 220px); margin-top: 12px; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #2a323d; vertical-align: top;
-  font-size: 0.85rem; }
-th { position: sticky; top: 0; z-index: 1; background: #161b22; box-shadow: inset 0 -1px 0 #2a323d; }
+  background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px; }
+.filters-label { flex-basis: 100%; font-size: 0.72rem; font-weight: 700; text-transform: uppercase;
+  letter-spacing: 0.05em; color: var(--muted); }
+form.filters label { display: flex; flex-direction: column; font-size: 0.78rem; gap: 3px; color: var(--muted); }
+form.filters select { padding: 8px 10px; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text); min-width: 200px; min-height: 40px; font: inherit; }
+form.filters button { padding: 8px 16px; border-radius: 8px; border: 1px solid var(--border); background: var(--panel-3);
+  color: var(--text); font-weight: 600; min-height: 40px; cursor: pointer; }
+form.filters button:hover { background: var(--border); }
+.table-wrap { max-height: calc(100vh - 260px); margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
+table { border-collapse: collapse; width: 100%; table-layout: fixed; }
+col.c-id { width: 100px; } col.c-time { width: 118px; } col.c-outcome { width: 132px; } col.c-stage { width: 150px; }
+th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top;
+  font-size: 0.85rem; word-break: break-word; overflow-wrap: anywhere; }
+th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(--muted);
+  font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.03em; box-shadow: inset 0 -1px 0 var(--border); }
+tbody tr:hover { background: var(--panel-2); }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem;
   font-weight: 600; color: #eef2f7; white-space: nowrap; }
 .pager { margin: 12px 0; display: flex; gap: 12px; align-items: center; }
-.foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
+.foot { margin-top: 24px; font-size: 0.8rem; color: var(--muted); }
 `;
 
 export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
@@ -93,6 +105,7 @@ export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
   ).join('');
   const form =
     `<form class="filters" method="get" action="/calls">` +
+    `<span class="filters-label">Filters</span>` +
     `<label>Outcome<select name="outcome">${options}</select></label>` +
     `<button type="submit">Filter</button>` +
     `</form>`;
@@ -104,7 +117,7 @@ export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
     dto.items.length > 0
       ? dto.items.map(rowHtml).join('')
       : `<tr><td colspan="6">No calls match this filter yet.</td></tr>`;
-  const table = `<div class="table-wrap"><table><thead>${header}</thead><tbody>${body}</tbody></table></div>`;
+  const table = `<div class="table-wrap table-scroll"><table>${COLGROUP}<thead>${header}</thead><tbody>${body}</tbody></table></div>`;
 
   const prevHref = dto.page > 1 ? esc(`/calls${qs ? `${qs}&` : '?'}page=${dto.page - 1}`) : '';
   const nextHref =

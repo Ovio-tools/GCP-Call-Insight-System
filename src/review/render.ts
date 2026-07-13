@@ -31,29 +31,33 @@ const STYLE =
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: #0f1216; color: #e7ecf2; }
-main { max-width: 720px; margin: 0 auto; padding: 16px; }
+main { max-width: var(--content); margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
 h2 { font-size: 1.05rem; margin: 20px 0 8px; }
-a { color: #93c5fd; }
+a { color: var(--accent); }
 .nav { margin: 4px 0 12px; font-size: 0.85rem; }
 ul.items { list-style: none; padding: 0; margin: 0; }
-.item { display: block; padding: 12px; margin: 8px 0; border-radius: 10px; border: 1px solid #2a323d;
-  background: #161b22; text-decoration: none; color: inherit; }
+.item { display: block; padding: 12px 14px; margin: 8px 0; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--panel); text-decoration: none; color: inherit; }
+.item:hover { background: var(--panel-2); border-color: var(--border-2); }
 .item .reason { font-weight: 600; }
-.pill { font-size: 0.75rem; font-weight: 700; text-transform: uppercase; padding: 2px 8px;
-  border-radius: 999px; margin-left: 6px; }
-.sla-ok { background: #10391f; color: #7ee2a8; }
-.sla-due_soon { background: #3f3410; color: #f5d67b; }
-.sla-breached { background: #401a1a; color: #f6a5a5; }
-.meta { font-size: 0.85rem; opacity: 0.8; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em; padding: 3px 9px; border-radius: 999px; margin-left: 8px; }
+.pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.sla-ok { background: var(--ok-bg); color: var(--ok-fg); }
+.sla-due_soon { background: var(--warn-bg); color: var(--warn-fg); }
+.sla-breached { background: var(--bad-bg); color: var(--bad-fg); }
+.meta { font-size: 0.85rem; color: var(--muted); }
 pre.redacted { white-space: pre-wrap; word-break: break-word; background: #12171e; padding: 12px;
-  border-radius: 8px; border: 1px solid #2a323d; }
-.withheld { font-style: italic; opacity: 0.8; }
+  border-radius: 8px; border: 1px solid var(--border); }
+.withheld { font-style: italic; color: var(--muted); }
 button { font: inherit; padding: 10px 14px; margin: 4px 6px 4px 0; border-radius: 8px;
-  border: 1px solid #2a323d; background: #1a2029; color: #e7ecf2; cursor: pointer; min-height: 44px; }
-button:hover { background: #232b36; }
-#result { margin-top: 12px; font-size: 0.9rem; }
-.foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
+  border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; min-height: 44px; }
+button:hover { background: var(--panel-3); }
+button[data-action="reject"], button[data-action="mark_unresolvable"] { border-color: #5a3a3a; }
+button[data-action="reject"]:hover, button[data-action="mark_unresolvable"]:hover { background: #3a2426; }
+#result { margin-top: 12px; font-size: 0.9rem; color: var(--muted); }
+.foot { margin-top: 24px; font-size: 0.8rem; color: var(--muted); }
 `;
 
 /** Plain-language SLA wording. "Overdue" reads clearer and less alarming than "breached". */
