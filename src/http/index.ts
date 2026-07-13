@@ -17,6 +17,9 @@ export {
   type WebhookAppDeps,
 } from './app.js';
 
+// Per-request CSP script nonce, for handlers rendering an inline `<script nonce>`.
+export { scriptNonce } from './plugins/security.js';
+
 // Error-shaping (for surfaces that need the status map directly).
 export { toHttpError, httpStatusFor, type HttpErrorResponse } from './errors.js';
 

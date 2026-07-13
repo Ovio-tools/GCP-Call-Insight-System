@@ -13,6 +13,19 @@ One config file per service. In the Railway dashboard, set each service's
 | retention-cron      | `retention-cron.json`      | no              | `0 4 * * *` UTC            |
 | evaluation-cron     | `evaluation-cron.json`     | no              | `0 6 * * 1` UTC            |
 | sample-validation   | `sample-validation.json`   | no              | on-demand (Task 11.1 demo) |
+| console-surface     | `console-surface.json`     | yes (dashboard) | —                          |
+| status-surface      | `status-surface.json`      | yes (dashboard) | —                          |
+| knowledge-surface   | `knowledge-surface.json`   | yes (dashboard) | —                          |
+| review-surface      | `review-surface.json`      | yes (dashboard) | —                          |
+
+The **console-surface** is the single sign-in entry point: it mounts the home page (`GET /`) plus
+the status, knowledge-base, and review routes on ONE service under ONE session, so a user signs in
+once and reaches every screen from the home page. Prefer it over standing up the three single-surface
+services separately (they exist for isolated deploys and stay valid, but each is its own domain and
+its own login). Because it includes the review surface, it needs the review-only variables —
+`RAW_DATABASE_URL`, the crypto key variables, `REVIEW_ELEVATED_ROLE`, and
+`REVIEW_HELD_RAW_RETENTION_CAP_HOURS` — on top of the shared internal-surface set. See
+[`docs/console-surface.md`](../../docs/console-surface.md).
 
 The **sample-validation** service is NOT part of the live pipeline — it is the consented,
 staging-only demo job (Task 11.1), the one sanctioned way to run **real** Dialpad calls through

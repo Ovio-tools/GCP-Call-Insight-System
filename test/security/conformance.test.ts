@@ -194,6 +194,9 @@ const LISTENER_SERVICES = servicesBindingListeners();
 
 /** The register call each surface uses, so we can match a service file to a surface. */
 const SURFACE_MARKERS: Record<string, RegExp> = {
+  // Checked first (the console surface is listed first in SURFACES): the combined service also calls
+  // registerStatusRoutes/Knowledge/Review, so this unique marker must win the file→surface match.
+  console: /registerConsoleHomeRoute/,
   status: /registerStatusRoutes/,
   review: /registerReviewRoutes/,
   'knowledge-base': /registerKnowledgeRoutes/,

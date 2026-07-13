@@ -1,4 +1,5 @@
 import type { ComponentNode, StageNode, StatusDTO } from './dto.js';
+import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained status page (Task 7.3, plan §5). Inline CSS, no external
@@ -11,7 +12,7 @@ import type { ComponentNode, StageNode, StatusDTO } from './dto.js';
  * already the allowlist (plan §4), so nothing but labels/states/counts/summary strings can be
  * placed here.
  */
-export interface RenderStatusOptions {
+export interface RenderStatusOptions extends Chrome {
   /** `<meta http-equiv=refresh>` cadence in seconds; 0 (or absent) disables auto-refresh. */
   refreshSeconds?: number;
 }
@@ -94,43 +95,52 @@ function componentNodeHtml(node: ComponentNode): string {
   );
 }
 
-const STYLE = `
+const STYLE =
+  THEME +
+  `
 :root { color-scheme: light dark; }
 * { box-sizing: border-box; }
 body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: #0f1216; color: #e7ecf2; }
-main { max-width: 640px; margin: 0 auto; padding: 16px; }
+main { max-width: var(--content); margin: 0 auto; padding: 16px; }
 h1 { font-size: 1.4rem; margin: 0 0 4px; }
-h2 { font-size: 1.05rem; margin: 24px 0 8px; }
-.summary { font-size: 1.1rem; margin: 8px 0 16px; padding: 12px; border-radius: 10px;
-  background: #1a2029; border: 1px solid #2a323d; }
-.counts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 8px 0 8px; }
-.counts .tile { background: #1a2029; border: 1px solid #2a323d; border-radius: 10px; padding: 10px 12px; }
-.counts .tile .k { font-size: 0.8rem; opacity: 0.75; }
-.counts .tile .v { font-size: 1.3rem; font-weight: 600; }
+h2 { font-size: 1.05rem; margin: 24px 0 10px; }
+a { color: var(--accent); }
+.nav { margin: 0 0 12px; font-size: 0.85rem; }
+.summary { font-size: 1.05rem; margin: 8px 0 18px; padding: 12px 14px; border-radius: var(--radius);
+  background: var(--panel-2); border: 1px solid var(--border); border-left: 4px solid var(--border-2); }
+.summary.state-healthy { border-left-color: var(--ok-fg); }
+.summary.state-idle { border-left-color: var(--info-fg); }
+.summary.state-degraded { border-left-color: var(--warn-fg); background: #241f14; }
+.summary.state-broken { border-left-color: var(--bad-fg); background: #241618; }
+.summary.state-paused { border-left-color: #cbb6f2; }
+.counts { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 10px 0; }
+.counts .tile { background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px; }
+.counts .tile .k { font-size: 0.8rem; color: var(--muted); }
+.counts .tile .v { font-size: 1.35rem; font-weight: 600; font-variant-numeric: tabular-nums; }
 ul.nodes { list-style: none; padding: 0; margin: 0; }
 .node { display: flex; justify-content: space-between; align-items: center; gap: 8px;
-  min-height: 48px; padding: 10px 12px; margin: 6px 0; border-radius: 10px;
-  border: 1px solid #2a323d; background: #161b22; }
+  min-height: 48px; padding: 10px 14px; margin: 8px 0; border-radius: var(--radius);
+  border: 1px solid var(--border); background: var(--panel); }
 .node .node-label { font-weight: 600; }
 .node .node-meta { display: flex; flex-direction: column; align-items: flex-end; gap: 2px;
   text-align: right; }
-.node .state { font-size: 0.8rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em;
-  padding: 2px 8px; border-radius: 999px; }
-.node .count { font-variant-numeric: tabular-nums; opacity: 0.85; }
-.node .last-run { font-size: 0.75rem; opacity: 0.7; word-break: break-word; }
-.arrow { text-align: center; opacity: 0.5; line-height: 1; margin: -2px 0; }
-.state-healthy .state { background: #10391f; color: #7ee2a8; }
-.state-idle .state { background: #22303f; color: #93c5fd; }
-.state-degraded .state { background: #3f3410; color: #f5d67b; }
-.state-broken .state { background: #401a1a; color: #f6a5a5; }
+.node .state { display: inline-flex; align-items: center; gap: 6px; font-size: 0.78rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.03em; padding: 3px 9px; border-radius: 999px; }
+.node .state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.node .count { font-variant-numeric: tabular-nums; color: var(--muted); }
+.node .last-run { font-size: 0.75rem; color: var(--muted); word-break: break-word; }
+.arrow { text-align: center; color: var(--muted); opacity: 0.6; line-height: 1; margin: 0; font-size: 0.9rem; }
+.state-healthy .state { background: var(--ok-bg); color: var(--ok-fg); }
+.state-idle .state { background: var(--info-bg); color: var(--info-fg); }
+.state-degraded .state { background: var(--warn-bg); color: var(--warn-fg); }
+.state-broken .state { background: var(--bad-bg); color: var(--bad-fg); }
 .state-paused .state { background: #2f2740; color: #cbb6f2; }
 .state-unknown .state { background: #262c34; color: #b7c0cc; }
 .reasons { list-style: none; padding: 0; margin: 0; }
-.reasons li { display: flex; justify-content: space-between; padding: 8px 12px; margin: 4px 0;
-  background: #161b22; border: 1px solid #2a323d; border-radius: 8px; }
-.foot { margin-top: 24px; font-size: 0.8rem; opacity: 0.7; }
-a { color: #93c5fd; }
+.reasons li { display: flex; justify-content: space-between; padding: 9px 12px; margin: 5px 0;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.foot { margin-top: 24px; font-size: 0.8rem; color: var(--muted); }
 `;
 
 export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {}): string {
@@ -169,7 +179,9 @@ export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {})
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width, initial-scale=1">` +
     refresh +
-    `<title>Pipeline status</title><style>${STYLE}</style></head><body><main>` +
+    `<title>Pipeline status</title><style>${STYLE}</style></head><body>` +
+    siteHeader('Pipeline health') +
+    `<main>` +
     `<h1>Pipeline status</h1>` +
     `<p class="nav"><a href="/calls">View all calls &amp; outcomes &rarr;</a></p>` +
     `<p class="summary state-${esc(s.pipeline_state)}">${esc(summarySentence(dto))}</p>` +
@@ -184,6 +196,8 @@ export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {})
     `<h2>Held for review</h2>${heldBreakdown}` +
     `<h2>Dead-letter</h2><p>${esc(fmtCount(s.dead_letter_count))} job(s) in the dead-letter queue.</p>` +
     `<p class="foot">Generated at ${esc(dto.generated_at)}. <a href="">Refresh</a></p>` +
-    `</main></body></html>`
+    `</main>` +
+    logoutScript(opts) +
+    `</body></html>`
   );
 }
