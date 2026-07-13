@@ -4,7 +4,7 @@ import {
   type CallOutcomeKey,
   type CallsPage,
 } from './calls.js';
-import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
+import { THEME, siteHeader, logoutScript, fmtTs, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained per-call pipeline page (companion to /status). READ-ONLY:
@@ -46,12 +46,12 @@ function badge(item: CallListItem): string {
 function rowHtml(item: CallListItem): string {
   return (
     `<tr>` +
-    `<td class="mono">${esc(item.call_id)}</td>` +
-    `<td class="mono">${esc(item.created_at)}</td>` +
+    `<td class="mono" title="${esc(item.call_id)}">${esc(item.call_id)}</td>` +
+    `<td class="mono" title="${esc(item.created_at)}">${esc(fmtTs(item.created_at))}</td>` +
     `<td>${badge(item)}</td>` +
     `<td>${esc(item.outcome.reason ?? '')}</td>` +
     `<td>${esc(humanizeStage(item.current_stage))}</td>` +
-    `<td class="mono">${esc(item.updated_at)}</td>` +
+    `<td class="mono" title="${esc(item.updated_at)}">${esc(fmtTs(item.updated_at))}</td>` +
     `</tr>`
   );
 }
@@ -84,7 +84,7 @@ form.filters button { padding: 8px 16px; border-radius: 8px; border: 1px solid v
 form.filters button:hover { background: var(--border); }
 .table-wrap { max-height: calc(100vh - 260px); margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-col.c-id { width: 100px; } col.c-time { width: 118px; } col.c-outcome { width: 132px; } col.c-stage { width: 150px; }
+col.c-id { width: 116px; } col.c-time { width: 132px; } col.c-outcome { width: 132px; } col.c-stage { width: 150px; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top;
   font-size: 0.85rem; word-break: break-word; overflow-wrap: anywhere; }
 th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(--muted);

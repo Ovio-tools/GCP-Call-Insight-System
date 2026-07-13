@@ -53,7 +53,8 @@ export const THEME = `
 .muted { color: var(--muted); }
 /* Monospace, tabular, non-wrapping cell — for IDs and timestamps so columns scan cleanly. */
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 0.82em; }
+  font-variant-numeric: tabular-nums; white-space: nowrap; font-size: 0.82em;
+  overflow: hidden; text-overflow: ellipsis; }
 /* Horizontal scroll container with edge shadows (the classic scroll-shadow) so users can SEE that
    more columns exist off-screen, plus a styled thin scrollbar. */
 .table-scroll { overflow-x: auto; scrollbar-color: var(--border-2) transparent;
@@ -75,6 +76,9 @@ export const THEME = `
 .site-header .brand .dot { width: 10px; height: 10px; border-radius: 3px; background: var(--accent); }
 .site-header .brand:hover { color: var(--accent); }
 .site-header .section { color: var(--muted); font-size: 0.9rem; }
+.site-header .section a { color: var(--accent); text-decoration: none; }
+.site-header .section a:hover { text-decoration: underline; }
+.site-header .section .sep { margin: 0 6px; color: var(--muted); }
 .site-header .spacer { margin-left: auto; }
 .site-header .signout { font: inherit; min-height: 38px; padding: 6px 14px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
@@ -82,32 +86,50 @@ export const THEME = `
 `;
 
 /**
- * The consistent top bar: product mark (links to the console home), the current section, and a
- * Sign-out button. Pair with {@link logoutScript} once per page to wire the button.
+ * The consistent top bar: product mark (links home), a breadcrumb with an explicit **Home** link on
+ * every inner page (the home page shows just "Home"), and a Sign-out button. Pair with
+ * {@link logoutScript} once per page to wire the button.
  */
 export function siteHeader(section: string): string {
+  const crumb =
+    section === 'Home'
+      ? `<span class="section">Home</span>`
+      : `<span class="section"><a href="/">Home</a><span class="sep">›</span>${esc(section)}</span>`;
   return (
     `<header class="site-header">` +
     `<a class="brand" href="/"><span class="dot"></span>Call Insights</a>` +
-    `<span class="section">${esc(section)}</span>` +
+    crumb +
     `<span class="spacer"></span>` +
     `<button class="signout" id="signout" type="button">Sign out</button>` +
     `</header>`
   );
 }
 
-/** The nonce'd inline script that wires Sign-out (POST /auth/logout with the CSRF header). */
+/**
+ * The nonce'd inline script that wires Sign-out. It POSTs /auth/logout with the CSRF header (which
+ * destroys the app session and returns `{ next }` — the IdP's logout URL when configured), then does
+ * a TOP-LEVEL navigation to `next`. The top-level navigation is essential: only it lets the IdP
+ * (Auth0) clear its own SSO cookie — a background fetch would leave SSO active and silently sign the
+ * user right back in on the next page load.
+ */
 export function logoutScript(chrome: Chrome): string {
   return (
     `<script nonce="${esc(chrome.nonce ?? '')}">` +
     `var _so=document.getElementById('signout');` +
-    `if(_so){_so.addEventListener('click',async function(){` +
-    `try{await fetch('/auth/logout',{method:'POST',headers:{'X-CSRF-Token':${jsonForScript(
+    `if(_so){_so.addEventListener('click',async function(){var next='/';` +
+    `try{var r=await fetch('/auth/logout',{method:'POST',headers:{'X-CSRF-Token':${jsonForScript(
       chrome.csrfToken ?? '',
-    )}}});}catch(e){}` +
-    `window.location.href='/';});}` +
+    )},'X-Requested-With':'xhr','Accept':'application/json'}});` +
+    `var j=await r.json();if(j&&j.next){next=j.next;}}catch(e){}` +
+    `window.location.href=next;});}` +
     `</script>`
   );
+}
+
+/** Compact a strict ISO-8601 timestamp to "YYYY-MM-DD HH:MM"; leaves any other string untouched. */
+export function fmtTs(iso: string): string {
+  const m = /^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})/.exec(iso);
+  return m ? `${m[1]} ${m[2]}` : iso;
 }
 
 /** Plain-language names for the machine `held_reason` codes shown to reviewers. */
