@@ -1,7 +1,31 @@
 import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY } from '../db/enums.js';
 import type { KnowledgeFilters, KnowledgeRecord, KnowledgeView } from './dto.js';
 import { humanizeLabel } from './summary.js';
-import { THEME, siteHeader, logoutScript, fmtTs, type Chrome } from '../ui/chrome.js';
+import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
+
+/**
+ * Formatter for the `Created` column: renders a UTC ISO timestamp in US Central Time
+ * (America/Chicago — CST/CDT handled automatically) as `MM-DD-YYYY HH:MM:SS`, 24-hour clock.
+ */
+const CENTRAL_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Chicago',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+  hourCycle: 'h23',
+});
+
+/** Format a strict ISO-8601 timestamp as `MM-DD-YYYY HH:MM:SS CT`; leaves any unparseable string untouched. */
+function fmtCreatedCt(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const parts: Record<string, string> = {};
+  for (const p of CENTRAL_TIME_FORMAT.formatToParts(d)) parts[p.type] = p.value;
+  return `${parts.month}-${parts.day}-${parts.year} ${parts.hour}:${parts.minute}:${parts.second} CT`;
+}
 
 /**
  * Server-rendered, self-contained knowledge page (Task 10.1). READ-ONLY: a GET `<form>` for the
@@ -61,7 +85,7 @@ function rowHtml(r: KnowledgeRecord): string {
   return (
     `<tr>` +
     `<td class="mono" title="${esc(r.call_id)}">${esc(r.call_id)}</td>` +
-    `<td class="mono" title="${esc(r.created_at)}">${esc(fmtTs(r.created_at))}</td>` +
+    `<td class="mono" title="${esc(r.created_at)}">${esc(fmtCreatedCt(r.created_at))}</td>` +
     `<td>${esc(humanizeLabel(r.call_intent))}</td>` +
     `<td>${esc(humanizeLabel(r.service_category))}</td>` +
     `<td>${esc(humanizeLabel(r.urgency))}</td>` +
@@ -106,7 +130,7 @@ form.filters button:hover { background: var(--border); }
 .exports { margin: 8px 0 16px; }
 .table-wrap { max-height: calc(100vh - 260px); border: 1px solid var(--border); border-radius: 10px; }
 table { border-collapse: collapse; width: 100%; table-layout: fixed; }
-col.c-id { width: 116px; } col.c-time { width: 132px; } col.c-intent { width: 116px; }
+col.c-id { width: 116px; } col.c-time { width: 176px; } col.c-intent { width: 116px; }
 col.c-cat { width: 128px; } col.c-urg { width: 92px; }
 th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: top;
   font-size: 0.85rem; word-break: break-word; overflow-wrap: anywhere; }
