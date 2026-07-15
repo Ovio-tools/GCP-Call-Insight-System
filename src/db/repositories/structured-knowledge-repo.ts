@@ -263,7 +263,7 @@ export async function setStructuredKnowledgeSuperseded(
     q,
     `UPDATE structured_knowledge
        SET superseded_by_call_id = $2
-     WHERE call_id = $1 AND superseded_by_call_id IS NULL
+     WHERE call_id = $1 AND call_id <> $2 AND superseded_by_call_id IS NULL
      RETURNING call_id`,
     [input.callId, input.canonicalCallId],
   );
@@ -271,22 +271,25 @@ export async function setStructuredKnowledgeSuperseded(
 }
 
 /** One page of KB call_ids (newest first) that are NOT yet superseded — drives the cleanup
- *  one-off. `beforeCreatedAt` is the keyset cursor (exclusive). */
+ *  one-off. `cursor` is the last row of the previous page (exclusive), a COMPOSITE keyset over
+ *  `(created_at, call_id)` so rows sharing an identical `created_at` (batch inserts default to a
+ *  transaction-fixed `now()`) are never silently skipped at a page boundary. */
 export async function listKnowledgeCallIdsPage(
   q: Queryable,
-  opts: { beforeCreatedAt?: Date; limit: number },
+  opts: { cursor?: { createdAt: Date; callId: string }; limit: number },
 ): Promise<{ call_id: string; created_at: Date }[]> {
   const params: unknown[] = [];
-  let cursor = '';
-  if (opts.beforeCreatedAt !== undefined) {
-    params.push(opts.beforeCreatedAt);
-    cursor = `AND created_at < $${params.length}`;
+  let where = 'superseded_by_call_id IS NULL';
+  if (opts.cursor !== undefined) {
+    params.push(opts.cursor.createdAt, opts.cursor.callId);
+    // Composite keyset matching ORDER BY (created_at DESC, call_id DESC).
+    where += ` AND (created_at < $1 OR (created_at = $1 AND call_id < $2))`;
   }
   params.push(opts.limit);
   return query<{ call_id: string; created_at: Date }>(
     q,
     `SELECT call_id, created_at FROM structured_knowledge
-     WHERE superseded_by_call_id IS NULL ${cursor}
+     WHERE ${where}
      ORDER BY created_at DESC, call_id DESC
      LIMIT $${params.length}`,
     params,
