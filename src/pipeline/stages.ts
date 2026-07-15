@@ -54,7 +54,11 @@ export const STATUS_SKIPPED = 'skipped';
  * The runner's terminal `skipped` guard validates `current_stage` against this set, so a
  * re-enqueued non-customer call is a safe no-op.
  */
-export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set(['metadata-pre-filter', 'classify']);
+export const SKIP_STAGES: ReadonlySet<PipelineStage> = new Set([
+  'metadata-pre-filter',
+  'fetch-transcript',
+  'classify',
+]);
 
 /**
  * `held` — a stage set the call aside for a person (a `review_queue` row was written).

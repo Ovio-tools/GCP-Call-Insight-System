@@ -61,6 +61,7 @@ export const DROP_REASONS = [
   'outbound_no_customer_conversation',
   'internal_transfer_non_operator_leg',
   'classified_non_customer',
+  'duplicate_call_leg',
 ] as const;
 
 export const REVIEW_STATUS = ['open', 'in_review', 'resolved', 'unresolvable'] as const;
