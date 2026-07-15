@@ -27,7 +27,7 @@ import {
 
 /** Provenance tag for a canonical call rescued into the pipeline because only a
  *  non-canonical leg of the conversation was listed/enqueued. */
-const CANONICAL_LEG_SOURCE = 'canonical-leg-rescue';
+const CANONICAL_LEG_SOURCE = 'dialpad-canonical-leg';
 
 /** Injected time so the bounded-wait window can be driven deterministically in tests. */
 export interface Clock {
@@ -155,15 +155,20 @@ export function createFetchTranscriptHandler(deps: FetchTranscriptDeps): StageHa
       // call itself will be processed, so we never lose a call. Fail-open: an absent canonical
       // id (Dialpad omitted the field) keeps today's behavior.
       if (canonical !== undefined && canonical !== callId) {
-        const created = await seedCallStateIfAbsent(pool, {
+        const seeded = await seedCallStateIfAbsent(pool, {
           callId: canonical,
           source: CANONICAL_LEG_SOURCE,
           currentStage: PIPELINE_STAGES[0],
           status: STATUS_PROCESSING,
         });
-        if (created) await deps.enqueuePipelineJob(canonical);
+        // Enqueue UNCONDITIONALLY (not only when we just seeded the row): the jobId is
+        // deterministic/idempotent and `runPipeline`'s terminal no-op guard makes a redundant
+        // enqueue harmless. This closes the strand window where the seed commits but this
+        // enqueue throws — the retry sees seeded=false and would otherwise never rescue the
+        // canonical if reconciliation never independently listed it.
+        await deps.enqueuePipelineJob(canonical);
         logger.info(
-          { stage, canonical_call_id: canonical, canonical_enqueued: created },
+          { stage, canonical_call_id: canonical, canonical_seeded: seeded },
           'non-canonical call leg — dropping duplicate; canonical ensured',
         );
         return {

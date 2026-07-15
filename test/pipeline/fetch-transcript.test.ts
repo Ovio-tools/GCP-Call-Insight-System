@@ -356,11 +356,12 @@ describe.skipIf(!hasTestDb || !hasRawTestDb)('fetch-transcript stage', () => {
       expect(await getCallState(app, canonical)).not.toBeNull();
     });
 
-    it('drops the non-canonical leg WITHOUT re-enqueuing an already-known canonical call', async () => {
+    it('drops the non-canonical leg and STILL enqueues an already-known canonical call', async () => {
       const callId = 'test-ft-leg-known';
       const canonical = 'test-ft-canon-known';
       await seedProcessing(callId);
-      // Pre-insert the canonical row so seedCallStateIfAbsent returns false (not created).
+      // Pre-insert the canonical row so seedCallStateIfAbsent returns false (not newly seeded);
+      // the enqueue is unconditional (idempotent jobId + terminal no-op guard), so it still fires.
       await seedProcessing(canonical, 'metadata-pre-filter');
       const { handler, enqueuePipelineJob } = collapseHandler(canonical);
 
@@ -370,7 +371,8 @@ describe.skipIf(!hasTestDb || !hasRawTestDb)('fetch-transcript stage', () => {
         detail: { canonical_call_id: canonical },
       });
       expect(await countRows('raw_transcripts', callId, rawOwner)).toBe(0);
-      expect(enqueuePipelineJob).not.toHaveBeenCalled();
+      expect(enqueuePipelineJob).toHaveBeenCalledTimes(1);
+      expect(enqueuePipelineJob).toHaveBeenCalledWith(canonical);
     });
   });
 
