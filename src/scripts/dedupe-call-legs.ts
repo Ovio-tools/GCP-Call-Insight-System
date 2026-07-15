@@ -53,7 +53,7 @@ export async function main(): Promise<void> {
   });
   const client = createDialpadClient({ config, limiter, logger });
 
-  const tally = { scanned: 0, kept: 0, superseded: 0, unresolved: 0, canonicalMissing: 0 };
+  const tally = { scanned: 0, kept: 0, superseded: 0, unresolved: 0, canonicalMissing: 0, errored: 0 };
   let cursor: { createdAt: Date; callId: string } | undefined;
 
   try {
@@ -65,41 +65,52 @@ export async function main(): Promise<void> {
       if (page.length === 0) break;
       for (const row of page) {
         tally.scanned += 1;
-        const fetched = await client.fetchTranscript(row.call_id);
-        const canonical = fetched.kind === 'ready' ? fetched.canonicalCallId : undefined;
-        const canonicalExists =
-          canonical !== undefined && canonical !== row.call_id
-            ? (await getStructuredKnowledge(pool, canonical)) !== undefined
-            : false;
-        const decision = classifyDedupRow(row.call_id, fetched, canonicalExists);
-        switch (decision.action) {
-          case 'keep':
-            tally.kept += 1;
-            break;
-          case 'unresolved':
-            tally.unresolved += 1;
-            logger.info({ call_id: row.call_id, why: decision.why }, 'dedup: unresolved');
-            break;
-          case 'canonical_missing':
-            tally.canonicalMissing += 1;
-            logger.info(
-              { call_id: row.call_id, canonical_call_id: decision.canonicalCallId },
-              'dedup: canonical row missing — left untouched',
-            );
-            break;
-          case 'supersede':
-            tally.superseded += 1;
-            logger.info(
-              { call_id: row.call_id, canonical_call_id: decision.canonicalCallId, apply },
-              apply ? 'dedup: superseding' : 'dedup: WOULD supersede (dry-run)',
-            );
-            if (apply) {
-              await setStructuredKnowledgeSuperseded(pool, {
-                callId: row.call_id,
-                canonicalCallId: decision.canonicalCallId,
-              });
-            }
-            break;
+        try {
+          const fetched = await client.fetchTranscript(row.call_id);
+          const canonical = fetched.kind === 'ready' ? fetched.canonicalCallId : undefined;
+          const canonicalExists =
+            canonical !== undefined && canonical !== row.call_id
+              ? (await getStructuredKnowledge(pool, canonical)) !== undefined
+              : false;
+          const decision = classifyDedupRow(row.call_id, fetched, canonicalExists);
+          switch (decision.action) {
+            case 'keep':
+              tally.kept += 1;
+              break;
+            case 'unresolved':
+              tally.unresolved += 1;
+              logger.info({ call_id: row.call_id, why: decision.why }, 'dedup: unresolved');
+              break;
+            case 'canonical_missing':
+              tally.canonicalMissing += 1;
+              logger.info(
+                { call_id: row.call_id, canonical_call_id: decision.canonicalCallId },
+                'dedup: canonical row missing — left untouched',
+              );
+              break;
+            case 'supersede':
+              tally.superseded += 1;
+              logger.info(
+                { call_id: row.call_id, canonical_call_id: decision.canonicalCallId, apply },
+                apply ? 'dedup: superseding' : 'dedup: WOULD supersede (dry-run)',
+              );
+              if (apply) {
+                await setStructuredKnowledgeSuperseded(pool, {
+                  callId: row.call_id,
+                  canonicalCallId: decision.canonicalCallId,
+                });
+              }
+              break;
+          }
+        } catch (err) {
+          // One throwing row (a Dialpad hiccup on fetchTranscript, or a DB read error) must not
+          // abort the whole scan — log ids + a sanitized message only, tally it, and move on so a
+          // re-run doesn't re-hit Dialpad for every already-examined row.
+          tally.errored += 1;
+          logger.warn(
+            { call_id: row.call_id, error: err instanceof Error ? err.message : String(err) },
+            'dedup: row failed — skipping',
+          );
         }
       }
       const last = page[page.length - 1];
