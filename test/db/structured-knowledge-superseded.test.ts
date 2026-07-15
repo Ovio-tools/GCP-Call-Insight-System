@@ -100,9 +100,9 @@ describe.skipIf(!hasTestDb)('structured_knowledge supersede filter', () => {
     // case the old created_at-only cursor dropped: page 2 re-derived `created_at < TIE_TS` and
     // skipped the remaining same-timestamp rows.
     const startCursor = { createdAt: new Date(TIE_TS), callId: `sk-tie-z-${stamp}` };
-    const page1 = (
-      await listKnowledgeCallIdsPage(pool, { cursor: startCursor, limit: 2 })
-    ).filter((r) => tieIds.includes(r.call_id));
+    const page1 = (await listKnowledgeCallIdsPage(pool, { cursor: startCursor, limit: 2 })).filter(
+      (r) => tieIds.includes(r.call_id),
+    );
     expect(page1.length).toBe(2);
     const last = page1[page1.length - 1]!;
 

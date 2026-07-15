@@ -53,7 +53,14 @@ export async function main(): Promise<void> {
   });
   const client = createDialpadClient({ config, limiter, logger });
 
-  const tally = { scanned: 0, kept: 0, superseded: 0, unresolved: 0, canonicalMissing: 0, errored: 0 };
+  const tally = {
+    scanned: 0,
+    kept: 0,
+    superseded: 0,
+    unresolved: 0,
+    canonicalMissing: 0,
+    errored: 0,
+  };
   let cursor: { createdAt: Date; callId: string } | undefined;
 
   try {

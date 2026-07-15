@@ -300,7 +300,9 @@ describe('DialpadClient.listRecentlyConcludedCalls', () => {
   it('carries a PII-free field path in the error detail when a field type is wrong', async () => {
     // A genuinely wrong type (string where a number is required) still fails — and the detail
     // names the field path + issue code (never the value) so the failure is diagnosable.
-    const { client } = clientWith([json({ items: [{ call_id: 'c-1', duration: 'not-a-number' }] })]);
+    const { client } = clientWith([
+      json({ items: [{ call_id: 'c-1', duration: 'not-a-number' }] }),
+    ]);
     const err = await client
       .listRecentlyConcludedCalls({ since: 1000 })
       .then(() => null)
