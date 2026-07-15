@@ -1,15 +1,14 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { Pool } from 'pg';
-
-const url = process.env.TEST_DATABASE_URL;
-const hasTestDb = Boolean(url);
+import type { Pool } from 'pg';
+import { hasTestDb, makePool, migrate } from './_pg.js';
 
 describe.skipIf(!hasTestDb)('drop_reason duplicate_call_leg CHECK', () => {
-  let owner: Pool;
+  let owner!: Pool;
   let callId: string;
 
   beforeAll(async () => {
-    owner = new Pool({ connectionString: url });
+    await migrate('up');
+    owner = makePool();
     callId = `dup-leg-${Date.now()}`;
     await owner.query(
       `INSERT INTO call_state (call_id, source, source_metadata, current_stage, status)

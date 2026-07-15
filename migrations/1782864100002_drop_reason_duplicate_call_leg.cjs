@@ -1,3 +1,5 @@
+'use strict';
+
 /**
  * Migration — add 'duplicate_call_leg' to the call_state.drop_reason value CHECK.
  *
@@ -5,6 +7,9 @@
  * fetch-transcript stage before any model work runs (call-leg deduplication). The list
  * MUST stay in sync with DROP_REASONS in src/db/enums.ts (hand-kept, like migration 6).
  */
+
+exports.shorthands = undefined;
+
 const VALUE_CHK = 'call_state_drop_reason_value_chk';
 
 const OLD_REASONS = [
