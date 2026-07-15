@@ -11,10 +11,23 @@ import {
   failureSnapshot,
 } from '../failure-model/index.js';
 import { recordAlert } from '../db/repositories/alert-events-repo.js';
-import { markTranscriptWaitStarted } from '../db/repositories/call-state-repo.js';
+import {
+  markTranscriptWaitStarted,
+  seedCallStateIfAbsent,
+} from '../db/repositories/call-state-repo.js';
 import { putTranscript, transcriptExists } from '../db/repositories/raw-transcripts-repo.js';
 import { type DelayedRetryQueue, enqueueTranscriptRetry } from '../queue/pipeline-queue.js';
-import type { StageContext, StageHandler, StageResult } from './stages.js';
+import {
+  PIPELINE_STAGES,
+  STATUS_PROCESSING,
+  type StageContext,
+  type StageHandler,
+  type StageResult,
+} from './stages.js';
+
+/** Provenance tag for a canonical call rescued into the pipeline because only a
+ *  non-canonical leg of the conversation was listed/enqueued. */
+const CANONICAL_LEG_SOURCE = 'canonical-leg-rescue';
 
 /** Injected time so the bounded-wait window can be driven deterministically in tests. */
 export interface Clock {
@@ -30,6 +43,9 @@ export interface FetchTranscriptDeps {
   clock?: Clock;
   /** DB-B app pool (Task 8a): raw_transcripts + token_vault live only in the raw store. */
   rawPool: Pool;
+  /** Enqueue a pipeline job for a call id (the canonical-leg safeguard). Injected so the stage
+   *  stays testable and free of the concrete BullMQ queue type. */
+  enqueuePipelineJob: (callId: string) => Promise<void>;
 }
 
 /** Map a client `DialpadError` kind to the shared failure-model code + processing state. */
@@ -133,6 +149,30 @@ export function createFetchTranscriptHandler(deps: FetchTranscriptDeps): StageHa
     }
 
     if (result.kind === 'ready') {
+      const canonical = result.canonicalCallId;
+      // A leg whose transcript reports a DIFFERENT canonical id is a duplicate of that
+      // conversation. Drop it before any model work runs — but first make sure the canonical
+      // call itself will be processed, so we never lose a call. Fail-open: an absent canonical
+      // id (Dialpad omitted the field) keeps today's behavior.
+      if (canonical !== undefined && canonical !== callId) {
+        const created = await seedCallStateIfAbsent(pool, {
+          callId: canonical,
+          source: CANONICAL_LEG_SOURCE,
+          currentStage: PIPELINE_STAGES[0],
+          status: STATUS_PROCESSING,
+        });
+        if (created) await deps.enqueuePipelineJob(canonical);
+        logger.info(
+          { stage, canonical_call_id: canonical, canonical_enqueued: created },
+          'non-canonical call leg — dropping duplicate; canonical ensured',
+        );
+        return {
+          action: 'drop',
+          reason: 'duplicate_call_leg',
+          detail: { canonical_call_id: canonical },
+        };
+      }
+
       await putTranscript(deps.rawPool, deps.keyProvider, {
         callId,
         transcript: result.transcript,
