@@ -12,8 +12,7 @@ import {
 
 /** The result of a transcript fetch. `ready` carries the raw transcript body (encrypted at rest). */
 export type TranscriptResult =
-  | { kind: 'ready'; transcript: string; canonicalCallId?: string }
-  | { kind: 'not_ready' };
+  { kind: 'ready'; transcript: string; canonicalCallId?: string } | { kind: 'not_ready' };
 
 /** A recently-concluded call — metadata ONLY, no transcript, no PII. */
 export interface RecentCall {
