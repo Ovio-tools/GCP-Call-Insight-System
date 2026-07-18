@@ -26,7 +26,9 @@ describe('knowledge surface auth (Task 10.1)', () => {
       headers: { accept: 'text/html,application/xhtml+xml' },
     });
     expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe(`/auth/login?returnTo=${encodeURIComponent('/knowledge?q=pump')}`);
+    expect(res.headers.location).toBe(
+      `/auth/login?returnTo=${encodeURIComponent('/knowledge?q=pump')}`,
+    );
     await harness.app.close();
   });
 

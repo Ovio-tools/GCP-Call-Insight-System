@@ -3,6 +3,9 @@
 One config file per service. In the Railway dashboard, set each service's
 **Config-as-code path** to its file here (e.g. `deploy/railway/worker.json`).
 
+The per-release deployment procedure (deploy order, verification, one-offs,
+rollback) is [`docs/deployment.md`](../../docs/deployment.md).
+
 ## Services
 
 | Service             | Config                     | Public domain   | Schedule                   |
