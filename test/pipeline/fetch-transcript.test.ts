@@ -274,6 +274,7 @@ describe.skipIf(!hasTestDb || !hasRawTestDb)('fetch-transcript stage', () => {
       queue: fakeQueue(),
       config: makeTestConfig({ DIALPAD_API_KEY: 'k' }),
       rawPool: rawApp,
+      enqueuePipelineJob: vi.fn(() => Promise.resolve()),
     });
     const ctx: StageContext = { callId, stage: 'fetch-transcript', logger, pool: app };
     await handler(ctx);
@@ -282,6 +283,97 @@ describe.skipIf(!hasTestDb || !hasRawTestDb)('fetch-transcript stage', () => {
     expect(await getTranscript(rawApp, keyProvider, callId)).toBe(planted);
     expect(lines.join('')).not.toContain('secret_9999');
     expect(lines.join('')).not.toContain('111-22-3333');
+  });
+
+  describe('canonical-leg collapse', () => {
+    const config = makeTestConfig({ DIALPAD_API_KEY: 'k' });
+
+    /** Build the fetch-transcript handler directly with an injected enqueue spy, so the drop /
+     * continue StageResult and the canonical-rescue enqueue can be asserted precisely. */
+    function collapseHandler(canonicalCallId?: string) {
+      const enqueuePipelineJob = vi.fn((_cid: string) => Promise.resolve());
+      const { client } = fakeClient(() =>
+        Promise.resolve(
+          canonicalCallId === undefined
+            ? { kind: 'ready', transcript: 'RAW BODY' }
+            : { kind: 'ready', transcript: 'RAW BODY', canonicalCallId },
+        ),
+      );
+      const handler = createFetchTranscriptHandler({
+        client,
+        keyProvider,
+        queue: fakeQueue(),
+        config,
+        rawPool: rawApp,
+        enqueuePipelineJob,
+      });
+      return { handler, enqueuePipelineJob };
+    }
+
+    const ctxFor = (callId: string): StageContext => ({
+      callId,
+      stage: 'fetch-transcript',
+      logger: createRootLogger({ level: 'silent' }),
+      pool: app,
+    });
+
+    it('continues and stores when the canonical id equals this leg id', async () => {
+      const callId = 'test-ft-canon-self';
+      await seedProcessing(callId);
+      const { handler, enqueuePipelineJob } = collapseHandler(callId);
+
+      expect(await handler(ctxFor(callId))).toEqual({ action: 'continue' });
+      expect(await getTranscript(rawApp, keyProvider, callId)).toBe('RAW BODY');
+      expect(enqueuePipelineJob).not.toHaveBeenCalled();
+    });
+
+    it('continues and stores when the canonical id is absent (fail-open)', async () => {
+      const callId = 'test-ft-canon-absent';
+      await seedProcessing(callId);
+      const { handler, enqueuePipelineJob } = collapseHandler(undefined);
+
+      expect(await handler(ctxFor(callId))).toEqual({ action: 'continue' });
+      expect(await getTranscript(rawApp, keyProvider, callId)).toBe('RAW BODY');
+      expect(enqueuePipelineJob).not.toHaveBeenCalled();
+    });
+
+    it('drops the non-canonical leg and enqueues the canonical call when it is new', async () => {
+      const callId = 'test-ft-leg-new';
+      const canonical = 'test-ft-canon-new';
+      await seedProcessing(callId);
+      const { handler, enqueuePipelineJob } = collapseHandler(canonical);
+
+      expect(await handler(ctxFor(callId))).toEqual({
+        action: 'drop',
+        reason: 'duplicate_call_leg',
+        detail: { canonical_call_id: canonical },
+      });
+      // No transcript stored for the duplicate leg, canonical enqueued exactly once.
+      expect(await countRows('raw_transcripts', callId, rawOwner)).toBe(0);
+      expect(enqueuePipelineJob).toHaveBeenCalledTimes(1);
+      expect(enqueuePipelineJob).toHaveBeenCalledWith(canonical);
+      // The canonical call was seeded into call_state so the worker will process it.
+      expect(await getCallState(app, canonical)).not.toBeNull();
+    });
+
+    it('drops the non-canonical leg and STILL enqueues an already-known canonical call', async () => {
+      const callId = 'test-ft-leg-known';
+      const canonical = 'test-ft-canon-known';
+      await seedProcessing(callId);
+      // Pre-insert the canonical row so seedCallStateIfAbsent returns false (not newly seeded);
+      // the enqueue is unconditional (idempotent jobId + terminal no-op guard), so it still fires.
+      await seedProcessing(canonical, 'metadata-pre-filter');
+      const { handler, enqueuePipelineJob } = collapseHandler(canonical);
+
+      expect(await handler(ctxFor(callId))).toEqual({
+        action: 'drop',
+        reason: 'duplicate_call_leg',
+        detail: { canonical_call_id: canonical },
+      });
+      expect(await countRows('raw_transcripts', callId, rawOwner)).toBe(0);
+      expect(enqueuePipelineJob).toHaveBeenCalledTimes(1);
+      expect(enqueuePipelineJob).toHaveBeenCalledWith(canonical);
+    });
   });
 
   describe('transcript-availability gate', () => {

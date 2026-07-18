@@ -15,12 +15,13 @@ import { createAppPool } from '../../src/db/pool.js';
  * is safe — consistent with how the sibling metadata table `key_versions` is treated.
  *
  * 019 is no longer the topmost migration — 1782864100000 (drop raw/vault from DB-A, ADR 0008
- * Move 2) + 1782864100001 (grinder_pump service_category) sit above it: down(3) rolls back those
- * two then exposes the pre-019 schema, up(3) re-applies 019 + both. (The drop's down() recreates
+ * Move 2) + 1782864100001 (grinder_pump service_category) + 1782864100002 (duplicate_call_leg
+ * drop reason) + 1782864100003 (structured_knowledge.superseded_by_call_id) sit above it: down(5)
+ * rolls back those four then exposes the pre-019 schema, up(5) re-applies 019 + all four. (The drop's down() recreates
  * raw/vault in DB-A at the
  * rolled-down state, but this test only touches kek_versions, so that is harmless.)
  */
-const ABOVE = 3;
+const ABOVE = 5;
 
 describe.skipIf(!hasTestDb)('migration 019 — kek_versions app read grant', () => {
   let owner!: Pool;

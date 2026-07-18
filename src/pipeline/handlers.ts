@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import type { KeyProvider } from '../crypto/index.js';
 import type { DialpadClient } from '../dialpad/client/index.js';
-import type { DelayedRetryQueue } from '../queue/pipeline-queue.js';
+import { type DelayedRetryQueue, enqueueCall } from '../queue/pipeline-queue.js';
 import {
   type ClassifyModelClient,
   type ExtractModelClient,
@@ -86,7 +86,10 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
   return {
     ...defaultStageHandlers,
     'metadata-pre-filter': metadataPreFilterHandler,
-    'fetch-transcript': createFetchTranscriptHandler(deps),
+    'fetch-transcript': createFetchTranscriptHandler({
+      ...deps,
+      enqueuePipelineJob: (cid: string) => enqueueCall(deps.queue, cid, deps.config),
+    }),
     'transcript-availability': createTranscriptAvailabilityHandler({
       config: deps.config,
       rawPool: deps.rawPool,

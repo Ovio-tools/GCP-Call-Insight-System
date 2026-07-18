@@ -52,8 +52,16 @@ export function createPipelineQueue(config: Config, connection: Redis): Queue<Pi
  * correct reprocessing — and `runPipeline`'s terminal no-op guard keeps a re-enqueued
  * already-completed call from re-running its stages.
  */
+/** Minimal queue surface {@link enqueueCall} needs — BullMQ's `Queue` satisfies it. Kept
+ *  structural so callers holding a narrower queue view (e.g. {@link DelayedRetryQueue}, the
+ *  fetch-transcript stage's canonical-leg safeguard) can enqueue a base job without depending
+ *  on the concrete BullMQ `Queue` type. */
+export interface EnqueueQueue {
+  add(name: string, data: PipelineJobData, opts: JobsOptions): Promise<unknown>;
+}
+
 export async function enqueueCall(
-  queue: Queue<PipelineJobData>,
+  queue: EnqueueQueue,
   callId: string,
   config: Config,
 ): Promise<void> {

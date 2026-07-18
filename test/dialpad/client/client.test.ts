@@ -50,7 +50,11 @@ describe('DialpadClient.fetchTranscript', () => {
 
     const result = await client.fetchTranscript('c-1');
 
-    expect(result).toEqual({ kind: 'ready', transcript: JSON.stringify(body) });
+    expect(result).toEqual({
+      kind: 'ready',
+      transcript: JSON.stringify(body),
+      canonicalCallId: 'c-1',
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(1);
     // The URL targets the transcripts endpoint for this call id.
     expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://dialpad.test/api/v2/transcripts/c-1');
@@ -145,6 +149,39 @@ describe('DialpadClient.fetchTranscript', () => {
     await client.fetchTranscript('c-1');
     expect(sleep).not.toHaveBeenCalled();
     expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('fetchTranscript canonicalCallId', () => {
+  it('returns the top-level call_id as a string when numeric', async () => {
+    const body = { call_id: 6643403700510720, transcript: 'hello there' };
+    const { client } = clientWith([json(body)]);
+
+    const r = await client.fetchTranscript('4591131021746176');
+
+    expect(r).toEqual({
+      kind: 'ready',
+      transcript: JSON.stringify(body),
+      canonicalCallId: '6643403700510720',
+    });
+  });
+
+  it('returns canonicalCallId verbatim when it is a string', async () => {
+    const body = { call_id: '6643403700510720', transcript: 'hi' };
+    const { client } = clientWith([json(body)]);
+
+    const r = await client.fetchTranscript('4591131021746176');
+
+    expect(r.kind === 'ready' && r.canonicalCallId).toBe('6643403700510720');
+  });
+
+  it('leaves canonicalCallId undefined when the field is absent', async () => {
+    const body = { transcript: 'no id here' };
+    const { client } = clientWith([json(body)]);
+
+    const r = await client.fetchTranscript('4591131021746176');
+
+    expect(r.kind === 'ready' && r.canonicalCallId).toBeUndefined();
   });
 });
 
@@ -263,7 +300,9 @@ describe('DialpadClient.listRecentlyConcludedCalls', () => {
   it('carries a PII-free field path in the error detail when a field type is wrong', async () => {
     // A genuinely wrong type (string where a number is required) still fails — and the detail
     // names the field path + issue code (never the value) so the failure is diagnosable.
-    const { client } = clientWith([json({ items: [{ call_id: 'c-1', duration: 'not-a-number' }] })]);
+    const { client } = clientWith([
+      json({ items: [{ call_id: 'c-1', duration: 'not-a-number' }] }),
+    ]);
     const err = await client
       .listRecentlyConcludedCalls({ since: 1000 })
       .then(() => null)

@@ -133,7 +133,8 @@ function likeParam(term: string): string {
 /** Build the shared WHERE clause + ordered params. `$1..$n` positional; no string interpolation of
  * values. */
 function buildWhere(filters: KnowledgeQueryFilters): { clause: string; params: unknown[] } {
-  const clauses: string[] = [];
+  // Superseded (duplicate-leg) rows are always hidden from the KB read model.
+  const clauses: string[] = ['superseded_by_call_id IS NULL'];
   const params: unknown[] = [];
   const add = (sql: (n: number) => string, value: unknown): void => {
     params.push(value);
@@ -250,4 +251,47 @@ export async function aggregateStructuredKnowledge(
     byCallIntent: await groupBy('call_intent'),
     byUrgency: await groupBy('urgency'),
   };
+}
+
+/** Retire a duplicate call-leg row by pointing it at the canonical call it duplicates.
+ * Idempotent: only writes a row that is not already superseded. Returns rows affected. */
+export async function setStructuredKnowledgeSuperseded(
+  q: Queryable,
+  input: { callId: string; canonicalCallId: string },
+): Promise<number> {
+  const rows = await query<{ call_id: string }>(
+    q,
+    `UPDATE structured_knowledge
+       SET superseded_by_call_id = $2
+     WHERE call_id = $1 AND call_id <> $2 AND superseded_by_call_id IS NULL
+     RETURNING call_id`,
+    [input.callId, input.canonicalCallId],
+  );
+  return rows.length;
+}
+
+/** One page of KB call_ids (newest first) that are NOT yet superseded — drives the cleanup
+ *  one-off. `cursor` is the last row of the previous page (exclusive), a COMPOSITE keyset over
+ *  `(created_at, call_id)` so rows sharing an identical `created_at` (batch inserts default to a
+ *  transaction-fixed `now()`) are never silently skipped at a page boundary. */
+export async function listKnowledgeCallIdsPage(
+  q: Queryable,
+  opts: { cursor?: { createdAt: Date; callId: string }; limit: number },
+): Promise<{ call_id: string; created_at: Date }[]> {
+  const params: unknown[] = [];
+  let where = 'superseded_by_call_id IS NULL';
+  if (opts.cursor !== undefined) {
+    params.push(opts.cursor.createdAt, opts.cursor.callId);
+    // Composite keyset matching ORDER BY (created_at DESC, call_id DESC).
+    where += ` AND (created_at < $1 OR (created_at = $1 AND call_id < $2))`;
+  }
+  params.push(opts.limit);
+  return query<{ call_id: string; created_at: Date }>(
+    q,
+    `SELECT call_id, created_at FROM structured_knowledge
+     WHERE ${where}
+     ORDER BY created_at DESC, call_id DESC
+     LIMIT $${params.length}`,
+    params,
+  );
 }

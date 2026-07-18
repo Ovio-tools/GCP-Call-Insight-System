@@ -11,7 +11,9 @@ import {
 } from './schemas.js';
 
 /** The result of a transcript fetch. `ready` carries the raw transcript body (encrypted at rest). */
-export type TranscriptResult = { kind: 'ready'; transcript: string } | { kind: 'not_ready' };
+export type TranscriptResult =
+  | { kind: 'ready'; transcript: string; canonicalCallId?: string }
+  | { kind: 'not_ready' };
 
 /** A recently-concluded call — metadata ONLY, no transcript, no PII. */
 export interface RecentCall {
@@ -254,7 +256,13 @@ export function createDialpadClient(opts: CreateDialpadClientOptions): DialpadCl
       // Store the RAW response body verbatim — the faithful "original transcript text" the
       // redaction stage will work from. It is encrypted at rest by putTranscript and is never
       // logged. (The parse above is only to decide readiness.)
-      return { kind: 'ready', transcript: text };
+      // The transcript's top-level call_id is the CANONICAL (master) id — identical across
+      // every leg of one conversation. Used downstream to collapse duplicate legs.
+      const rawCanonical = parsed.data.call_id;
+      const canonicalCallId = rawCanonical === undefined ? undefined : String(rawCanonical);
+      return canonicalCallId === undefined
+        ? { kind: 'ready', transcript: text }
+        : { kind: 'ready', transcript: text, canonicalCallId };
     },
 
     async listRecentlyConcludedCalls(o): Promise<RecentCallsPage> {
