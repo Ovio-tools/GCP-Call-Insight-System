@@ -12,13 +12,14 @@ import { makeAppPool } from './_dal.js';
  * tracking rows), and a clean down.
  *
  * With migration 019 (kek_versions app read grant), 1782864100000 (drop raw/vault from DB-A,
- * ADR 0008 Move 2), and 1782864100001 (grinder_pump service_category) stacked on top, ABOVE = 4:
- * down(4) rolls back those three then exposes the pre-018 schema, up(4) re-applies 018 + the three.
+ * ADR 0008 Move 2), 1782864100001 (grinder_pump service_category), 1782864100002 (duplicate_call_leg
+ * drop reason), and 1782864100003 (structured_knowledge.superseded_by_call_id) stacked on top, ABOVE = 6:
+ * down(6) rolls back those five then exposes the pre-018 schema, up(6) re-applies 018 + the five.
  * (The drop's down() recreates
  * raw/vault in DB-A at the rolled-down state, but this test only touches backfill tables, so that
  * is harmless.)
  */
-const ABOVE = 4;
+const ABOVE = 6;
 
 describe.skipIf(!hasTestDb)('migration 018 — backfill run status + tracking', () => {
   let owner!: Pool;

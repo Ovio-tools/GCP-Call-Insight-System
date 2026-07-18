@@ -233,10 +233,12 @@ describe.skipIf(!hasTestDb)('retention purge grants (Task 8.1, migration 013)', 
     // raw/vault from DB-A, ADR 0008 Move 2) + 019
     // (kek_versions app read grant) + 018 (backfill run status, Task 11.2) + 017 (key lifecycle,
     // Task 8.2) + 016 (labeled_examples, Task 6.3) + 015 (reprocess_requests) + 014 (reveal_raw
-    // enum) — all stacked above 013 — then 013 itself, reaching the pre-013 state where purge_role
+    // enum) + 1782864100002 (duplicate_call_leg drop reason) + 1782864100003
+    // (structured_knowledge.superseded_by_call_id) — all stacked above 013 — then 013 itself,
+    // reaching the pre-013 state where purge_role
     // can DELETE all DB-A purgeable tables again. (The drop migration's down() transiently recreates
     // raw/vault in DB-A while rolled down; this DB-A clean_transcripts check is unaffected.)
-    await migrate('down', 9);
+    await migrate('down', 11);
     expect(await runAs(pool, 'purge_role', `DELETE FROM clean_transcripts`)).toBeUndefined();
     // up: 013..019 + the drop re-applied — the column-scoped DELETE revoke is back.
     await migrate('up');
