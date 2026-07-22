@@ -27,6 +27,19 @@ describe('remediation catalog', () => {
     }
   });
 
+  it('every entry states whatBroke and likelyCause in plain language, never the raw code', () => {
+    for (const [code, entry] of Object.entries(REMEDIATION_CATALOG)) {
+      for (const text of [entry.whatBroke, entry.likelyCause]) {
+        expect(text.length, `${code} plain text present`).toBeGreaterThan(0);
+        // Plain language: a real sentence with spaces, not a SCREAMING_SNAKE code, and it
+        // never just repeats the machine code at the reader.
+        expect(text, `${code} reads as a sentence`).toMatch(/ /);
+        expect(text, `${code} not the raw code`).not.toContain(code);
+        expect(text, `${code} not shouting`).not.toMatch(/^[A-Z_]+$/);
+      }
+    }
+  });
+
   it('allows "same as immediate" as an explicit longer-term fix', () => {
     // At least one entry uses the sentinel, and the sentinel is a non-empty string.
     expect(SAME_AS_IMMEDIATE.length).toBeGreaterThan(0);

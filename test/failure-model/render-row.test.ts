@@ -69,7 +69,7 @@ describe('renderAlertEventText', () => {
       now: NOW,
     });
     expect(text).toContain('[critical] DATABASE_UNAVAILABLE');
-    expect(text).toContain('Likely root cause: DATABASE_UNAVAILABLE');
+    expect(text).toContain('Likely root cause: The database is down');
     expect(text).toContain('Postgres is unreachable');
   });
 
@@ -79,7 +79,8 @@ describe('renderAlertEventText', () => {
       { environment: 'production', now: NOW },
     );
     // Does not throw on the mismatch; renders the CATALOG root cause for the code.
-    expect(text).toContain('Likely root cause: DATABASE_UNAVAILABLE');
+    expect(text).toContain('Likely root cause: The database is down');
+    expect(text).not.toContain('Redis');
   });
 
   it('keeps a valid persisted severity override, else falls back to the default', () => {

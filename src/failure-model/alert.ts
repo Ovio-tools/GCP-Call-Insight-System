@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { type Severity } from '../db/enums.js';
 import { assertNoContentFields, isContentField } from '../logging/redaction.js';
 import { configObjectSchema } from '../config/schema.js';
-import { type CallsState, type ErrorCode, type RootCauseCategory } from './categories.js';
-import { SAME_AS_IMMEDIATE } from './catalog.js';
+import { type CallsState, type ErrorCode } from './categories.js';
+import { SAME_AS_IMMEDIATE, catalogFor } from './catalog.js';
 import { DEDUP_SCOPE_PRIORITY } from './dedup.js';
 import { type FailureFields, failureFieldsSchema } from './error.js';
 
@@ -19,8 +19,10 @@ import { type FailureFields, failureFieldsSchema } from './error.js';
 export interface FormattedAlert {
   readonly errorCode: ErrorCode;
   readonly severity: Severity;
+  /** Plain-language sentence from the catalog — never the raw code (that is `errorCode`). */
   readonly whatBroke: string;
-  readonly likelyRootCause: RootCauseCategory;
+  /** Plain-language sentence from the catalog — never the raw category code. */
+  readonly likelyRootCause: string;
   readonly impact: string;
   readonly immediateRemediation: string;
   readonly longerTermFix: string;
@@ -61,11 +63,16 @@ export function formatAlert(error: FailureFields, opts: FormatAlertOptions): For
     (key) => context[key] !== undefined && !isContentField(key),
   );
 
+  // Plain-language sentences come from the catalog (the code's single source of truth), so a
+  // reader is never shown the machine code as the explanation of itself. The raw code stays
+  // available as `errorCode` for the header/correlation.
+  const catalog = catalogFor(parsed.error_code);
+
   const formatted: FormattedAlert = {
     errorCode: parsed.error_code,
     severity: parsed.severity,
-    whatBroke: parsed.error_code,
-    likelyRootCause: parsed.root_cause_category,
+    whatBroke: catalog.whatBroke,
+    likelyRootCause: catalog.likelyCause,
     impact: parsed.impact,
     immediateRemediation: parsed.remediation_now,
     longerTermFix:
@@ -88,7 +95,7 @@ export function formatAlert(error: FailureFields, opts: FormatAlertOptions): For
 /** Render a `FormattedAlert` to a human string. Private — the only public path is via the error. */
 function renderFormatted(a: FormattedAlert): string {
   return [
-    `[${a.severity}] ${a.whatBroke} in ${a.environment} at ${a.timestamp}`,
+    `[${a.severity}] ${a.errorCode} in ${a.environment} at ${a.timestamp}`,
     `What broke: ${a.whatBroke}`,
     `Likely root cause: ${a.likelyRootCause}`,
     `Impact: ${a.impact}`,

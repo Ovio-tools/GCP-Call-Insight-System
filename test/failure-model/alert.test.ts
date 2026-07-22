@@ -40,6 +40,25 @@ describe('formatAlert', () => {
     expect(Object.keys(GOLDEN_ALERTS).sort()).toEqual([...ERROR_CODES].sort());
   });
 
+  it('renders whatBroke and likelyRootCause as plain language, keeping the code in the header', () => {
+    // Regression: the DEAD_LETTER_CREATED alert used to read "What broke: DEAD_LETTER_CREATED /
+    // Likely root cause: DEAD_LETTER_CREATED" — the code three times, meaningless to a
+    // non-technical reader. The code stays ONLY in the header line for correlation.
+    const err = sampleFailureFor('DEAD_LETTER_CREATED');
+    const text = renderAlertText(err, GOLDEN_OPTS);
+    const [header, whatBroke, likelyRootCause] = text.split('\n');
+
+    expect(header).toContain('DEAD_LETTER_CREATED');
+    expect(whatBroke).toMatch(/^What broke: /);
+    expect(whatBroke).not.toContain('DEAD_LETTER_CREATED');
+    expect(likelyRootCause).toMatch(/^Likely root cause: /);
+    expect(likelyRootCause).not.toContain('DEAD_LETTER_CREATED');
+    // The two lines say different things — cause is not a restatement of the symptom.
+    expect(whatBroke?.replace(/^What broke: /, '')).not.toBe(
+      likelyRootCause?.replace(/^Likely root cause: /, ''),
+    );
+  });
+
   it('affectedScope lists key names in the fixed priority order, never values', () => {
     const err = createFailure('DIALPAD_RATE_LIMITED', {
       processingState: 'degraded',
