@@ -21,15 +21,19 @@ const transcriptLineSchema = z
   })
   .passthrough();
 
-/** GET /transcripts/{call_id}. Supports both a `lines[]` shape and a flat `transcript` string. */
+/**
+ * GET /transcripts/{call_id}. Supports both a `lines[]` shape and a flat `transcript` string.
+ * Fields are `.nullish()`, not `.optional()`: Dialpad sends explicit `null` for empty fields
+ * (the same habit that crashed the call-list sweep — see `recentCallSchema`). null = absent.
+ */
 export const transcriptResponseSchema = z
   .object({
-    call_id: z.union([z.string(), z.number()]).optional(),
+    call_id: z.union([z.string(), z.number()]).nullish(),
     /** Explicit processing markers Dialpad may set while the AI transcript is still cooking. */
-    status: z.string().optional(),
-    state: z.string().optional(),
-    lines: z.array(transcriptLineSchema).optional(),
-    transcript: z.string().optional(),
+    status: z.string().nullish(),
+    state: z.string().nullish(),
+    lines: z.array(transcriptLineSchema).nullish(),
+    transcript: z.string().nullish(),
   })
   .passthrough();
 
@@ -54,14 +58,20 @@ export type TranscriptReadiness = 'ready' | 'not_ready' | 'unrecognized';
  *
  * - `ready`         — `lines[]` has real content, or a non-empty `transcript` string.
  * - `not_ready`     — an explicit processing marker (`status`/`state`), OR a recognised
- *                     empty-but-valid shape (`lines: []` / `transcript: ''`).
+ *                     empty-but-valid shape (`lines: []` / `transcript: ''`), OR a bare
+ *                     `{call_id}` envelope — confirmed in staging (2026-07): Dialpad answers
+ *                     200 with only a call_id for a call that never produced transcript
+ *                     content. The transcript-wait machinery bounds how long we wait for it.
  * - `unrecognized`  — none of the known transcript/not-ready fields are present.
  */
 export function classifyTranscript(parsed: TranscriptResponse): TranscriptReadiness {
-  const marker = (parsed.status ?? parsed.state ?? '').toLowerCase();
-  const hasMarker = parsed.status !== undefined || parsed.state !== undefined;
-  const lines = parsed.lines;
-  const flat = parsed.transcript;
+  // Fold explicit nulls into "absent" before classifying.
+  const status = parsed.status ?? undefined;
+  const state = parsed.state ?? undefined;
+  const marker = (status ?? state ?? '').toLowerCase();
+  const hasMarker = status !== undefined || state !== undefined;
+  const lines = parsed.lines ?? undefined;
+  const flat = parsed.transcript ?? undefined;
 
   const readyByLines =
     Array.isArray(lines) &&
@@ -72,6 +82,8 @@ export function classifyTranscript(parsed: TranscriptResponse): TranscriptReadin
   if (hasMarker && NOT_READY_MARKERS.has(marker)) return 'not_ready';
   // A recognised transcript container that is simply empty — a valid "still cooking" state.
   if (Array.isArray(lines) || typeof flat === 'string') return 'not_ready';
+  // Bare {call_id} envelope: the transcript resource exists but carries no content.
+  if (parsed.call_id != null) return 'not_ready';
 
   return 'unrecognized';
 }

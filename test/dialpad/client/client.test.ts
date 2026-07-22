@@ -134,6 +134,20 @@ describe('DialpadClient.fetchTranscript', () => {
     await expect(client.fetchTranscript('c-1')).rejects.toMatchObject({ kind: 'api_changed' });
   });
 
+  it('treats a bare {call_id} envelope as not-ready (staging 2026-07: no-transcript calls)', async () => {
+    // Dialpad returns 200 with ONLY a call_id for calls that never produced transcript
+    // content. That is "no transcript available", not an API contract change.
+    const { client } = clientWith([json({ call_id: 'c-1' })]);
+    expect(await client.fetchTranscript('c-1')).toEqual({ kind: 'not_ready' });
+  });
+
+  it('tolerates explicit null transcript fields as not-ready (Dialpad null habit)', async () => {
+    const { client } = clientWith([
+      json({ call_id: 'c-1', lines: null, transcript: null, status: null, state: null }),
+    ]);
+    expect(await client.fetchTranscript('c-1')).toEqual({ kind: 'not_ready' });
+  });
+
   it('maps non-JSON body to DIALPAD_API_CHANGED', async () => {
     const { client } = clientWith([new Response('<html>not json</html>', { status: 200 })]);
     await expect(client.fetchTranscript('c-1')).rejects.toMatchObject({ kind: 'api_changed' });

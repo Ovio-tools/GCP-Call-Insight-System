@@ -257,7 +257,7 @@ export function createDialpadClient(opts: CreateDialpadClientOptions): DialpadCl
       // logged. (The parse above is only to decide readiness.)
       // The transcript's top-level call_id is the CANONICAL (master) id — identical across
       // every leg of one conversation. Used downstream to collapse duplicate legs.
-      const rawCanonical = parsed.data.call_id;
+      const rawCanonical = parsed.data.call_id ?? undefined;
       const canonicalCallId = rawCanonical === undefined ? undefined : String(rawCanonical);
       return canonicalCallId === undefined
         ? { kind: 'ready', transcript: text }
