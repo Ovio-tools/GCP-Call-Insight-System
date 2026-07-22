@@ -10,8 +10,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   CONFIG_MISSING_OR_INVALID: {
     errorCode: 'CONFIG_MISSING_OR_INVALID',
     severity: 'high',
-    whatBroke: 'CONFIG_MISSING_OR_INVALID',
-    likelyRootCause: 'CONFIG_MISSING_OR_INVALID',
+    whatBroke: 'A service refused to start because its configuration check failed.',
+    likelyRootCause:
+      "A required setting is missing or has an invalid value in that service's environment.",
     impact:
       'A service cannot start because required configuration is missing or invalid; that component is down until it is fixed.',
     immediateRemediation:
@@ -27,8 +28,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   DATABASE_UNAVAILABLE: {
     errorCode: 'DATABASE_UNAVAILABLE',
     severity: 'critical',
-    whatBroke: 'DATABASE_UNAVAILABLE',
-    likelyRootCause: 'DATABASE_UNAVAILABLE',
+    whatBroke: 'The system could not reach its main database.',
+    likelyRootCause: 'The database is down, unreachable over the network, or refusing credentials.',
     impact:
       'Postgres is unreachable; processing is paused and jobs wait in the queue — no calls are lost.',
     immediateRemediation:
@@ -44,8 +45,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   REDIS_UNAVAILABLE: {
     errorCode: 'REDIS_UNAVAILABLE',
     severity: 'critical',
-    whatBroke: 'REDIS_UNAVAILABLE',
-    likelyRootCause: 'REDIS_UNAVAILABLE',
+    whatBroke: 'The system could not reach its job queue.',
+    likelyRootCause: 'Redis is down, unreachable over the network, or out of memory.',
     impact:
       'Redis (the job queue) is unreachable; events cannot be enqueued or consumed and processing is paused. The reconciliation cron backfills any missed calls.',
     immediateRemediation: 'Restore Redis connectivity; verify credentials and memory limits.',
@@ -60,8 +61,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   MIGRATION_FAILED: {
     errorCode: 'MIGRATION_FAILED',
     severity: 'high',
-    whatBroke: 'MIGRATION_FAILED',
-    likelyRootCause: 'MIGRATION_FAILED',
+    whatBroke: 'A database schema update failed partway through.',
+    likelyRootCause: 'The migration hit an error or unexpected existing state while applying.',
     impact:
       'A database migration failed; the schema may be partially applied and the affected service will not start.',
     immediateRemediation:
@@ -77,8 +78,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   DIALPAD_AUTH_FAILED: {
     errorCode: 'DIALPAD_AUTH_FAILED',
     severity: 'high',
-    whatBroke: 'DIALPAD_AUTH_FAILED',
-    likelyRootCause: 'DIALPAD_AUTH_FAILED',
+    whatBroke: 'Dialpad rejected our sign-in when fetching call data.',
+    likelyRootCause: 'The Dialpad API key is expired, revoked, or missing a required permission.',
     impact:
       'Dialpad API authentication failed; transcripts and call lists cannot be fetched — affected calls are held, not lost.',
     immediateRemediation:
@@ -94,8 +95,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   DIALPAD_RATE_LIMITED: {
     errorCode: 'DIALPAD_RATE_LIMITED',
     severity: 'medium',
-    whatBroke: 'DIALPAD_RATE_LIMITED',
-    likelyRootCause: 'DIALPAD_RATE_LIMITED',
+    whatBroke: 'Dialpad is temporarily refusing our requests because we sent too many.',
+    likelyRootCause: "Request volume exceeded Dialpad's rate limits.",
     impact:
       'Dialpad is rate-limiting requests; transcript fetches are delayed and retried — no calls are lost.',
     immediateRemediation:
@@ -111,8 +112,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   DIALPAD_API_CHANGED: {
     errorCode: 'DIALPAD_API_CHANGED',
     severity: 'high',
-    whatBroke: 'DIALPAD_API_CHANGED',
-    likelyRootCause: 'DIALPAD_API_CHANGED',
+    whatBroke: 'Dialpad answered a request in a format the system did not recognise.',
+    likelyRootCause:
+      'Dialpad changed its response format, or sent a rare variant our client does not handle yet.',
     impact:
       'The Dialpad API response shape changed; fetching or parsing is failing and affected calls are held for review.',
     immediateRemediation:
@@ -128,8 +130,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   DIALPAD_TRANSCRIPT_MISSING: {
     errorCode: 'DIALPAD_TRANSCRIPT_MISSING',
     severity: 'low',
-    whatBroke: 'DIALPAD_TRANSCRIPT_MISSING',
-    likelyRootCause: 'DIALPAD_TRANSCRIPT_MISSING',
+    whatBroke: "A call's transcript never became available from Dialpad.",
+    likelyRootCause:
+      'Dialpad did not produce a transcript for this call within the waiting window.',
     impact:
       'A transcript did not become available within the retry window; the call is held for review rather than guessed or dropped.',
     immediateRemediation:
@@ -145,8 +148,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   WEBHOOK_SIGNATURE_INVALID: {
     errorCode: 'WEBHOOK_SIGNATURE_INVALID',
     severity: 'medium',
-    whatBroke: 'WEBHOOK_SIGNATURE_INVALID',
-    likelyRootCause: 'WEBHOOK_SIGNATURE_INVALID',
+    whatBroke: 'An incoming webhook failed its authenticity check and was turned away.',
+    likelyRootCause: 'A mismatched signing secret, or someone other than Dialpad sending requests.',
     impact:
       'A webhook request failed signature verification and was rejected; nothing was ingested from it. Legitimate calls are still recovered by the reconciliation cron.',
     immediateRemediation:
@@ -162,8 +165,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   WEBHOOK_REPLAY_DETECTED: {
     errorCode: 'WEBHOOK_REPLAY_DETECTED',
     severity: 'low',
-    whatBroke: 'WEBHOOK_REPLAY_DETECTED',
-    likelyRootCause: 'WEBHOOK_REPLAY_DETECTED',
+    whatBroke: 'An already-processed webhook arrived a second time and was ignored.',
+    likelyRootCause: 'A network retry re-delivered the event, or someone replayed it deliberately.',
     impact:
       'A replayed webhook was detected and ignored; the original event was already processed, so there is no duplication.',
     immediateRemediation:
@@ -179,8 +182,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   REDACTION_RECALL_REGRESSION: {
     errorCode: 'REDACTION_RECALL_REGRESSION',
     severity: 'critical',
-    whatBroke: 'REDACTION_RECALL_REGRESSION',
-    likelyRootCause: 'REDACTION_RECALL_REGRESSION',
+    whatBroke:
+      'The privacy step that hides personal details started missing more than the allowed amount.',
+    likelyRootCause: 'A recent change to the redaction rules or model weakened detection.',
     impact:
       'Redaction corpus recall dropped below threshold; to protect privacy, affected calls are held and nothing is sent to the model.',
     immediateRemediation:
@@ -196,8 +200,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   REDACTION_LOW_CONFIDENCE: {
     errorCode: 'REDACTION_LOW_CONFIDENCE',
     severity: 'medium',
-    whatBroke: 'REDACTION_LOW_CONFIDENCE',
-    likelyRootCause: 'REDACTION_LOW_CONFIDENCE',
+    whatBroke: 'The system was not confident it found every personal detail in a call.',
+    likelyRootCause:
+      'The transcript contains phrasing the redaction layers could not confidently classify.',
     impact:
       'Redaction confidence for a call was too low; it is held (fail-closed) and never sent to the model.',
     immediateRemediation: 'Route the held call to human review; do not override the hold.',
@@ -212,8 +217,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   MODEL_AUTH_FAILED: {
     errorCode: 'MODEL_AUTH_FAILED',
     severity: 'high',
-    whatBroke: 'MODEL_AUTH_FAILED',
-    likelyRootCause: 'MODEL_AUTH_FAILED',
+    whatBroke: 'The AI service rejected our sign-in.',
+    likelyRootCause: 'The model API key is expired, revoked, or misconfigured.',
     impact:
       'Authentication to the model API failed; classification and extraction are paused and calls are held, not lost.',
     immediateRemediation:
@@ -229,8 +234,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   MODEL_RATE_LIMITED: {
     errorCode: 'MODEL_RATE_LIMITED',
     severity: 'medium',
-    whatBroke: 'MODEL_RATE_LIMITED',
-    likelyRootCause: 'MODEL_RATE_LIMITED',
+    whatBroke: 'The AI service is temporarily refusing our requests because we sent too many.',
+    likelyRootCause: "Request volume exceeded the model provider's rate limits.",
     impact:
       'The model API is rate-limiting; classification and extraction are delayed and retried — no calls are lost.',
     immediateRemediation: 'Back off and retry; lower concurrency if it persists.',
@@ -245,8 +250,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   MODEL_MALFORMED_RESPONSE: {
     errorCode: 'MODEL_MALFORMED_RESPONSE',
     severity: 'medium',
-    whatBroke: 'MODEL_MALFORMED_RESPONSE',
-    likelyRootCause: 'MODEL_MALFORMED_RESPONSE',
+    whatBroke: 'The AI returned an answer in the wrong format, so it was not stored.',
+    likelyRootCause: 'The model deviated from the required output format for this call.',
     impact:
       'The model returned output that failed the schema-validation gate; the record is held rather than storing malformed data.',
     immediateRemediation:
@@ -262,8 +267,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   MODEL_COST_CAP_EXCEEDED: {
     errorCode: 'MODEL_COST_CAP_EXCEEDED',
     severity: 'high',
-    whatBroke: 'MODEL_COST_CAP_EXCEEDED',
-    likelyRootCause: 'MODEL_COST_CAP_EXCEEDED',
+    whatBroke: "Today's AI spending limit was reached, so AI steps are paused for the day.",
+    likelyRootCause:
+      'Higher-than-usual call volume or unusually long calls used up the daily budget.',
     impact:
       'The daily model cost cap was reached; new model calls are paused to prevent overspend and queued calls wait.',
     immediateRemediation:
@@ -279,8 +285,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   MODEL_COST_WARNING_THRESHOLD_EXCEEDED: {
     errorCode: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
     severity: 'medium',
-    whatBroke: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
-    likelyRootCause: 'MODEL_COST_WARNING_THRESHOLD_EXCEEDED',
+    whatBroke:
+      "Today's AI spending is approaching its daily limit — an advance warning, nothing is paused yet.",
+    likelyRootCause: 'Call volume or call length is running higher than usual today.',
     impact:
       'Daily model spend crossed the warning threshold; processing continues, but the daily hard cap is approaching and will start holding calls if spend reaches it.',
     immediateRemediation:
@@ -296,8 +303,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   QUEUE_RETRY_EXHAUSTED: {
     errorCode: 'QUEUE_RETRY_EXHAUSTED',
     severity: 'high',
-    whatBroke: 'QUEUE_RETRY_EXHAUSTED',
-    likelyRootCause: 'QUEUE_RETRY_EXHAUSTED',
+    whatBroke: "A call's processing job kept failing and used up all of its retries.",
+    likelyRootCause:
+      'A persistent error in one processing step — the stored failure detail names the step and error.',
     impact:
       'A job exhausted its capped retries and stopped; the affected call is not processed until it is requeued.',
     immediateRemediation: "Inspect the job's failure, fix the root cause, and requeue the call.",
@@ -312,8 +320,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   DEAD_LETTER_CREATED: {
     errorCode: 'DEAD_LETTER_CREATED',
     severity: 'high',
-    whatBroke: 'DEAD_LETTER_CREATED',
-    likelyRootCause: 'DEAD_LETTER_CREATED',
+    whatBroke: 'A call was set aside for manual attention after its job failed every retry.',
+    likelyRootCause:
+      'A persistent error in one processing step; the parked row records which step and what failed.',
     impact:
       'A job was moved to the dead-letter queue after exhausting retries; that call is parked and needs manual attention.',
     immediateRemediation:
@@ -329,8 +338,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   RETENTION_PURGE_FAILED: {
     errorCode: 'RETENTION_PURGE_FAILED',
     severity: 'high',
-    whatBroke: 'RETENTION_PURGE_FAILED',
-    likelyRootCause: 'RETENTION_PURGE_FAILED',
+    whatBroke: 'The scheduled data-deletion job did not complete.',
+    likelyRootCause: 'A database error or lock stopped the purge run.',
     impact:
       'The retention purge job failed; data past its window may persist longer than intended — a compliance risk, not data loss.',
     immediateRemediation:
@@ -346,8 +355,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   BACKFILL_CHECKPOINT_FAILED: {
     errorCode: 'BACKFILL_CHECKPOINT_FAILED',
     severity: 'medium',
-    whatBroke: 'BACKFILL_CHECKPOINT_FAILED',
-    likelyRootCause: 'BACKFILL_CHECKPOINT_FAILED',
+    whatBroke: 'A historical-import batch failed to save its progress marker.',
+    likelyRootCause: 'A database or queue error interrupted the batch mid-run.',
     impact:
       'A backfill batch failed to checkpoint; the backfill may stall or repeat from the last good checkpoint — no data is lost.',
     immediateRemediation: 'Inspect the backfill run and resume from the last checkpoint.',
@@ -362,8 +371,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   REVIEW_QUEUE_STALLED: {
     errorCode: 'REVIEW_QUEUE_STALLED',
     severity: 'medium',
-    whatBroke: 'REVIEW_QUEUE_STALLED',
-    likelyRootCause: 'REVIEW_QUEUE_STALLED',
+    whatBroke: 'Held calls have been waiting for human review longer than the agreed time.',
+    likelyRootCause: 'No reviewer has picked up the oldest held calls in time.',
     impact:
       'Held calls in the review queue are breaching their SLA; customer follow-up may be delayed.',
     immediateRemediation: 'Assign reviewers to the oldest held calls and clear the backlog.',
@@ -378,8 +387,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   SERVICETITAN_AUTH_FAILED: {
     errorCode: 'SERVICETITAN_AUTH_FAILED',
     severity: 'high',
-    whatBroke: 'SERVICETITAN_AUTH_FAILED',
-    likelyRootCause: 'SERVICETITAN_AUTH_FAILED',
+    whatBroke: 'ServiceTitan rejected our sign-in.',
+    likelyRootCause:
+      'The ServiceTitan credentials are expired, revoked, or missing a required permission.',
     impact:
       'ServiceTitan authentication failed; job matching and write-back are paused. Call processing itself is unaffected.',
     immediateRemediation: 'Refresh ServiceTitan credentials and verify the required scopes.',
@@ -394,8 +404,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   SERVICETITAN_MATCH_WEAK: {
     errorCode: 'SERVICETITAN_MATCH_WEAK',
     severity: 'low',
-    whatBroke: 'SERVICETITAN_MATCH_WEAK',
-    likelyRootCause: 'SERVICETITAN_MATCH_WEAK',
+    whatBroke: 'A call could not be confidently matched to a ServiceTitan job.',
+    likelyRootCause:
+      'The phone number or name did not line up strongly enough with any ServiceTitan record.',
     impact:
       'A ServiceTitan match was too weak to trust; the call is held for review and nothing is written back rather than guessed.',
     immediateRemediation:
@@ -411,8 +422,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   SERVICETITAN_WRITE_FAILED: {
     errorCode: 'SERVICETITAN_WRITE_FAILED',
     severity: 'medium',
-    whatBroke: 'SERVICETITAN_WRITE_FAILED',
-    likelyRootCause: 'SERVICETITAN_WRITE_FAILED',
+    whatBroke: 'Saving a record into ServiceTitan failed.',
+    likelyRootCause: 'ServiceTitan was unavailable or rejected the write.',
     impact:
       'A ServiceTitan write-back failed; the structured record is safe in our store but not yet reflected in ServiceTitan.',
     immediateRemediation:
@@ -428,8 +439,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   REQUEST_BODY_TOO_LARGE: {
     errorCode: 'REQUEST_BODY_TOO_LARGE',
     severity: 'low',
-    whatBroke: 'REQUEST_BODY_TOO_LARGE',
-    likelyRootCause: 'REQUEST_BODY_TOO_LARGE',
+    whatBroke: 'An incoming request was bigger than allowed and was turned away.',
+    likelyRootCause:
+      'A caller sent an oversized payload — a misconfigured sender or an abuse attempt.',
     impact:
       'A request body exceeded the configured size limit and was rejected before parsing; nothing was ingested from it.',
     immediateRemediation:
@@ -445,8 +457,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   REQUEST_MALFORMED: {
     errorCode: 'REQUEST_MALFORMED',
     severity: 'low',
-    whatBroke: 'REQUEST_MALFORMED',
-    likelyRootCause: 'REQUEST_MALFORMED',
+    whatBroke: 'An incoming request could not be read and was turned away.',
+    likelyRootCause: 'The caller sent a body that is not valid JSON.',
     impact:
       'A request body could not be parsed (malformed JSON) and was rejected; nothing was ingested from it.',
     immediateRemediation:
@@ -462,8 +474,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   UNSUPPORTED_MEDIA_TYPE: {
     errorCode: 'UNSUPPORTED_MEDIA_TYPE',
     severity: 'low',
-    whatBroke: 'UNSUPPORTED_MEDIA_TYPE',
-    likelyRootCause: 'UNSUPPORTED_MEDIA_TYPE',
+    whatBroke: 'An incoming request used a content format we do not accept and was turned away.',
+    likelyRootCause: 'The caller sent the wrong Content-Type header.',
     impact:
       'A request used an unsupported content type and was rejected; only the documented content types are accepted.',
     immediateRemediation:
@@ -479,8 +491,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   RATE_LIMIT_EXCEEDED: {
     errorCode: 'RATE_LIMIT_EXCEEDED',
     severity: 'low',
-    whatBroke: 'RATE_LIMIT_EXCEEDED',
-    likelyRootCause: 'RATE_LIMIT_EXCEEDED',
+    whatBroke: 'One caller sent requests faster than allowed and is being slowed down.',
+    likelyRootCause: 'A burst from a single source — a misbehaving client or an abuse attempt.',
     impact:
       'A source exceeded the request-rate limit and is being throttled; its requests are rejected until the window resets. No data is lost.',
     immediateRemediation:
@@ -496,8 +508,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   AUTH_REQUIRED: {
     errorCode: 'AUTH_REQUIRED',
     severity: 'low',
-    whatBroke: 'AUTH_REQUIRED',
-    likelyRootCause: 'AUTH_REQUIRED',
+    whatBroke: 'A request without a valid login tried to reach an internal page and was refused.',
+    likelyRootCause: 'A signed-out visitor, an expired session, or a misconfigured login flow.',
     impact:
       'An unauthenticated request to an internal surface was refused; no protected data was exposed.',
     immediateRemediation:
@@ -510,28 +522,11 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     environment: 'staging',
     affectedScope: ['component', 'environment'],
   },
-  AUTH_FORBIDDEN: {
-    errorCode: 'AUTH_FORBIDDEN',
-    severity: 'low',
-    whatBroke: 'AUTH_FORBIDDEN',
-    likelyRootCause: 'AUTH_FORBIDDEN',
-    impact:
-      'An authenticated request was refused because the session lacked the required elevated role; no protected data was exposed.',
-    immediateRemediation:
-      'Grant the reviewer the required elevated role, or confirm the action legitimately needs elevation; if valid elevated sessions are being rejected, check the role configuration.',
-    longerTermFix: 'Same as the immediate step.',
-    dataSafe: true,
-    callsState: 'none',
-    runbookRef: 'runbook#auth-forbidden',
-    timestamp: '2026-01-01T00:00:00.000Z',
-    environment: 'staging',
-    affectedScope: ['component', 'environment'],
-  },
   CSRF_TOKEN_INVALID: {
     errorCode: 'CSRF_TOKEN_INVALID',
     severity: 'low',
-    whatBroke: 'CSRF_TOKEN_INVALID',
-    likelyRootCause: 'CSRF_TOKEN_INVALID',
+    whatBroke: 'A change request from an internal page failed its forgery check and was refused.',
+    likelyRootCause: 'A stale page or expired token — or a forged cross-site request.',
     impact:
       'A state-changing internal request was refused because its CSRF token was missing or invalid; no change was made.',
     immediateRemediation:
@@ -547,8 +542,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   WEBHOOK_TIMESTAMP_INVALID: {
     errorCode: 'WEBHOOK_TIMESTAMP_INVALID',
     severity: 'low',
-    whatBroke: 'WEBHOOK_TIMESTAMP_INVALID',
-    likelyRootCause: 'WEBHOOK_TIMESTAMP_INVALID',
+    whatBroke: 'An incoming webhook was dated too far in the past or future and was turned away.',
+    likelyRootCause: 'Clock drift at the sender, a late delivery, or a replayed request.',
     impact:
       'A webhook was rejected because its timestamp was outside the allowed freshness window (stale or future); nothing was ingested. Legitimate calls are still recovered by the reconciliation cron.',
     immediateRemediation:
@@ -565,8 +560,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   INTERNAL_ERROR: {
     errorCode: 'INTERNAL_ERROR',
     severity: 'high',
-    whatBroke: 'INTERNAL_ERROR',
-    likelyRootCause: 'INTERNAL_ERROR',
+    whatBroke: 'A web request hit an unexpected error and could not be completed.',
+    likelyRootCause: 'An unhandled error inside the service — the logs carry the detail.',
     impact:
       'An HTTP surface hit an unexpected error and returned a generic failure; the request did not complete. The error detail is in the logs, never in the response.',
     immediateRemediation:
@@ -579,11 +574,30 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
     environment: 'staging',
     affectedScope: ['component', 'environment'],
   },
+  AUTH_FORBIDDEN: {
+    errorCode: 'AUTH_FORBIDDEN',
+    severity: 'low',
+    whatBroke: 'A signed-in user tried an action their role does not allow and was refused.',
+    likelyRootCause: 'The session lacks the elevated role this action requires.',
+    impact:
+      'An authenticated request was refused because the session lacked the required elevated role; no protected data was exposed.',
+    immediateRemediation:
+      'Grant the reviewer the required elevated role, or confirm the action legitimately needs elevation; if valid elevated sessions are being rejected, check the role configuration.',
+    longerTermFix: 'Same as the immediate step.',
+    dataSafe: true,
+    callsState: 'none',
+    runbookRef: 'runbook#auth-forbidden',
+    timestamp: '2026-01-01T00:00:00.000Z',
+    environment: 'staging',
+    affectedScope: ['component', 'environment'],
+  },
   VERBATIM_PII_DETECTED: {
     errorCode: 'VERBATIM_PII_DETECTED',
     severity: 'high',
-    whatBroke: 'VERBATIM_PII_DETECTED',
-    likelyRootCause: 'VERBATIM_PII_DETECTED',
+    whatBroke:
+      'A personal detail may have slipped into a quote the AI pulled from a call; the quote was stopped before being stored.',
+    likelyRootCause:
+      'The earlier privacy step likely missed the detail, or the AI chose a risky quote.',
     impact:
       'Possible residual PII was detected in an extracted verbatim marketing phrase; the phrase is held and scrubbed rather than stored in structured_knowledge or exported, and the call needs review — likely a redaction recall gap or the extractor selecting risky text.',
     immediateRemediation:
@@ -600,8 +614,9 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   KEY_ROTATION_FAILED: {
     errorCode: 'KEY_ROTATION_FAILED',
     severity: 'critical',
-    whatBroke: 'KEY_ROTATION_FAILED',
-    likelyRootCause: 'KEY_ROTATION_FAILED',
+    whatBroke: 'A scheduled encryption-key change stopped partway through.',
+    likelyRootCause:
+      'An error during re-encryption or key storage aborted the rotation before it finished.',
     impact:
       'A key rotation aborted before old ciphertext was re-encrypted and the old key destroyed. Data is safe and readable; the crypto-shred promise for the old key is not yet met.',
     immediateRemediation:
@@ -618,8 +633,8 @@ export const GOLDEN_ALERTS: Record<ErrorCode, FormattedAlert> = {
   KEY_REVOCATION_FAILED: {
     errorCode: 'KEY_REVOCATION_FAILED',
     severity: 'critical',
-    whatBroke: 'KEY_REVOCATION_FAILED',
-    likelyRootCause: 'KEY_REVOCATION_FAILED',
+    whatBroke: 'An emergency destruction of an encryption key did not complete.',
+    likelyRootCause: 'The key store could not confirm the old key material is unrecoverable.',
     impact:
       'An emergency DEK/KEK revocation aborted before the external material was confirmed unrecoverable. Rows under the target key may still be readable in the live DB and in backups.',
     immediateRemediation:

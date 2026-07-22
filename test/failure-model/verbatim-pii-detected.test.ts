@@ -28,9 +28,12 @@ describe('VERBATIM_PII_DETECTED', () => {
   it('renders the complete plain-language alert contract', () => {
     const formatted = formatAlert(verbatimPiiFailure(), GOLDEN_OPTS);
 
-    // What broke / likely root cause (1:1 category).
-    expect(formatted.whatBroke).toBe('VERBATIM_PII_DETECTED');
-    expect(formatted.likelyRootCause).toBe('VERBATIM_PII_DETECTED');
+    // What broke / likely root cause: plain language, the raw code only in errorCode.
+    expect(formatted.errorCode).toBe('VERBATIM_PII_DETECTED');
+    expect(formatted.whatBroke).not.toContain('VERBATIM_PII_DETECTED');
+    expect(formatted.whatBroke.length).toBeGreaterThan(0);
+    expect(formatted.likelyRootCause).not.toContain('VERBATIM_PII_DETECTED');
+    expect(formatted.likelyRootCause.length).toBeGreaterThan(0);
     // Impact, immediate remediation, longer-term fix — all real text.
     expect(formatted.impact.length).toBeGreaterThan(0);
     expect(formatted.immediateRemediation.length).toBeGreaterThan(0);
