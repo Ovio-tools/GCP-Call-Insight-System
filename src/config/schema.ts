@@ -357,16 +357,16 @@ export const configObjectSchema = z.object({
   /**
    * Minimum call duration (ms) that can plausibly contain a conversation. A call at or below
    * this is dropped by the metadata pre-filter with `below_minimum_duration` — set aside
-   * quietly, never queued for a person — because a sub-second connection produces no
+   * quietly, never queued for a person — because a connection this brief produces no
    * transcript and holding it only manufactures unactionable review work.
    *
-   * Default 1000 ms (one second) is deliberately far below the observed floor: in the live
-   * corpus the SHORTEST call ever to complete the pipeline was 28,490 ms, and of the twelve
-   * calls under 10 s that ever passed this filter, ZERO produced a stored record. Raising it
-   * (5000 is still a ~5.7x margin) drops more junk; `0` restores the old zero-only behaviour.
-   * Kept conservative on purpose — this filter's contract is to under-drop, never mis-drop.
+   * Default 5000 ms (five seconds) still sits far below the observed floor: in the live corpus
+   * the SHORTEST call ever to complete the pipeline was 28,490 ms — a ~5.7x margin — and of
+   * the twelve calls under 10 s that ever passed this filter, ZERO produced a stored record.
+   * `0` restores the old zero-duration-only behaviour. Raise it further only against fresh
+   * evidence: this filter's contract is to under-drop, never mis-drop a real call.
    */
-  PREFILTER_MIN_DURATION_MS: z.coerce.number().int().nonnegative().default(1000),
+  PREFILTER_MIN_DURATION_MS: z.coerce.number().int().nonnegative().default(5000),
 
   // --- Reconciliation cron (Task 3.4) ---
 

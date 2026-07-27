@@ -187,7 +187,7 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
   `processing_log` row, and stops the pipeline before fetch-transcript. The call and its
   metadata are never deleted. Fails safe: anything missing, unknown, or ambiguous passes.
   `below_minimum_duration` is the ONE tunable rule (`PREFILTER_MIN_DURATION_MS`, default
-  1000 ms; Dialpad reports duration in MILLISECONDS): a call too short to hold a conversation
+  5000 ms; Dialpad reports duration in MILLISECONDS): a call too short to hold a conversation
   yields no transcript, so passing it through would only manufacture an unactionable
   `missing_transcript` hold. It is evaluated AFTER the zero-duration and call-state rules, so a
   reported FACT always beats this tunable judgement.
