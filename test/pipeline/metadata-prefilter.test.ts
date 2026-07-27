@@ -143,9 +143,9 @@ describe('evaluateMetadata minimum-duration rule', () => {
   });
 
   it('is disabled by an explicit zero threshold', () => {
-    expect(evaluateMetadata(CALL, { duration: 400, state: 'hangup' }, { minDurationMs: 0 })).toEqual(
-      { action: 'pass' },
-    );
+    expect(
+      evaluateMetadata(CALL, { duration: 400, state: 'hangup' }, { minDurationMs: 0 }),
+    ).toEqual({ action: 'pass' });
   });
 
   it('keeps zero_duration for a call that never connected (the more specific reason wins)', () => {

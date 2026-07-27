@@ -2,7 +2,10 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import { query, withTransaction } from '../db/sql.js';
-import { acknowledgeAlert, acknowledgeAlertsForCall } from '../db/repositories/alert-events-repo.js';
+import {
+  acknowledgeAlert,
+  acknowledgeAlertsForCall,
+} from '../db/repositories/alert-events-repo.js';
 import { recordOperatorAction } from '../db/repositories/operator-actions-repo.js';
 import { markUnresolvableByReviewId } from '../db/repositories/review-queue-repo.js';
 import { reviewStalledDedupKey } from './sla.js';

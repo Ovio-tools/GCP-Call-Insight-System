@@ -213,7 +213,10 @@ describe.skipIf(!hasTestDb)('abandonUnfixableTranscriptHolds', () => {
 
     const result = await abandonUnfixableTranscriptHolds(
       app,
-      makeTestConfig({ TRANSCRIPT_ABANDON_ENABLED: false, TRANSCRIPT_ABANDON_AFTER_MS: 86_400_000 }),
+      makeTestConfig({
+        TRANSCRIPT_ABANDON_ENABLED: false,
+        TRANSCRIPT_ABANDON_AFTER_MS: 86_400_000,
+      }),
       logger,
       NOW,
       {

@@ -17,10 +17,7 @@ import {
 import { createClassifyHandler } from './classify/handler.js';
 import { createExtractHandler } from './extract/handler.js';
 import { createVerbatimPiiScanHandler } from './verbatim-pii-scan.js';
-import {
-  createMetadataPreFilterHandler,
-  metadataPreFilterHandler,
-} from './metadata-prefilter.js';
+import { createMetadataPreFilterHandler, metadataPreFilterHandler } from './metadata-prefilter.js';
 import { createRedactionHandler } from './redact.js';
 import { storeHandler } from './store.js';
 import { createMarkRetentionEligibleHandler } from './mark-retention-eligible.js';
