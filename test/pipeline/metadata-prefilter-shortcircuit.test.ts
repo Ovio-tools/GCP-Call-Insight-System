@@ -3,7 +3,10 @@ import type { Pool } from 'pg';
 import { createRootLogger } from '../../src/logging/logger.js';
 import { runPipeline } from '../_run-pipeline.js';
 import { defaultStageHandlers, type StageHandlers } from '../../src/pipeline/stages.js';
-import { metadataPreFilterHandler } from '../../src/pipeline/metadata-prefilter.js';
+import {
+  createMetadataPreFilterHandler,
+  metadataPreFilterHandler,
+} from '../../src/pipeline/metadata-prefilter.js';
 import { getCallState, upsertCallState } from '../../src/db/repositories/call-state-repo.js';
 import { listByCall } from '../../src/db/repositories/processing-log-repo.js';
 import { hasTestDb, makePool, migrate } from '../db/_pg.js';
@@ -90,6 +93,37 @@ describe.skipIf(!hasTestDb)('metadata pre-filter short-circuit', () => {
 
     expect((await listByCall(app, callId)).length).toBe(before);
     expect(fetchCalls).toBe(0);
+  });
+
+  it('drops a sub-threshold call as below_minimum_duration, never reaching fetch-transcript', async () => {
+    // The whole point of the rule: a 400 ms connection can never produce a transcript, so it
+    // must be set aside here rather than surface later as an unactionable missing_transcript
+    // hold. Exercises the real drop_reason CHECK too — the value must survive the write.
+    const callId = 'test-mpf-tooshort';
+    await seed(callId, { duration: 400, direction: 'inbound', state: 'hangup' });
+
+    await runPipeline(app, callId, logger, {
+      ...handlers,
+      'metadata-pre-filter': createMetadataPreFilterHandler({ minDurationMs: 1000 }),
+    });
+
+    const state = await getCallState(app, callId);
+    expect(state?.status).toBe('skipped');
+    expect(state?.drop_reason).toBe('below_minimum_duration');
+    expect(state?.current_stage).toBe('metadata-pre-filter');
+    expect(fetchCalls).toBe(0);
+  });
+
+  it('leaves that same call alone when the threshold is not configured', async () => {
+    const callId = 'test-mpf-tooshort-off';
+    await seed(callId, { duration: 400, direction: 'inbound', state: 'hangup' });
+
+    await runPipeline(app, callId, logger, handlers);
+
+    const state = await getCallState(app, callId);
+    expect(state?.status).toBe('completed');
+    expect(state?.drop_reason).toBeNull();
+    expect(fetchCalls).toBe(1);
   });
 
   it('throws on a corrupt skipped row (skipped status at a non-skip stage)', async () => {

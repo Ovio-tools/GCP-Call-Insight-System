@@ -219,16 +219,17 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
       );
 
       // Re-run migration 013 → its forward-only backfill stamps clean/findings/webhook/match_keys.
-      // down 11 rolls back 1782864100003 (structured_knowledge.superseded_by_call_id) +
+      // down 12 rolls back 1782864100004 (below_minimum_duration drop reason) +
+      // 1782864100003 (structured_knowledge.superseded_by_call_id) +
       // 1782864100002 (duplicate_call_leg drop reason) + 1782864100001 (grinder_pump
       // service_category) + 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) + 019
       // (kek_versions app read grant) + 018 (backfill run status, Task 11.2) + 017 (key lifecycle,
       // Task 8.2) + 016 (labeled_examples, Task 6.3) + 015 (reprocess_requests) + 014 (reveal_raw
-      // enum) — all stacked above 013 — then 013 itself; the following `up` re-applies all eleven,
+      // enum) — all stacked above 013 — then 013 itself; the following `up` re-applies all twelve,
       // re-running 013's backfill. (The drop migration's down() transiently recreates raw/vault in
       // DB-A while rolled down, but 013's backfill never touches raw, and the drop re-applies on the
       // way up, so DB-A ends with no raw_transcripts.)
-      await migrate('down', 11);
+      await migrate('down', 12);
       await migrate('up');
 
       expect(await cleanEligibleAt('test-elig-bf')).not.toBeNull();

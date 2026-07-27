@@ -13,8 +13,9 @@ import { TEST_DATABASE_URL } from './_pg.js';
  * With migrations 018 (backfill run status, Task 11.2), 019 (kek_versions app read grant), and
  * 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) + 1782864100001 (grinder_pump
  * service_category) + 1782864100002 (duplicate_call_leg drop reason) + 1782864100003
- * (structured_knowledge.superseded_by_call_id) stacked on top, ABOVE = 7: `down(7)`
- * rolls back those six + 018 then exposes the pre-017 schema, `up(7)`
+ * (structured_knowledge.superseded_by_call_id) and 1782864100004 (below_minimum_duration drop reason)
+ * stacked on top, ABOVE = 8: `down(8)`
+ * rolls back those seven + 018 then exposes the pre-017 schema, `up(8)`
  * re-applies 017 (re-running its preflight) + 018 + the six. Crucially, the
  * drop migration's `down()`
  * RECREATES raw_transcripts + token_vault in DB-A, so at the rolled-down state (below 017) those
@@ -31,7 +32,7 @@ import { TEST_DATABASE_URL } from './_pg.js';
  * too, so a `pg_roles` existence check is topology-dependent; an ACL-grant check is 0 in both the
  * shared-local and separate-CI-cluster topologies and is not flaky under concurrent role drops.)
  */
-const ABOVE = 7;
+const ABOVE = 8;
 
 describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
   let owner!: Pool;

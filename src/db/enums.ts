@@ -54,6 +54,11 @@ export const HELD_REASON = [
  * non-customer outcome must carry a controlled `call_state.drop_reason` and no
  * pre-existing value fits — it is a classifier judgment, not a metadata pre-filter
  * signal (direction, duration, call state, related-call graph).
+ *
+ * `below_minimum_duration`: a call too short to hold a conversation
+ * (`PREFILTER_MIN_DURATION_MS`). Kept lexically distinct from `zero_duration` because the
+ * two answer different operator questions — "the call never connected" versus "the call
+ * connected but nobody spoke" — and only the latter is a tunable policy.
  */
 export const DROP_REASONS = [
   'zero_duration',
@@ -62,6 +67,7 @@ export const DROP_REASONS = [
   'internal_transfer_non_operator_leg',
   'classified_non_customer',
   'duplicate_call_leg',
+  'below_minimum_duration',
 ] as const;
 
 export const REVIEW_STATUS = ['open', 'in_review', 'resolved', 'unresolvable'] as const;

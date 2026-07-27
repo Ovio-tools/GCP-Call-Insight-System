@@ -22,11 +22,12 @@ describe.skipIf(!hasTestDb)('migration 6 precondition (pre-existing skipped rows
   // (key lifecycle, Task 8.2), 18 (backfill run status, Task 11.2), 19 (kek_versions app read
   // grant), 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2), 1782864100001
   // (grinder_pump service_category), 1782864100002 (duplicate_call_leg drop reason), and
-  // 1782864100003 (structured_knowledge.superseded_by_call_id) sit above 6, so we roll
+  // 1782864100003 (structured_knowledge.superseded_by_call_id) and
+  // 1782864100004 (below_minimum_duration drop reason) sit above 6, so we roll
   // back 18 migrations to reach the pre-6 schema. (The drop migration's down() recreates
   // raw_transcripts+token_vault in DB-A at the rolled-down state, but this test only touches
   // call_state, so that is harmless here.)
-  const MIGRATIONS_ABOVE_6 = 18;
+  const MIGRATIONS_ABOVE_6 = 19;
 
   it('fails loudly if a skipped call_state row pre-exists', async () => {
     const callId = 'test-drop-preexisting-skipped';
