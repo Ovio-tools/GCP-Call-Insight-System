@@ -1,4 +1,4 @@
-import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY } from '../db/enums.js';
+import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY, type Urgency } from '../db/enums.js';
 import type { KnowledgeFilters, KnowledgeRecord, KnowledgeView } from './dto.js';
 import { humanizeLabel } from './summary.js';
 import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
@@ -58,6 +58,18 @@ function filterQuery(filters: KnowledgeFilters): string {
   return s ? `?${s}` : '';
 }
 
+/** How many filters the user actually set — drives the mobile summary bar's label and open state. */
+function activeFilterCount(filters: KnowledgeFilters): number {
+  return [
+    filters.q,
+    filters.service_category,
+    filters.call_intent,
+    filters.urgency,
+    filters.from,
+    filters.to,
+  ].filter((v) => v !== undefined && v !== '').length;
+}
+
 /** A `<select>` with an "any" option plus the enum values, humanized. */
 function selectField(
   name: string,
@@ -94,6 +106,90 @@ function rowHtml(r: KnowledgeRecord): string {
     `<td>${cell(r.customer_language)}</td>` +
     `<td>${cell(r.concerns)}</td>` +
     `</tr>`
+  );
+}
+
+/** Urgency → theme-token pill class, built once from the `Urgency` union so the compiler enforces
+ *  that every enum member has a mapping (`satisfies Record<Urgency, string>`). The `.get` fallback
+ *  stays as a runtime safety net for a row written under a schema version before a mapping existed
+ *  — not because the map itself is partial. */
+const URGENCY_PILL = new Map<string, string>(
+  Object.entries({
+    emergency: 'u-emergency',
+    urgent: 'u-urgent',
+    routine: 'u-routine',
+  } satisfies Record<Urgency, string>),
+);
+
+function urgencyPill(urgency: string): string {
+  const cls = URGENCY_PILL.get(urgency) ?? 'u-other';
+  return `<span class="kb-urgency ${cls}">${esc(humanizeLabel(urgency))}</span>`;
+}
+
+/** One labelled block inside a card's expander. Returns '' for a null scalar, a blank or
+ *  whitespace-only string, or an array with no non-blank elements, so an absent (or
+ *  effectively-absent) field never costs a blank row or an empty chip. */
+function detailBlock(label: string, value: string | readonly string[] | null): string {
+  if (value === null) return '';
+  if (Array.isArray(value)) {
+    // Re-typed explicitly: `Array.isArray` narrowing a `readonly string[] | string` union leaves
+    // TS unable to resolve element types on further chaining (`.filter`/`.map`), same gotcha noted
+    // for `cell()` above — an explicit annotation, not a cast, restores a clean `readonly string[]`.
+    const arr: readonly string[] = value;
+    const populated = arr.filter((v) => v.trim().length > 0);
+    if (populated.length === 0) return '';
+    const chips = populated.map((v) => `<span class="kb-chip">${esc(v)}</span>`).join('');
+    return `<div class="kb-field"><dt>${esc(label)}</dt><dd>${chips}</dd></div>`;
+  }
+  const text = String(value);
+  if (text.trim().length === 0) return '';
+  return `<div class="kb-field"><dt>${esc(label)}</dt><dd>${esc(text)}</dd></div>`;
+}
+
+/**
+ * One record as a mobile card: a collapsed summary (time, urgency, category/intent, problem) plus a
+ * native `<details>` expander carrying everything else — including the five fields the desktop table
+ * has no column for. When every expandable field is empty the expander is omitted entirely and the
+ * call id falls back to a plain line, so no card offers a "More details" that reveals nothing.
+ */
+function cardHtml(r: KnowledgeRecord): string {
+  const blocks =
+    detailBlock('Symptoms', r.symptoms) +
+    detailBlock('They said', r.customer_language) +
+    detailBlock('Concerns', r.concerns) +
+    detailBlock('Where in the home', r.location_in_home) +
+    detailBlock('Access / scheduling', r.access_or_scheduling_notes) +
+    detailBlock('Already tried', r.prior_attempts) +
+    detailBlock('Competitors mentioned', r.competitor_mentions) +
+    detailBlock('Heard about us via', r.acquisition_source);
+
+  const callIdField =
+    `<div class="kb-field"><dt>Call</dt>` +
+    `<dd class="mono" title="${esc(r.call_id)}">${esc(r.call_id)}</dd></div>`;
+  const more = blocks
+    ? `<details class="kb-more"><summary>More details</summary>` +
+      `<dl class="kb-fields">${blocks}${callIdField}</dl></details>`
+    : `<p class="kb-callid mono" title="${esc(r.call_id)}">${esc(r.call_id)}</p>`;
+
+  const problem = r.problem_statement?.trim()
+    ? `<p class="kb-problem">${esc(r.problem_statement)}</p>`
+    : `<p class="kb-problem kb-empty">No problem statement recorded.</p>`;
+
+  // Identifying, not a bare timestamp the <time> element right below it would only repeat: a
+  // screen reader landing on the card by article role hears what call it is before anything else.
+  const cardLabel =
+    `${humanizeLabel(r.urgency)} ${humanizeLabel(r.service_category)} call, ` +
+    fmtCreatedCt(r.created_at);
+
+  return (
+    `<article class="kb-card" aria-label="${esc(cardLabel)}">` +
+    `<div class="kb-card-head"><time datetime="${esc(r.created_at)}">${esc(fmtCreatedCt(r.created_at))}</time>` +
+    `${urgencyPill(r.urgency)}</div>` +
+    `<p class="kb-meta">${esc(humanizeLabel(r.service_category))} &middot; ` +
+    `${esc(humanizeLabel(r.call_intent))}</p>` +
+    problem +
+    more +
+    `</article>`
   );
 }
 
@@ -139,6 +235,76 @@ th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(
 tbody tr:hover { background: var(--panel-2); }
 .pager { margin: 12px 0; display: flex; gap: 12px; align-items: center; }
 .foot { margin-top: 24px; font-size: 0.8rem; color: var(--muted); }
+/* ---- Mobile card list. Hidden at desktop widths; the media query in Task 2 reveals it. ---- */
+.kb-cards { display: none; }
+.kb-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px; margin: 0 0 12px; }
+.kb-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.kb-card-head time { color: var(--muted); font-size: 0.78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.kb-urgency { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap; }
+.kb-urgency.u-emergency { background: var(--bad-bg); color: var(--bad-fg); }
+.kb-urgency.u-urgent { background: var(--warn-bg); color: var(--warn-fg); }
+.kb-urgency.u-routine { background: var(--ok-bg); color: var(--ok-fg); }
+.kb-urgency.u-other { background: var(--panel-3); color: var(--muted); }
+.kb-meta { margin: 8px 0 0; font-weight: 600; font-size: 0.95rem; }
+.kb-problem { margin: 8px 0 0; font-size: 0.95rem; overflow-wrap: break-word; }
+.kb-problem.kb-empty { color: var(--muted); font-style: italic; }
+.kb-more { margin: 10px 0 0; border-top: 1px solid var(--border); padding-top: 4px; }
+.kb-more > summary { cursor: pointer; min-height: 44px; padding: 12px 0; display: list-item;
+  list-style-position: inside; color: var(--accent); font-size: 0.85rem; }
+.kb-fields { margin: 4px 0 0; }
+.kb-field { margin: 0 0 10px; }
+.kb-field dt { color: var(--muted); font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.05em; }
+.kb-field dd { margin: 3px 0 0; font-size: 0.9rem; overflow-wrap: break-word; }
+.kb-chip { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 8px; margin: 0 6px 6px 0; font-size: 0.85rem; }
+.kb-callid { margin: 10px 0 0; color: var(--muted); font-size: 0.8rem; }
+.kb-filters-mobile { display: none; }
+.kb-filters-mobile > summary { cursor: pointer; min-height: 44px; padding: 12px 14px;
+  display: list-item; list-style-position: inside; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius); font-weight: 600;
+  font-size: 0.9rem; }
+.kb-filters-mobile[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.kb-pager-bottom { display: none; }
+/* ---- Below 900px the nine-column table cannot give its four free-text columns a readable
+   measure (the five pinned columns alone total 628px), so the card list takes over. ---- */
+@media (max-width: 899px) {
+  /* 640px, not just 100%: without a cap this stylesheet is a PHONE layout applied to any viewport
+     under 900px, including a portrait tablet — an 880px screen would otherwise stack six full-bleed,
+     ~856px-wide filter controls and stretch a card's timestamp/urgency pair to opposite edges of an
+     ~856px row. main already centers with margin: 0 auto, so capping it here gives a tablet a
+     conventional, centred phone-width column instead. (No env(safe-area-inset-*): the viewport meta
+     never sets viewport-fit=cover, so those resolve to 0 and a max() around them was dead code.) */
+  main { max-width: 640px; padding: 12px 12px 24px; }
+  .kb-cards { display: block; }
+  .table-wrap { display: none; }
+  h1 { font-size: 1.25rem; }
+  .kb-filters-desktop { display: none; }
+  .kb-filters-mobile { display: block; }
+  /* Everything below is scoped under .kb-filters-mobile because both rules assume the form is the
+     one embedded in the mobile disclosure, not any other use of form.filters: border-top: 0 plus
+     the two zeroed top radii assume an attached summary bar directly above (pairing with the [open]
+     rule that squares off the summary's own bottom corners, so the bar and form read as one
+     continuous panel), and hiding .filters-label assumes the summary bar already said "Filters"
+     immediately above it. */
+  .kb-filters-mobile form.filters { flex-direction: column; align-items: stretch; border-top: 0;
+    border-top-left-radius: 0; border-top-right-radius: 0; }
+  .kb-filters-mobile form.filters label { width: 100%; }
+  .kb-filters-mobile form.filters input, .kb-filters-mobile form.filters select,
+  .kb-filters-mobile form.filters button { width: 100%; min-width: 0;
+    min-height: 44px; font-size: 16px; }
+  .kb-filters-mobile .filters-label { display: none; }
+  .kb-pager-bottom { display: flex; }
+  .pager { flex-wrap: wrap; gap: 8px; }
+  .pager a, .exports a { min-height: 44px; display: inline-flex; align-items: center;
+    padding: 0 16px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel-2); text-decoration: none; }
+  .exports { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+}
 `;
 
 export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): string {
@@ -159,6 +325,14 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     `<button type="submit">Search</button>` +
     `</form>`;
 
+  const activeCount = activeFilterCount(f);
+  const filtersSummary =
+    activeCount === 0 ? 'Filters' : `Filters &middot; ${esc(String(activeCount))} active`;
+  const filtersBlock =
+    `<div class="kb-filters-desktop">${form}</div>` +
+    `<details class="kb-filters-mobile"${activeCount > 0 ? ' open' : ''}>` +
+    `<summary>${filtersSummary}</summary>${form}</details>`;
+
   const summaryBlock = `<div class="summary"><p>${esc(dto.summary.narrative)}</p></div>`;
 
   const exports = `<p class="exports">Export: <a href="${csvHref}">CSV</a> &middot; <a href="${jsonHref}">JSON</a></p>`;
@@ -178,6 +352,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     .join('')}</tr>`;
   const body = dto.results.map(rowHtml).join('');
   const table = `<div class="table-wrap table-scroll"><table>${COLGROUP}<thead>${header}</thead><tbody>${body}</tbody></table></div>`;
+  const cards = `<div class="kb-cards">${dto.results.map(cardHtml).join('')}</div>`;
 
   const prevHref = dto.page > 1 ? esc(`/knowledge${qs ? `${qs}&` : '?'}page=${dto.page - 1}`) : '';
   const nextHref =
@@ -188,6 +363,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     `<span>Page ${esc(String(dto.page))} of ${esc(String(dto.total_pages))} · ${esc(String(dto.total))} total</span>` +
     (nextHref ? `<a href="${nextHref}">Next &rarr;</a>` : '<span></span>') +
     `</div>`;
+  const pagerBottom = pager.replace('<div class="pager">', '<div class="pager kb-pager-bottom">');
 
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
@@ -196,11 +372,13 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     siteHeader('Knowledge base') +
     `<main>` +
     `<h1>Knowledge base</h1>` +
-    form +
+    filtersBlock +
     summaryBlock +
     exports +
     pager +
     table +
+    cards +
+    pagerBottom +
     `<p class="foot">Read-only. De-identified records only.</p>` +
     `</main>` +
     logoutScript(chrome) +
