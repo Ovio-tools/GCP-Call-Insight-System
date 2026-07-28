@@ -47,6 +47,23 @@ function cardsOf(html: string): string {
   throw new Error('unbalanced kb-cards region');
 }
 
+/** The BODY of the mobile media query only. A slice to end-of-document would let a rule that
+ *  merely exists somewhere in the stylesheet satisfy a mobile-only assertion. */
+function mobileRules(html: string): string {
+  const open = '@media (max-width: 899px) {';
+  const start = html.indexOf(open);
+  if (start === -1) throw new Error('no mobile media query in the rendered page');
+  let depth = 0;
+  for (let i = start + open.length - 1; i < html.length; i += 1) {
+    if (html[i] === '{') depth += 1;
+    else if (html[i] === '}') {
+      depth -= 1;
+      if (depth === 0) return html.slice(start, i + 1);
+    }
+  }
+  throw new Error('unbalanced media query');
+}
+
 function view(overrides: Partial<KnowledgeView> = {}): KnowledgeView {
   return {
     filters: {},
@@ -213,7 +230,7 @@ describe('layout switch', () => {
     const html = renderKnowledgePage(view());
     expect(html).toContain('@media (max-width: 899px)');
     // Inside the breakpoint the roles invert: cards become visible, the table goes away.
-    const mq = html.slice(html.indexOf('@media (max-width: 899px)'));
+    const mq = mobileRules(html);
     expect(mq).toContain('.kb-cards { display: block; }');
     expect(mq).toContain('.table-wrap { display: none; }');
   });
@@ -254,11 +271,24 @@ describe('collapsible filters', () => {
     expect(html).toContain('class="kb-filters-mobile"');
     // Both copies are real forms, so whichever one is visible can actually be submitted.
     expect(html.split('<form class="filters"').length - 1).toBe(2);
+    // The class names alone prove nothing — assert the rules that actually do the switching.
+    expect(mobileRules(html)).toContain('.kb-filters-desktop { display: none; }');
+    expect(mobileRules(html)).toContain('.kb-filters-mobile { display: block; }');
+    // ...and the base rule that keeps the mobile bar off the desktop page.
+    const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
+    expect(base).toContain('.kb-filters-mobile { display: none; }');
   });
 
   it('raises mobile form controls to 16px so Safari stops force-zooming on focus', () => {
     const html = renderKnowledgePage(view());
-    const mq = html.slice(html.indexOf('@media (max-width: 899px)'));
-    expect(mq).toContain('font-size: 16px');
+    expect(mobileRules(html)).toContain('font-size: 16px');
+  });
+
+  it('keeps the disclosure triangle on the filter bar', () => {
+    // <summary> defaults to display:list-item; overriding `display` suppresses the marker, and on
+    // a touch device the triangle is the only cue the bar is tappable (cursor:pointer does nothing).
+    const html = renderKnowledgePage(view());
+    const summaryRule = html.slice(html.indexOf('.kb-filters-mobile > summary'));
+    expect(summaryRule.slice(0, summaryRule.indexOf('}'))).toContain('display: list-item');
   });
 });

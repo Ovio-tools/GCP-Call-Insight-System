@@ -272,11 +272,17 @@ tbody tr:hover { background: var(--panel-2); }
   h1 { font-size: 1.25rem; }
   .kb-filters-desktop { display: none; }
   .kb-filters-mobile { display: block; }
+  /* border-top: 0 plus the two zeroed top radii visually join the open form to the summary
+     bar above it, pairing with the [open] rule that squares off the summary's own bottom
+     corners — together the two make the bar and its form read as one continuous panel. */
   form.filters { flex-direction: column; align-items: stretch; border-top: 0;
     border-top-left-radius: 0; border-top-right-radius: 0; }
   form.filters label { width: 100%; }
   form.filters input, form.filters select, form.filters button { width: 100%; min-width: 0;
     min-height: 44px; font-size: 16px; }
+  /* The summary bar already says "Filters" — the form's own label would repeat it directly
+     underneath. Scoped to the mobile copy only so the desktop form keeps its label. */
+  .kb-filters-mobile .filters-label { display: none; }
 }
 `;
 
