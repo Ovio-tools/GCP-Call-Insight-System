@@ -226,9 +226,12 @@ export async function runPipeline(
         // A concurrent runner won the race. Re-read: if it landed on a terminal state,
         // this is a legitimate no-op; otherwise it is a real inconsistency.
         const raced = await getCallState(pool, callId);
-        if (!raced) throw new Error(`call_state row for ${callId} vanished mid-skip`);
+        if (!raced)
+          throw new Error(`call_state row for ${callId} vanished mid-skip`, { cause: err });
         if (raced.status === STATUS_SKIPPED || raced.status === STATUS_COMPLETED) return;
-        throw new Error(`${callId}: skip raced but status is '${raced.status}' — inconsistent`);
+        throw new Error(`${callId}: skip raced but status is '${raced.status}' — inconsistent`, {
+          cause: err,
+        });
       }
       logStageSuccess(logger, { callId, stage, outcome: 'skipped', durationMs: durationMs() });
       return;
@@ -276,7 +279,8 @@ export async function runPipeline(
         // A concurrent runner won the race. Re-read: a terminal state is a legitimate
         // no-op; anything else is a real inconsistency.
         const raced = await getCallState(pool, callId);
-        if (!raced) throw new Error(`call_state row for ${callId} vanished mid-hold`);
+        if (!raced)
+          throw new Error(`call_state row for ${callId} vanished mid-hold`, { cause: err });
         if (
           raced.status === STATUS_HELD ||
           raced.status === STATUS_SKIPPED ||
@@ -284,7 +288,9 @@ export async function runPipeline(
         ) {
           return;
         }
-        throw new Error(`${callId}: hold raced but status is '${raced.status}' — inconsistent`);
+        throw new Error(`${callId}: hold raced but status is '${raced.status}' — inconsistent`, {
+          cause: err,
+        });
       }
       logStageFailure(logger, {
         callId,

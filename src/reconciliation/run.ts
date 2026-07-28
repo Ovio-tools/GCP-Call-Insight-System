@@ -293,7 +293,7 @@ export async function runReconciliationCron(deps: ReconciliationCronDeps): Promi
 
   // The scan is attempted whether or not the sweep succeeded. Healthy rows are escalated+alerted
   // before it returns its tally, so one bad row only withholds the heartbeat.
-  let scanIncomplete = false;
+  let scanIncomplete: boolean;
   try {
     const { escalated, failed, lockedSkipped } = await deps.runScan();
     scanIncomplete = failed > 0 || lockedSkipped > 0;

@@ -253,7 +253,7 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
     let record!: ExtractionRecord;
     // The verbatim-gate outcome carried out of the loop: the KEPT customer_language set
     // (exact quotes + phrases snapped to real source spans) plus observability counts.
-    let customerLanguage: string[] = [];
+    let customerLanguage: string[];
     let verbatimSnapped = 0;
     let verbatimDropped = 0;
     for (;;) {
