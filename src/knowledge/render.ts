@@ -106,7 +106,9 @@ const URGENCY_PILL: Record<string, string> = {
 };
 
 function urgencyPill(urgency: string): string {
-  const cls = URGENCY_PILL[urgency] ?? 'u-other';
+  const cls = Object.hasOwn(URGENCY_PILL, urgency)
+    ? (URGENCY_PILL[urgency] ?? 'u-other')
+    : 'u-other';
   return `<span class="kb-urgency ${cls}">${esc(humanizeLabel(urgency))}</span>`;
 }
 

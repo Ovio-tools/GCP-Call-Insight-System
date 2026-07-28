@@ -83,6 +83,11 @@ describe('mobile card layout', () => {
     expect(renderKnowledgePage(view({ results: [record({ urgency: 'routine' })] }))).toContain(
       'kb-urgency u-routine',
     );
+    expect(
+      renderKnowledgePage(
+        view({ results: [record({ urgency: 'triage_pending' as KnowledgeRecord['urgency'] })] }),
+      ),
+    ).toContain('kb-urgency u-other');
   });
 
   it('omits the expander entirely when every expandable field is empty, but keeps the call id', () => {
@@ -100,7 +105,7 @@ describe('mobile card layout', () => {
 
     expect(html).not.toContain('<details class="kb-more">');
     expect(html).not.toContain('More details');
-    expect(html).toContain('call_abc123');
+    expect(html).toContain('<p class="kb-callid mono">call_abc123</p>');
     // The problem statement is NOT expandable, so it still shows on the collapsed card.
     expect(html).toContain('No hot water since last night');
   });
