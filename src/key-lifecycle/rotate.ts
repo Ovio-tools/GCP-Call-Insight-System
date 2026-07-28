@@ -183,7 +183,7 @@ async function runRotation(
   // swap + destroy-request, so it never resumes before the old key is being destroyed (which would
   // let a worker with a stale active-version cache write fresh ciphertext under the doomed key).
   await deps.maintenance.begin();
-  let rowsReencrypted = 0;
+  let rowsReencrypted: number;
   let finalizedInline = false;
   const recoveryWindowUntil = new Date(ctx.now().getTime() + ctx.windowDays * 24 * 60 * 60 * 1000);
   try {
