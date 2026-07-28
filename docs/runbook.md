@@ -153,6 +153,22 @@ the availability check and never emits this code.)
 - **Do now:** Review the held missing-transcript call and confirm whether Dialpad has the transcript or it should be marked unresolvable.
 - **Longer-term fix:** Same as the immediate step.
 
+**You usually do not need to act.** These holds close themselves. Every reconciliation run
+asks Dialpad once more about any UNCLAIMED `missing_transcript` hold older than
+`TRANSCRIPT_ABANDON_AFTER_MS` (default 24 h) and, if the transcript is still absent, closes
+it as `unresolvable` and acknowledges both this alert and the `REVIEW_QUEUE_STALLED` alert it
+raised. Assigning the item to yourself, or moving it to `in_review`, opts it OUT of the
+auto-close — so claim it only if you intend to work it. `TRANSCRIPT_ABANDON_ENABLED=false`
+disables the duty entirely.
+
+**When the SAME agent keeps appearing**, the cause is upstream of this pipeline: Dialpad Ai
+never transcribed those calls. Transcription is per-call, not per-licence — an agent whose
+calls transcribe most of the time but not always is usually answering some calls on a device
+Dialpad Ai cannot listen to (a desk phone, or a cell via call forwarding) rather than in the
+Dialpad app. Check that agent's device/answer settings in the Dialpad admin console. To find
+the pattern, group recent `missing_transcript` holds by the Dialpad `target.id` of each call:
+concentration on one target is the signal.
+
 ## Webhook signature invalid
 
 <!-- anchor: webhook-signature-invalid — WEBHOOK_SIGNATURE_INVALID -->

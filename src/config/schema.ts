@@ -336,6 +336,38 @@ export const configObjectSchema = z.object({
   /** Delay (ms) between not-ready transcript retries (the delayed re-enqueue cadence). */
   DIALPAD_TRANSCRIPT_POLL_MS: z.coerce.number().int().positive().default(60_000),
 
+  /**
+   * How long (ms) an unclaimed `missing_transcript` hold may sit before the reconciliation
+   * cron re-checks Dialpad once and, if the transcript is STILL absent, closes it as
+   * unresolvable. Default 24 h — far beyond the 30-minute wait window, so this only ever
+   * fires on a transcript that was never going to arrive. Must exceed
+   * `DIALPAD_TRANSCRIPT_WAIT_MAX_MS` (enforced by the refinement below).
+   */
+  TRANSCRIPT_ABANDON_AFTER_MS: z.coerce.number().int().positive().default(86_400_000),
+
+  /** Kill switch for the auto-close duty (explicit string enum, never truthy-coerced — the
+   * CLASSIFY_ENABLED pattern). `false` leaves every hold for a human to work. */
+  TRANSCRIPT_ABANDON_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
+
+  // --- Metadata pre-filter (Task 3.1) ---
+
+  /**
+   * Minimum call duration (ms) that can plausibly contain a conversation. A call at or below
+   * this is dropped by the metadata pre-filter with `below_minimum_duration` — set aside
+   * quietly, never queued for a person — because a connection this brief produces no
+   * transcript and holding it only manufactures unactionable review work.
+   *
+   * Default 5000 ms (five seconds) still sits far below the observed floor: in the live corpus
+   * the SHORTEST call ever to complete the pipeline was 28,490 ms — a ~5.7x margin — and of
+   * the twelve calls under 10 s that ever passed this filter, ZERO produced a stored record.
+   * `0` restores the old zero-duration-only behaviour. Raise it further only against fresh
+   * evidence: this filter's contract is to under-drop, never mis-drop a real call.
+   */
+  PREFILTER_MIN_DURATION_MS: z.coerce.number().int().nonnegative().default(5000),
+
   // --- Reconciliation cron (Task 3.4) ---
 
   /** Lookback window (minutes) for the reconciliation sweep. Deliberately LONGER than the
@@ -761,6 +793,16 @@ export const configSchema = configObjectSchema.superRefine((cfg, ctx) => {
         message: `${hardKey} (${hard}) must be greater than ${softKey} (${soft}) so a real recoverable grace window exists`,
       });
     }
+  }
+
+  // The auto-close window must sit BEYOND the transcript wait window. Otherwise a call could be
+  // abandoned as "never going to arrive" while the pipeline is still legitimately waiting for it.
+  if (cfg.TRANSCRIPT_ABANDON_AFTER_MS <= cfg.DIALPAD_TRANSCRIPT_WAIT_MAX_MS) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['TRANSCRIPT_ABANDON_AFTER_MS'],
+      message: `TRANSCRIPT_ABANDON_AFTER_MS (${cfg.TRANSCRIPT_ABANDON_AFTER_MS}) must be greater than DIALPAD_TRANSCRIPT_WAIT_MAX_MS (${cfg.DIALPAD_TRANSCRIPT_WAIT_MAX_MS}) so a hold is never abandoned while the pipeline is still waiting for its transcript`,
+    });
   }
 
   const cleanSoft = cfg.RETENTION_CLEAN_SOFT_DELETE_DAYS;

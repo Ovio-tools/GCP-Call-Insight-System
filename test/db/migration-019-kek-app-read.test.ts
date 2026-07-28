@@ -16,12 +16,12 @@ import { createAppPool } from '../../src/db/pool.js';
  *
  * 019 is no longer the topmost migration — 1782864100000 (drop raw/vault from DB-A, ADR 0008
  * Move 2) + 1782864100001 (grinder_pump service_category) + 1782864100002 (duplicate_call_leg
- * drop reason) + 1782864100003 (structured_knowledge.superseded_by_call_id) sit above it: down(5)
- * rolls back those four then exposes the pre-019 schema, up(5) re-applies 019 + all four. (The drop's down() recreates
+ * drop reason) + 1782864100003 (structured_knowledge.superseded_by_call_id) and 1782864100004 (below_minimum_duration drop reason) sit above it: down(6)
+ * rolls back those five then exposes the pre-019 schema, up(6) re-applies 019 + all five. (The drop's down() recreates
  * raw/vault in DB-A at the
  * rolled-down state, but this test only touches kek_versions, so that is harmless.)
  */
-const ABOVE = 5;
+const ABOVE = 6;
 
 describe.skipIf(!hasTestDb)('migration 019 — kek_versions app read grant', () => {
   let owner!: Pool;

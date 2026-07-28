@@ -181,10 +181,16 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
 - **metadata pre-filter** — runs first, on call metadata only (direction, duration,
   call state, related-call graph). No text, no model, no PII, no transcript fetch.
   Drops obvious junk before a transcript is pulled: a drop sets `status='skipped'` and a
-  specific `call_state.drop_reason` (`zero_duration`, `non_conversation_call_state`,
-  `outbound_no_customer_conversation`, `internal_transfer_non_operator_leg`), writes a
+  specific `call_state.drop_reason` (`zero_duration`, `below_minimum_duration`,
+  `non_conversation_call_state`, `outbound_no_customer_conversation`,
+  `internal_transfer_non_operator_leg`), writes a
   `processing_log` row, and stops the pipeline before fetch-transcript. The call and its
   metadata are never deleted. Fails safe: anything missing, unknown, or ambiguous passes.
+  `below_minimum_duration` is the ONE tunable rule (`PREFILTER_MIN_DURATION_MS`, default
+  5000 ms; Dialpad reports duration in MILLISECONDS): a call too short to hold a conversation
+  yields no transcript, so passing it through would only manufacture an unactionable
+  `missing_transcript` hold. It is evaluated AFTER the zero-duration and call-state rules, so a
+  reported FACT always beats this tunable judgement.
 - **fetch transcript** — only for calls that survive the pre-filter. A call with no
   transcript yet is handled by the availability check, not treated as a failure.
 - **redact** (Task 4.1, built; precision-scoped by ADR 0006; residual-superset by
@@ -227,7 +233,16 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
   the raw transcript and vault rows with `retention_eligible_at`. The retention cron
   deletes them later.
 
-Every stage that ends in a hold writes a `review_queue` row with a specific reason.
+Every stage that ends in a hold writes a `review_queue` row with a specific reason. A
+`missing_transcript` hold is the one hold a person often CANNOT resolve — when Dialpad never
+produced a transcript at all (a 200 carrying a bare `{call_id}` envelope, permanently), it
+would otherwise sit open forever and emit an unactionable `REVIEW_QUEUE_STALLED` alert. The
+reconciliation cron's auto-close duty (`src/review-queue/abandon.ts`) re-checks Dialpad once
+for any UNCLAIMED such hold older than `TRANSCRIPT_ABANDON_AFTER_MS` (default 24 h) and, only
+if the transcript is STILL absent, closes it through the existing `markUnresolvableByReviewId`
+transition under the `system:transcript-abandon` actor and acknowledges the alerts it raised.
+A claimed hold (assigned or `in_review`) is never touched, a probe failure closes nothing, and
+a transcript that HAS since arrived is left open for a person.
 Every model call writes a `model_invocations` row with the model ID and prompt
 version.
 

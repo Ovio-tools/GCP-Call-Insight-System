@@ -17,7 +17,7 @@ import {
 import { createClassifyHandler } from './classify/handler.js';
 import { createExtractHandler } from './extract/handler.js';
 import { createVerbatimPiiScanHandler } from './verbatim-pii-scan.js';
-import { metadataPreFilterHandler } from './metadata-prefilter.js';
+import { createMetadataPreFilterHandler, metadataPreFilterHandler } from './metadata-prefilter.js';
 import { createRedactionHandler } from './redact.js';
 import { storeHandler } from './store.js';
 import { createMarkRetentionEligibleHandler } from './mark-retention-eligible.js';
@@ -85,7 +85,11 @@ export function buildProductionStageHandlers(deps: ProductionHandlerDeps): Stage
 
   return {
     ...defaultStageHandlers,
-    'metadata-pre-filter': metadataPreFilterHandler,
+    // Threads PREFILTER_MIN_DURATION_MS so a call too short to hold a conversation is skipped
+    // quietly here rather than surfacing later as an unactionable missing_transcript hold.
+    'metadata-pre-filter': createMetadataPreFilterHandler({
+      minDurationMs: deps.config.PREFILTER_MIN_DURATION_MS,
+    }),
     'fetch-transcript': createFetchTranscriptHandler({
       ...deps,
       enqueuePipelineJob: (cid: string) => enqueueCall(deps.queue, cid, deps.config),

@@ -29,6 +29,7 @@ import {
   runReconciliationCron,
 } from '../reconciliation/run.js';
 import { drainPendingReprocessRequests } from '../reconciliation/reprocess-drain.js';
+import { abandonUnfixableTranscriptHolds } from '../review-queue/abandon.js';
 import { scanStalledReviews } from '../review-queue/scan.js';
 import { syncLabeledExamples } from '../evaluation/sync.js';
 import { loadDenyList } from '../redaction/deny-list.js';
@@ -145,6 +146,16 @@ async function main(): Promise<void> {
       // A nonzero `SyncSummary.failed` (operational failure) or a throw withholds the ping.
       runLabelSync: async () => {
         const summary = await syncLabeledExamples(pool, { denyTerms, logger });
+        return { failed: summary.failed };
+      },
+      // Retire `missing_transcript` holds Dialpad never produced a transcript for, so the review
+      // queue stops filling with items nobody can action. Re-uses the SAME Dialpad client (hence
+      // the same shared rate limiter) for the final re-check; a probe failure closes nothing.
+      runAbandon: async () => {
+        const summary = await abandonUnfixableTranscriptHolds(pool, config, logger, new Date(), {
+          isTranscriptReady: async (callId) =>
+            (await client.fetchTranscript(callId)).kind === 'ready',
+        });
         return { failed: summary.failed };
       },
       onSweepError: async (err) => {

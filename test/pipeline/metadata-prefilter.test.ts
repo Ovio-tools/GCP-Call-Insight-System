@@ -114,3 +114,68 @@ describe('evaluateMetadata', () => {
     });
   });
 });
+
+describe('evaluateMetadata minimum-duration rule', () => {
+  const MIN = { minDurationMs: 1000 };
+
+  it('drops a call shorter than the minimum as below_minimum_duration', () => {
+    expect(evaluateMetadata(CALL, { duration: 400, state: 'hangup' }, MIN)).toEqual({
+      action: 'drop',
+      reason: 'below_minimum_duration',
+    });
+  });
+
+  it('drops a call exactly AT the minimum (the bound is inclusive)', () => {
+    expect(evaluateMetadata(CALL, { duration: 1000, state: 'hangup' }, MIN)).toEqual({
+      action: 'drop',
+      reason: 'below_minimum_duration',
+    });
+  });
+
+  it('passes a call one millisecond above the minimum', () => {
+    expect(evaluateMetadata(CALL, { duration: 1001, state: 'hangup' }, MIN)).toEqual({
+      action: 'pass',
+    });
+  });
+
+  it('is DISABLED by default, so existing two-argument callers are unaffected', () => {
+    expect(evaluateMetadata(CALL, { duration: 400, state: 'hangup' })).toEqual({ action: 'pass' });
+  });
+
+  it('is disabled by an explicit zero threshold', () => {
+    expect(
+      evaluateMetadata(CALL, { duration: 400, state: 'hangup' }, { minDurationMs: 0 }),
+    ).toEqual({ action: 'pass' });
+  });
+
+  it('keeps zero_duration for a call that never connected (the more specific reason wins)', () => {
+    expect(evaluateMetadata(CALL, { duration: 0 }, MIN)).toEqual({
+      action: 'drop',
+      reason: 'zero_duration',
+    });
+    expect(evaluateMetadata(CALL, { duration: -5 }, MIN)).toEqual({
+      action: 'drop',
+      reason: 'zero_duration',
+    });
+  });
+
+  it('keeps an explicit non-conversation call state over the duration policy', () => {
+    // 'no_answer' tells the operator WHY far better than "too short" does.
+    expect(evaluateMetadata(CALL, { duration: 400, state: 'no_answer' }, MIN)).toEqual({
+      action: 'drop',
+      reason: 'non_conversation_call_state',
+    });
+  });
+
+  it('still fails open on an absent, non-numeric, or NaN duration', () => {
+    expect(evaluateMetadata(CALL, { state: 'hangup' }, MIN)).toEqual({ action: 'pass' });
+    expect(evaluateMetadata(CALL, { duration: '400' }, MIN)).toEqual({ action: 'pass' });
+    expect(evaluateMetadata(CALL, { duration: NaN }, MIN)).toEqual({ action: 'pass' });
+  });
+
+  it('drops a long internal outbound leg by its own rule, not by duration', () => {
+    expect(
+      evaluateMetadata(CALL, { duration: 30_000, direction: 'outbound', is_internal: true }, MIN),
+    ).toEqual({ action: 'drop', reason: 'outbound_no_customer_conversation' });
+  });
+});
