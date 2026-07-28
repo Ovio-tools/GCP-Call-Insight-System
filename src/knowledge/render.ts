@@ -263,6 +263,7 @@ tbody tr:hover { background: var(--panel-2); }
   border: 1px solid var(--border); border-radius: var(--radius); font-weight: 600;
   font-size: 0.9rem; }
 .kb-filters-mobile[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.kb-pager-bottom { display: none; }
 /* ---- Below 900px the nine-column table cannot give its four free-text columns a readable
    measure (the five pinned columns alone total 628px), so the card list takes over. ---- */
 @media (max-width: 899px) {
@@ -283,6 +284,12 @@ tbody tr:hover { background: var(--panel-2); }
   /* The summary bar already says "Filters" — the form's own label would repeat it directly
      underneath. Scoped to the mobile copy only so the desktop form keeps its label. */
   .kb-filters-mobile .filters-label { display: none; }
+  .kb-pager-bottom { display: flex; }
+  .pager { flex-wrap: wrap; gap: 8px; }
+  .pager a, .exports a { min-height: 44px; display: inline-flex; align-items: center;
+    padding: 0 16px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--panel-2); text-decoration: none; }
+  .exports { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 }
 `;
 
@@ -342,6 +349,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     `<span>Page ${esc(String(dto.page))} of ${esc(String(dto.total_pages))} · ${esc(String(dto.total))} total</span>` +
     (nextHref ? `<a href="${nextHref}">Next &rarr;</a>` : '<span></span>') +
     `</div>`;
+  const pagerBottom = pager.replace('<div class="pager">', '<div class="pager kb-pager-bottom">');
 
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
@@ -356,6 +364,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     pager +
     table +
     cards +
+    pagerBottom +
     `<p class="foot">Read-only. De-identified records only.</p>` +
     `</main>` +
     logoutScript(chrome) +

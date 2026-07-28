@@ -292,3 +292,24 @@ describe('collapsible filters', () => {
     expect(summaryRule.slice(0, summaryRule.indexOf('}'))).toContain('display: list-item');
   });
 });
+
+describe('mobile tap targets', () => {
+  it('repeats the pager below the results so paging does not mean scrolling back up', () => {
+    const html = renderKnowledgePage(view({ page: 2, total_pages: 4, total: 168 }));
+    expect(html).toContain('class="pager kb-pager-bottom"');
+    // Above and below: the page indicator appears exactly twice.
+    expect(html.split('Page 2 of 4').length - 1).toBe(2);
+  });
+
+  it('shows the bottom pager only on mobile, so desktop keeps its single one', () => {
+    const html = renderKnowledgePage(view());
+    const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
+    expect(base).toContain('.kb-pager-bottom { display: none; }');
+    expect(mobileRules(html)).toContain('.kb-pager-bottom { display: flex; }');
+  });
+
+  it('gives the pager and export links a 44px minimum tap target on mobile', () => {
+    const html = renderKnowledgePage(view());
+    expect(mobileRules(html)).toContain('.pager a, .exports a { min-height: 44px;');
+  });
+});
