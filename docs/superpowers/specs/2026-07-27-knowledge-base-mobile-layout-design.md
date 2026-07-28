@@ -210,10 +210,18 @@ New coverage:
 
 - **Page weight** roughly doubles for the HTML view. Bounded by
   `KNOWLEDGE_PAGE_SIZE_MAX`; the exports are unaffected.
-- **New interpolation site.** Five fields that previously reached only CSV and JSON
-  now reach HTML. They are inside the DTO allowlist and already egress-guarded, but
-  the escaping test above exists specifically because "already safe elsewhere" is not
-  proof of safety in a new sink.
+- **New interpolation site — but not a new egress path.** Confirmed by tracing the
+  route: `/knowledge` (HTML) builds its DTO through `buildView`, which calls
+  `serializeKnowledgeView` (`src/knowledge/routes.ts:106` → `:144`), and
+  `sanitizeKnowledgeRecord` already names all five fields —
+  `location_in_home`, `access_or_scheduling_notes`, `prior_attempts` and
+  `acquisition_source` in `SCALAR_FIELDS`, `competitor_mentions` in `ARRAY_FIELDS`.
+  So the HTML route **already receives these five fields fully scanned and scrubbed**;
+  the page simply does not print them. Rendering them adds no data to the response
+  that the guard has not already cleared, and weakens no check.
+  The residual risk is therefore ordinary XSS-by-omission in new code, not privacy
+  regression: the escaping test exists because a new sink must prove its own escaping
+  rather than inherit the table's.
 - **`THEME` additions** must remain additive; a token or class that collides with a
   selector the review or status page already styles would change those pages
   silently.
