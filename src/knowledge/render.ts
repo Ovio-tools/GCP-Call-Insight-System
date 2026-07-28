@@ -1,4 +1,4 @@
-import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY } from '../db/enums.js';
+import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY, type Urgency } from '../db/enums.js';
 import type { KnowledgeFilters, KnowledgeRecord, KnowledgeView } from './dto.js';
 import { humanizeLabel } from './summary.js';
 import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
@@ -97,32 +97,40 @@ function rowHtml(r: KnowledgeRecord): string {
   );
 }
 
-/** Urgency → theme-token pill class. Total over `URGENCY`, with a neutral fallback so an enum
- *  value added later renders as a plain pill rather than an unstyled one. */
-const URGENCY_PILL: Record<string, string> = {
-  emergency: 'u-emergency',
-  urgent: 'u-urgent',
-  routine: 'u-routine',
-};
+/** Urgency → theme-token pill class, built once from the `Urgency` union so the compiler enforces
+ *  that every enum member has a mapping (`satisfies Record<Urgency, string>`). The `.get` fallback
+ *  stays as a runtime safety net for a row written under a schema version before a mapping existed
+ *  — not because the map itself is partial. */
+const URGENCY_PILL = new Map<string, string>(
+  Object.entries({
+    emergency: 'u-emergency',
+    urgent: 'u-urgent',
+    routine: 'u-routine',
+  } satisfies Record<Urgency, string>),
+);
 
 function urgencyPill(urgency: string): string {
-  const cls = Object.hasOwn(URGENCY_PILL, urgency)
-    ? (URGENCY_PILL[urgency] ?? 'u-other')
-    : 'u-other';
+  const cls = URGENCY_PILL.get(urgency) ?? 'u-other';
   return `<span class="kb-urgency ${cls}">${esc(humanizeLabel(urgency))}</span>`;
 }
 
-/** One labelled block inside a card's expander. Returns '' for a null scalar, an empty string, or
- *  an empty array, so an absent field costs no blank row. */
+/** One labelled block inside a card's expander. Returns '' for a null scalar, a blank or
+ *  whitespace-only string, or an array with no non-blank elements, so an absent (or
+ *  effectively-absent) field never costs a blank row or an empty chip. */
 function detailBlock(label: string, value: string | readonly string[] | null): string {
   if (value === null) return '';
   if (Array.isArray(value)) {
-    if (value.length === 0) return '';
-    const chips = value.map((v) => `<span class="kb-chip">${esc(String(v))}</span>`).join('');
+    // Re-typed explicitly: `Array.isArray` narrowing a `readonly string[] | string` union leaves
+    // TS unable to resolve element types on further chaining (`.filter`/`.map`), same gotcha noted
+    // for `cell()` above — an explicit annotation, not a cast, restores a clean `readonly string[]`.
+    const arr: readonly string[] = value;
+    const populated = arr.filter((v) => v.trim().length > 0);
+    if (populated.length === 0) return '';
+    const chips = populated.map((v) => `<span class="kb-chip">${esc(v)}</span>`).join('');
     return `<div class="kb-field"><dt>${esc(label)}</dt><dd>${chips}</dd></div>`;
   }
   const text = String(value);
-  if (text.length === 0) return '';
+  if (text.trim().length === 0) return '';
   return `<div class="kb-field"><dt>${esc(label)}</dt><dd>${esc(text)}</dd></div>`;
 }
 
@@ -143,19 +151,21 @@ function cardHtml(r: KnowledgeRecord): string {
     detailBlock('Competitors mentioned', r.competitor_mentions) +
     detailBlock('Heard about us via', r.acquisition_source);
 
-  const callIdField = `<div class="kb-field"><dt>Call</dt><dd class="mono">${esc(r.call_id)}</dd></div>`;
+  const callIdField =
+    `<div class="kb-field"><dt>Call</dt>` +
+    `<dd class="mono" title="${esc(r.call_id)}">${esc(r.call_id)}</dd></div>`;
   const more = blocks
     ? `<details class="kb-more"><summary>More details</summary>` +
       `<dl class="kb-fields">${blocks}${callIdField}</dl></details>`
-    : `<p class="kb-callid mono">${esc(r.call_id)}</p>`;
+    : `<p class="kb-callid mono" title="${esc(r.call_id)}">${esc(r.call_id)}</p>`;
 
   const problem = r.problem_statement
     ? `<p class="kb-problem">${esc(r.problem_statement)}</p>`
     : `<p class="kb-problem kb-empty">No problem statement recorded.</p>`;
 
   return (
-    `<article class="kb-card">` +
-    `<div class="kb-card-head"><time>${esc(fmtCreatedCt(r.created_at))}</time>` +
+    `<article class="kb-card" aria-label="${esc(fmtCreatedCt(r.created_at))}">` +
+    `<div class="kb-card-head"><time datetime="${esc(r.created_at)}">${esc(fmtCreatedCt(r.created_at))}</time>` +
     `${urgencyPill(r.urgency)}</div>` +
     `<p class="kb-meta">${esc(humanizeLabel(r.service_category))} &middot; ` +
     `${esc(humanizeLabel(r.call_intent))}</p>` +
@@ -225,8 +235,8 @@ tbody tr:hover { background: var(--panel-2); }
 .kb-problem { margin: 8px 0 0; font-size: 0.95rem; overflow-wrap: break-word; }
 .kb-problem.kb-empty { color: var(--muted); font-style: italic; }
 .kb-more { margin: 10px 0 0; border-top: 1px solid var(--border); padding-top: 4px; }
-.kb-more > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center;
-  color: var(--accent); font-size: 0.85rem; }
+.kb-more > summary { cursor: pointer; min-height: 44px; padding: 12px 0; display: list-item;
+  list-style-position: inside; color: var(--accent); font-size: 0.85rem; }
 .kb-fields { margin: 4px 0 0; }
 .kb-field { margin: 0 0 10px; }
 .kb-field dt { color: var(--muted); font-size: 0.72rem; text-transform: uppercase;

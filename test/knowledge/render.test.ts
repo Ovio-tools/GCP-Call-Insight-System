@@ -30,6 +30,23 @@ function record(overrides: Partial<KnowledgeRecord> = {}): KnowledgeRecord {
   };
 }
 
+/** The `<div class="kb-cards">…</div>` region only. Depth-counted, because cards contain nested
+ *  divs and later tasks add markup after the list — a slice to the first `</div>` would lie. */
+function cardsOf(html: string): string {
+  const open = '<div class="kb-cards">';
+  const start = html.indexOf(open);
+  if (start === -1) throw new Error('no kb-cards region in the rendered page');
+  let depth = 0;
+  for (let i = start; i < html.length; i += 1) {
+    if (html.startsWith('<div', i)) depth += 1;
+    else if (html.startsWith('</div>', i)) {
+      depth -= 1;
+      if (depth === 0) return html.slice(start, i + 6);
+    }
+  }
+  throw new Error('unbalanced kb-cards region');
+}
+
 function view(overrides: Partial<KnowledgeView> = {}): KnowledgeView {
   return {
     filters: {},
@@ -55,37 +72,46 @@ describe('mobile card layout', () => {
     const html = renderKnowledgePage(view());
 
     // The nine the table already showed.
-    expect(html).toContain('call_abc123');
-    expect(html).toContain('07-27-2026');
-    expect(html).toContain('New booking');
-    expect(html).toContain('Water heater');
-    expect(html).toContain('Emergency');
-    expect(html).toContain('No hot water since last night');
-    expect(html).toContain('pilot will not stay lit');
-    expect(html).toContain('it just keeps clicking');
-    expect(html).toContain('how soon');
+    expect(cardsOf(html)).toContain('call_abc123');
+    expect(cardsOf(html)).toContain('07-27-2026');
+    expect(cardsOf(html)).toContain('New booking');
+    expect(cardsOf(html)).toContain('Water heater');
+    expect(cardsOf(html)).toContain('Emergency');
+    expect(cardsOf(html)).toContain('No hot water since last night');
+    expect(cardsOf(html)).toContain('pilot will not stay lit');
+    expect(cardsOf(html)).toContain('it just keeps clicking');
+    expect(cardsOf(html)).toContain('how soon');
 
     // The five that previously reached only the CSV and JSON exports.
-    expect(html).toContain('Basement utility room');
-    expect(html).toContain('Dog in the yard');
-    expect(html).toContain('Relit it twice');
-    expect(html).toContain('Acme Plumbing');
-    expect(html).toContain('Google search');
+    expect(cardsOf(html)).toContain('Basement utility room');
+    expect(cardsOf(html)).toContain('Dog in the yard');
+    expect(cardsOf(html)).toContain('Relit it twice');
+    expect(cardsOf(html)).toContain('Acme Plumbing');
+    expect(cardsOf(html)).toContain('Google search');
+
+    // Labels must stay attached to their own values — a transposition is exactly the defect a
+    // reader reports and a maintainer cannot reproduce.
+    expect(cardsOf(html)).toContain('<dt>Where in the home</dt><dd>Basement utility room</dd>');
+    expect(cardsOf(html)).toContain(
+      '<dt>Symptoms</dt><dd><span class="kb-chip">no hot water</span>',
+    );
   });
 
   it('maps each urgency onto its own pill class, with a neutral fallback', () => {
-    expect(renderKnowledgePage(view({ results: [record({ urgency: 'emergency' })] }))).toContain(
-      'kb-urgency u-emergency',
-    );
-    expect(renderKnowledgePage(view({ results: [record({ urgency: 'urgent' })] }))).toContain(
-      'kb-urgency u-urgent',
-    );
-    expect(renderKnowledgePage(view({ results: [record({ urgency: 'routine' })] }))).toContain(
-      'kb-urgency u-routine',
-    );
     expect(
-      renderKnowledgePage(
-        view({ results: [record({ urgency: 'triage_pending' as KnowledgeRecord['urgency'] })] }),
+      cardsOf(renderKnowledgePage(view({ results: [record({ urgency: 'emergency' })] }))),
+    ).toContain('kb-urgency u-emergency');
+    expect(
+      cardsOf(renderKnowledgePage(view({ results: [record({ urgency: 'urgent' })] }))),
+    ).toContain('kb-urgency u-urgent');
+    expect(
+      cardsOf(renderKnowledgePage(view({ results: [record({ urgency: 'routine' })] }))),
+    ).toContain('kb-urgency u-routine');
+    expect(
+      cardsOf(
+        renderKnowledgePage(
+          view({ results: [record({ urgency: 'triage_pending' as KnowledgeRecord['urgency'] })] }),
+        ),
       ),
     ).toContain('kb-urgency u-other');
   });
@@ -103,17 +129,49 @@ describe('mobile card layout', () => {
     });
     const html = renderKnowledgePage(view({ results: [bare] }));
 
-    expect(html).not.toContain('<details class="kb-more">');
-    expect(html).not.toContain('More details');
-    expect(html).toContain('<p class="kb-callid mono">call_abc123</p>');
+    expect(cardsOf(html)).not.toContain('<details class="kb-more">');
+    expect(cardsOf(html)).not.toContain('More details');
+    expect(cardsOf(html)).toContain(
+      '<p class="kb-callid mono" title="call_abc123">call_abc123</p>',
+    );
     // The problem statement is NOT expandable, so it still shows on the collapsed card.
-    expect(html).toContain('No hot water since last night');
+    expect(cardsOf(html)).toContain('No hot water since last night');
   });
 
   it('emits the expander when there is something to expand', () => {
     const html = renderKnowledgePage(view());
-    expect(html).toContain('<details class="kb-more">');
-    expect(html).toContain('More details');
+    expect(cardsOf(html)).toContain('<details class="kb-more">');
+    expect(cardsOf(html)).toContain('More details');
+  });
+
+  it('renders one card per record, in row order', () => {
+    const html = renderKnowledgePage(
+      view({
+        results: [record({ call_id: 'call_first' }), record({ call_id: 'call_second' })],
+        total: 2,
+      }),
+    );
+    const region = cardsOf(html);
+    // Matches the opening tag by its class attribute only (not the full `>`) so this stays
+    // correct regardless of what other attributes (e.g. aria-label) the tag carries.
+    expect(region.split('<article class="kb-card"').length - 1).toBe(2);
+    expect(region.indexOf('call_first')).toBeLessThan(region.indexOf('call_second'));
+  });
+
+  it('renders an empty card region when nothing matches', () => {
+    const html = renderKnowledgePage(view({ results: [], total: 0, total_pages: 0 }));
+    expect(html).toContain('<div class="kb-cards"></div>');
+    expect(cardsOf(html)).not.toContain('<article');
+  });
+
+  it('includes only the populated blocks when a record is partly filled', () => {
+    const html = renderKnowledgePage(
+      view({ results: [record({ symptoms: [], prior_attempts: null })] }),
+    );
+    const region = cardsOf(html);
+    expect(region).toContain('<dt>Concerns</dt>');
+    expect(region).not.toContain('<dt>Symptoms</dt>');
+    expect(region).not.toContain('<dt>Already tried</dt>');
   });
 
   it('escapes HTML-significant characters in every card-rendered free-text field', () => {
