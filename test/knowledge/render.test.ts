@@ -7,6 +7,12 @@ import type { KnowledgeRecord, KnowledgeView } from '../../src/knowledge/dto.js'
  * `renderKnowledgePage` takes an already-sanitized DTO and returns a string, so the whole mobile
  * layout is testable from a literal. The escaping cases matter most — the card is a NEW
  * interpolation site and does not inherit the table's proof of safety.
+ *
+ * The `mobileRules`/`base` assertions below are LITERAL STRING MATCHES against the rendered CSS
+ * text, not a parsed stylesheet — reordering a selector list (e.g. `a, b { ... }` to `b, a { ... }`)
+ * or reflowing the whitespace inside a declaration will fail them even though the CSS is equivalent.
+ * That is a deliberate tradeoff (a real parser is a lot more test infrastructure for a page this
+ * size), so a failure here is worth reading before assuming the styling regressed.
  */
 
 /** A fully-populated record: every one of the 14 DTO fields carries a distinct, greppable value. */
@@ -87,31 +93,30 @@ function view(overrides: Partial<KnowledgeView> = {}): KnowledgeView {
 describe('mobile card layout', () => {
   it('renders every one of the 14 record fields, including the five the table never showed', () => {
     const html = renderKnowledgePage(view());
+    const region = cardsOf(html);
 
     // The nine the table already showed.
-    expect(cardsOf(html)).toContain('call_abc123');
-    expect(cardsOf(html)).toContain('07-27-2026');
-    expect(cardsOf(html)).toContain('New booking');
-    expect(cardsOf(html)).toContain('Water heater');
-    expect(cardsOf(html)).toContain('Emergency');
-    expect(cardsOf(html)).toContain('No hot water since last night');
-    expect(cardsOf(html)).toContain('pilot will not stay lit');
-    expect(cardsOf(html)).toContain('it just keeps clicking');
-    expect(cardsOf(html)).toContain('how soon');
+    expect(region).toContain('call_abc123');
+    expect(region).toContain('07-27-2026');
+    expect(region).toContain('New booking');
+    expect(region).toContain('Water heater');
+    expect(region).toContain('Emergency');
+    expect(region).toContain('No hot water since last night');
+    expect(region).toContain('pilot will not stay lit');
+    expect(region).toContain('it just keeps clicking');
+    expect(region).toContain('how soon');
 
     // The five that previously reached only the CSV and JSON exports.
-    expect(cardsOf(html)).toContain('Basement utility room');
-    expect(cardsOf(html)).toContain('Dog in the yard');
-    expect(cardsOf(html)).toContain('Relit it twice');
-    expect(cardsOf(html)).toContain('Acme Plumbing');
-    expect(cardsOf(html)).toContain('Google search');
+    expect(region).toContain('Basement utility room');
+    expect(region).toContain('Dog in the yard');
+    expect(region).toContain('Relit it twice');
+    expect(region).toContain('Acme Plumbing');
+    expect(region).toContain('Google search');
 
     // Labels must stay attached to their own values — a transposition is exactly the defect a
     // reader reports and a maintainer cannot reproduce.
-    expect(cardsOf(html)).toContain('<dt>Where in the home</dt><dd>Basement utility room</dd>');
-    expect(cardsOf(html)).toContain(
-      '<dt>Symptoms</dt><dd><span class="kb-chip">no hot water</span>',
-    );
+    expect(region).toContain('<dt>Where in the home</dt><dd>Basement utility room</dd>');
+    expect(region).toContain('<dt>Symptoms</dt><dd><span class="kb-chip">no hot water</span>');
   });
 
   it('maps each urgency onto its own pill class, with a neutral fallback', () => {
@@ -155,6 +160,13 @@ describe('mobile card layout', () => {
     expect(cardsOf(html)).toContain('No hot water since last night');
   });
 
+  it('falls back to the empty-problem message when the statement is whitespace-only', () => {
+    const html = renderKnowledgePage(view({ results: [record({ problem_statement: '   ' })] }));
+    const region = cardsOf(html);
+    expect(region).toContain('<p class="kb-problem kb-empty">No problem statement recorded.</p>');
+    expect(region).not.toContain('<p class="kb-problem">');
+  });
+
   it('emits the expander when there is something to expand', () => {
     const html = renderKnowledgePage(view());
     expect(cardsOf(html)).toContain('<details class="kb-more">');
@@ -181,9 +193,11 @@ describe('mobile card layout', () => {
     expect(cardsOf(html)).not.toContain('<article');
   });
 
-  it('includes only the populated blocks when a record is partly filled', () => {
+  it('includes only the populated blocks when a record is partly filled, dropping whitespace-only values too', () => {
+    // `symptoms: ['', '  ']` and `prior_attempts: '   '` are not EMPTY, just blank — `detailBlock`'s
+    // doc comment promises these are dropped exactly like `[]`/`null`; this is what holds it to that.
     const html = renderKnowledgePage(
-      view({ results: [record({ symptoms: [], prior_attempts: null })] }),
+      view({ results: [record({ symptoms: ['', '  '], prior_attempts: '   ' })] }),
     );
     const region = cardsOf(html);
     expect(region).toContain('<dt>Concerns</dt>');
@@ -233,6 +247,10 @@ describe('layout switch', () => {
     const mq = mobileRules(html);
     expect(mq).toContain('.kb-cards { display: block; }');
     expect(mq).toContain('.table-wrap { display: none; }');
+    // ...and the base rule that keeps the card list off the desktop page — without this, the
+    // whole card list stacks underneath the desktop table at every width.
+    const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
+    expect(base).toContain('.kb-cards { display: none; }');
   });
 });
 
@@ -284,13 +302,18 @@ describe('collapsible filters', () => {
     expect(mobileRules(html)).toContain('font-size: 16px');
   });
 
-  it('keeps the disclosure triangle on the filter bar', () => {
-    // <summary> defaults to display:list-item; overriding `display` suppresses the marker, and on
-    // a touch device the triangle is the only cue the bar is tappable (cursor:pointer does nothing).
-    const html = renderKnowledgePage(view());
-    const summaryRule = html.slice(html.indexOf('.kb-filters-mobile > summary'));
-    expect(summaryRule.slice(0, summaryRule.indexOf('}'))).toContain('display: list-item');
-  });
+  it.each(['.kb-filters-mobile > summary', '.kb-more > summary'])(
+    'keeps the disclosure triangle on %s',
+    (selector) => {
+      // <summary> defaults to display:list-item; overriding `display` suppresses the marker, and on
+      // a touch device the triangle is the only cue the element is tappable (cursor:pointer does
+      // nothing). Both summaries in this page — the filter bar and the per-card "More details"
+      // expander — made the identical mistake once already and must both stay pinned.
+      const html = renderKnowledgePage(view());
+      const summaryRule = html.slice(html.indexOf(selector));
+      expect(summaryRule.slice(0, summaryRule.indexOf('}'))).toContain('display: list-item');
+    },
+  );
 });
 
 describe('mobile tap targets', () => {

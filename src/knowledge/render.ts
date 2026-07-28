@@ -171,12 +171,18 @@ function cardHtml(r: KnowledgeRecord): string {
       `<dl class="kb-fields">${blocks}${callIdField}</dl></details>`
     : `<p class="kb-callid mono" title="${esc(r.call_id)}">${esc(r.call_id)}</p>`;
 
-  const problem = r.problem_statement
+  const problem = r.problem_statement?.trim()
     ? `<p class="kb-problem">${esc(r.problem_statement)}</p>`
     : `<p class="kb-problem kb-empty">No problem statement recorded.</p>`;
 
+  // Identifying, not a bare timestamp the <time> element right below it would only repeat: a
+  // screen reader landing on the card by article role hears what call it is before anything else.
+  const cardLabel =
+    `${humanizeLabel(r.urgency)} ${humanizeLabel(r.service_category)} call, ` +
+    fmtCreatedCt(r.created_at);
+
   return (
-    `<article class="kb-card" aria-label="${esc(fmtCreatedCt(r.created_at))}">` +
+    `<article class="kb-card" aria-label="${esc(cardLabel)}">` +
     `<div class="kb-card-head"><time datetime="${esc(r.created_at)}">${esc(fmtCreatedCt(r.created_at))}</time>` +
     `${urgencyPill(r.urgency)}</div>` +
     `<p class="kb-meta">${esc(humanizeLabel(r.service_category))} &middot; ` +
@@ -267,22 +273,30 @@ tbody tr:hover { background: var(--panel-2); }
 /* ---- Below 900px the nine-column table cannot give its four free-text columns a readable
    measure (the five pinned columns alone total 628px), so the card list takes over. ---- */
 @media (max-width: 899px) {
-  main { padding: 12px max(12px, env(safe-area-inset-right)) 24px max(12px, env(safe-area-inset-left)); }
+  /* 640px, not just 100%: without a cap this stylesheet is a PHONE layout applied to any viewport
+     under 900px, including a portrait tablet — an 880px screen would otherwise stack six full-bleed,
+     ~856px-wide filter controls and stretch a card's timestamp/urgency pair to opposite edges of an
+     ~856px row. main already centers with margin: 0 auto, so capping it here gives a tablet a
+     conventional, centred phone-width column instead. (No env(safe-area-inset-*): the viewport meta
+     never sets viewport-fit=cover, so those resolve to 0 and a max() around them was dead code.) */
+  main { max-width: 640px; padding: 12px 12px 24px; }
   .kb-cards { display: block; }
   .table-wrap { display: none; }
   h1 { font-size: 1.25rem; }
   .kb-filters-desktop { display: none; }
   .kb-filters-mobile { display: block; }
-  /* border-top: 0 plus the two zeroed top radii visually join the open form to the summary
-     bar above it, pairing with the [open] rule that squares off the summary's own bottom
-     corners — together the two make the bar and its form read as one continuous panel. */
-  form.filters { flex-direction: column; align-items: stretch; border-top: 0;
+  /* Everything below is scoped under .kb-filters-mobile because both rules assume the form is the
+     one embedded in the mobile disclosure, not any other use of form.filters: border-top: 0 plus
+     the two zeroed top radii assume an attached summary bar directly above (pairing with the [open]
+     rule that squares off the summary's own bottom corners, so the bar and form read as one
+     continuous panel), and hiding .filters-label assumes the summary bar already said "Filters"
+     immediately above it. */
+  .kb-filters-mobile form.filters { flex-direction: column; align-items: stretch; border-top: 0;
     border-top-left-radius: 0; border-top-right-radius: 0; }
-  form.filters label { width: 100%; }
-  form.filters input, form.filters select, form.filters button { width: 100%; min-width: 0;
+  .kb-filters-mobile form.filters label { width: 100%; }
+  .kb-filters-mobile form.filters input, .kb-filters-mobile form.filters select,
+  .kb-filters-mobile form.filters button { width: 100%; min-width: 0;
     min-height: 44px; font-size: 16px; }
-  /* The summary bar already says "Filters" — the form's own label would repeat it directly
-     underneath. Scoped to the mobile copy only so the desktop form keeps its label. */
   .kb-filters-mobile .filters-label { display: none; }
   .kb-pager-bottom { display: flex; }
   .pager { flex-wrap: wrap; gap: 8px; }
