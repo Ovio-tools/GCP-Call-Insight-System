@@ -97,6 +97,72 @@ function rowHtml(r: KnowledgeRecord): string {
   );
 }
 
+/** Urgency → theme-token pill class. Total over `URGENCY`, with a neutral fallback so an enum
+ *  value added later renders as a plain pill rather than an unstyled one. */
+const URGENCY_PILL: Record<string, string> = {
+  emergency: 'u-emergency',
+  urgent: 'u-urgent',
+  routine: 'u-routine',
+};
+
+function urgencyPill(urgency: string): string {
+  const cls = URGENCY_PILL[urgency] ?? 'u-other';
+  return `<span class="kb-urgency ${cls}">${esc(humanizeLabel(urgency))}</span>`;
+}
+
+/** One labelled block inside a card's expander. Returns '' for a null scalar, an empty string, or
+ *  an empty array, so an absent field costs no blank row. */
+function detailBlock(label: string, value: string | readonly string[] | null): string {
+  if (value === null) return '';
+  if (Array.isArray(value)) {
+    if (value.length === 0) return '';
+    const chips = value.map((v) => `<span class="kb-chip">${esc(String(v))}</span>`).join('');
+    return `<div class="kb-field"><dt>${esc(label)}</dt><dd>${chips}</dd></div>`;
+  }
+  const text = String(value);
+  if (text.length === 0) return '';
+  return `<div class="kb-field"><dt>${esc(label)}</dt><dd>${esc(text)}</dd></div>`;
+}
+
+/**
+ * One record as a mobile card: a collapsed summary (time, urgency, category/intent, problem) plus a
+ * native `<details>` expander carrying everything else — including the five fields the desktop table
+ * has no column for. When every expandable field is empty the expander is omitted entirely and the
+ * call id falls back to a plain line, so no card offers a "More details" that reveals nothing.
+ */
+function cardHtml(r: KnowledgeRecord): string {
+  const blocks =
+    detailBlock('Symptoms', r.symptoms) +
+    detailBlock('They said', r.customer_language) +
+    detailBlock('Concerns', r.concerns) +
+    detailBlock('Where in the home', r.location_in_home) +
+    detailBlock('Access / scheduling', r.access_or_scheduling_notes) +
+    detailBlock('Already tried', r.prior_attempts) +
+    detailBlock('Competitors mentioned', r.competitor_mentions) +
+    detailBlock('Heard about us via', r.acquisition_source);
+
+  const callIdField = `<div class="kb-field"><dt>Call</dt><dd class="mono">${esc(r.call_id)}</dd></div>`;
+  const more = blocks
+    ? `<details class="kb-more"><summary>More details</summary>` +
+      `<dl class="kb-fields">${blocks}${callIdField}</dl></details>`
+    : `<p class="kb-callid mono">${esc(r.call_id)}</p>`;
+
+  const problem = r.problem_statement
+    ? `<p class="kb-problem">${esc(r.problem_statement)}</p>`
+    : `<p class="kb-problem kb-empty">No problem statement recorded.</p>`;
+
+  return (
+    `<article class="kb-card">` +
+    `<div class="kb-card-head"><time>${esc(fmtCreatedCt(r.created_at))}</time>` +
+    `${urgencyPill(r.urgency)}</div>` +
+    `<p class="kb-meta">${esc(humanizeLabel(r.service_category))} &middot; ` +
+    `${esc(humanizeLabel(r.call_intent))}</p>` +
+    problem +
+    more +
+    `</article>`
+  );
+}
+
 /** Column sizing for the fixed-layout table: narrow, non-wrapping id/meta cols; free-text cols share the rest. */
 const COLGROUP =
   `<colgroup><col class="c-id"><col class="c-time"><col class="c-intent">` +
@@ -139,6 +205,34 @@ th { position: sticky; top: 0; z-index: 1; background: var(--panel); color: var(
 tbody tr:hover { background: var(--panel-2); }
 .pager { margin: 12px 0; display: flex; gap: 12px; align-items: center; }
 .foot { margin-top: 24px; font-size: 0.8rem; color: var(--muted); }
+/* ---- Mobile card list. Hidden at desktop widths; the media query in Task 2 reveals it. ---- */
+.kb-cards { display: none; }
+.kb-card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 14px; margin: 0 0 12px; }
+.kb-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.kb-card-head time { color: var(--muted); font-size: 0.78rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.kb-urgency { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px;
+  font-size: 0.7rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+  white-space: nowrap; }
+.kb-urgency.u-emergency { background: var(--bad-bg); color: var(--bad-fg); }
+.kb-urgency.u-urgent { background: var(--warn-bg); color: var(--warn-fg); }
+.kb-urgency.u-routine { background: var(--ok-bg); color: var(--ok-fg); }
+.kb-urgency.u-other { background: var(--panel-3); color: var(--muted); }
+.kb-meta { margin: 8px 0 0; font-weight: 600; font-size: 0.95rem; }
+.kb-problem { margin: 8px 0 0; font-size: 0.95rem; overflow-wrap: break-word; }
+.kb-problem.kb-empty { color: var(--muted); font-style: italic; }
+.kb-more { margin: 10px 0 0; border-top: 1px solid var(--border); padding-top: 4px; }
+.kb-more > summary { cursor: pointer; min-height: 44px; display: flex; align-items: center;
+  color: var(--accent); font-size: 0.85rem; }
+.kb-fields { margin: 4px 0 0; }
+.kb-field { margin: 0 0 10px; }
+.kb-field dt { color: var(--muted); font-size: 0.72rem; text-transform: uppercase;
+  letter-spacing: 0.05em; }
+.kb-field dd { margin: 3px 0 0; font-size: 0.9rem; overflow-wrap: break-word; }
+.kb-chip { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 2px 8px; margin: 0 6px 6px 0; font-size: 0.85rem; }
+.kb-callid { margin: 10px 0 0; color: var(--muted); font-size: 0.8rem; }
 `;
 
 export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): string {
@@ -178,6 +272,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     .join('')}</tr>`;
   const body = dto.results.map(rowHtml).join('');
   const table = `<div class="table-wrap table-scroll"><table>${COLGROUP}<thead>${header}</thead><tbody>${body}</tbody></table></div>`;
+  const cards = `<div class="kb-cards">${dto.results.map(cardHtml).join('')}</div>`;
 
   const prevHref = dto.page > 1 ? esc(`/knowledge${qs ? `${qs}&` : '?'}page=${dto.page - 1}`) : '';
   const nextHref =
@@ -201,6 +296,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     exports +
     pager +
     table +
+    cards +
     `<p class="foot">Read-only. De-identified records only.</p>` +
     `</main>` +
     logoutScript(chrome) +
