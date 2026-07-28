@@ -163,11 +163,19 @@ describe('mobile card layout', () => {
     });
     const html = renderKnowledgePage(view({ results: [bare] }));
 
-    expect(html).not.toContain('kb-more');
+    // Assert on the MARKUP, not the bare string `kb-more`: the stylesheet ships `.kb-more`
+    // selectors on every render, so a substring check would never pass.
+    expect(html).not.toContain('<details class="kb-more">');
     expect(html).not.toContain('More details');
     expect(html).toContain('call_abc123');
     // The problem statement is NOT expandable, so it still shows on the collapsed card.
     expect(html).toContain('No hot water since last night');
+  });
+
+  it('emits the expander when there is something to expand', () => {
+    const html = renderKnowledgePage(view());
+    expect(html).toContain('<details class="kb-more">');
+    expect(html).toContain('More details');
   });
 
   it('escapes HTML-significant characters in every card-rendered free-text field', () => {
@@ -340,7 +348,7 @@ closing backtick (after the `.foot` rule, currently ~line 141):
 
 Run: `npx vitest run test/knowledge/render.test.ts`
 
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -416,7 +424,7 @@ Append to the `STYLE` literal in `src/knowledge/render.ts`, after the card rules
 
 Run: `npx vitest run test/knowledge/render.test.ts`
 
-Expected: PASS, 6 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 5: Commit**
 
@@ -575,7 +583,7 @@ whenever a focused form control is under 16px, and these inherit the 15px body f
 
 Run: `npx vitest run test/knowledge/render.test.ts`
 
-Expected: PASS, 10 tests.
+Expected: PASS, 11 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -676,7 +684,7 @@ single pager):
 
 Run: `npx vitest run test/knowledge/render.test.ts`
 
-Expected: PASS, 13 tests.
+Expected: PASS, 14 tests.
 
 - [ ] **Step 6: Commit**
 
