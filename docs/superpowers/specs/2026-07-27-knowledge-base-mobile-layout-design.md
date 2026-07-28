@@ -175,13 +175,30 @@ set to `16px` to stop iOS focus zoom.
 
 ### Where the code goes
 
-- Card rendering, the urgency-pill mapping and the active-filter count live in
-  `src/knowledge/render.ts` alongside the existing `rowHtml`.
-- Genuinely generic pieces — the pill classes and the tap-target sizing — go in
-  `src/ui/chrome.ts`'s `THEME` so the review and status surfaces can adopt them later
-  without a second copy. `THEME` is additive by contract: it must not redefine
-  selectors individual pages already style.
+- **Everything lives in `src/knowledge/render.ts`.** Card rendering, the urgency-pill
+  mapping, the active-filter count and all new CSS go in the knowledge page's own
+  style block, under `kb-`-prefixed class names.
+- **`src/ui/chrome.ts` is not touched.** An earlier draft of this design put the pill
+  and tap-target rules in the shared `THEME`. Checking the codebase killed that idea:
+  `.pill`, `.sla-ok`, `.sla-due_soon` and `.sla-breached` are already defined in
+  `src/review/render.ts:44-49`, and `THEME`'s own docblock states it deliberately does
+  not redefine selectors individual pages already style. Adding `.pill` to `THEME`
+  would violate that contract and put a shared rule one specificity accident away from
+  restyling the review queue. The urgency pill is therefore knowledge-scoped
+  (`.kb-urgency`), consuming the same theme *tokens* without sharing a *class*.
+  If the review or status surface later wants the same treatment, promoting it then —
+  with those pages in hand — is the cheaper and safer moment.
 - No route, query, DTO, CSV or JSON module is touched.
+
+### Why the filter form is emitted twice
+
+`<details open>` is an HTML attribute; CSS cannot set it. So no single `<details>` can
+be collapsed-by-default on mobile *and* always-open on desktop. The `::details-content`
+pseudo-element that would allow it is too new to rely on. Rather than reach for
+JavaScript on a deliberately script-free page, the (small) filter form is rendered
+twice — once plain for desktop, once wrapped in `<details>` for mobile — with the media
+query showing exactly one. This is the same dual-markup trade already accepted for the
+table, at a few hundred bytes.
 
 ## Testing
 
