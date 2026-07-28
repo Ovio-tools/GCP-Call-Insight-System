@@ -245,6 +245,14 @@ tbody tr:hover { background: var(--panel-2); }
 .kb-chip { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 6px; padding: 2px 8px; margin: 0 6px 6px 0; font-size: 0.85rem; }
 .kb-callid { margin: 10px 0 0; color: var(--muted); font-size: 0.8rem; }
+/* ---- Below 900px the nine-column table cannot give its four free-text columns a readable
+   measure (the five pinned columns alone total 628px), so the card list takes over. ---- */
+@media (max-width: 899px) {
+  main { padding: 12px max(12px, env(safe-area-inset-right)) 24px max(12px, env(safe-area-inset-left)); }
+  .kb-cards { display: block; }
+  .table-wrap { display: none; }
+  h1 { font-size: 1.25rem; }
+}
 `;
 
 export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): string {

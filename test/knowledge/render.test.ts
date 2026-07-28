@@ -201,3 +201,20 @@ describe('mobile card layout', () => {
     expect(html.split('&lt;script&gt;').length - 1).toBeGreaterThanOrEqual(10);
   });
 });
+
+describe('layout switch', () => {
+  it('ships both layouts in one response, since the choice is made client-side', () => {
+    const html = renderKnowledgePage(view());
+    expect(html).toContain('class="kb-cards"');
+    expect(html).toContain('class="table-wrap table-scroll"');
+  });
+
+  it('hides the table and shows the cards below the 900px breakpoint', () => {
+    const html = renderKnowledgePage(view());
+    expect(html).toContain('@media (max-width: 899px)');
+    // Inside the breakpoint the roles invert: cards become visible, the table goes away.
+    const mq = html.slice(html.indexOf('@media (max-width: 899px)'));
+    expect(mq).toContain('.kb-cards { display: block; }');
+    expect(mq).toContain('.table-wrap { display: none; }');
+  });
+});
