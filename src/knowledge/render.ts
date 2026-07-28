@@ -58,6 +58,18 @@ function filterQuery(filters: KnowledgeFilters): string {
   return s ? `?${s}` : '';
 }
 
+/** How many filters the user actually set — drives the mobile summary bar's label and open state. */
+function activeFilterCount(filters: KnowledgeFilters): number {
+  return [
+    filters.q,
+    filters.service_category,
+    filters.call_intent,
+    filters.urgency,
+    filters.from,
+    filters.to,
+  ].filter((v) => v !== undefined && v !== '').length;
+}
+
 /** A `<select>` with an "any" option plus the enum values, humanized. */
 function selectField(
   name: string,
@@ -245,6 +257,12 @@ tbody tr:hover { background: var(--panel-2); }
 .kb-chip { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 6px; padding: 2px 8px; margin: 0 6px 6px 0; font-size: 0.85rem; }
 .kb-callid { margin: 10px 0 0; color: var(--muted); font-size: 0.8rem; }
+.kb-filters-mobile { display: none; }
+.kb-filters-mobile > summary { cursor: pointer; min-height: 44px; padding: 12px 14px;
+  display: list-item; list-style-position: inside; background: var(--panel);
+  border: 1px solid var(--border); border-radius: var(--radius); font-weight: 600;
+  font-size: 0.9rem; }
+.kb-filters-mobile[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 /* ---- Below 900px the nine-column table cannot give its four free-text columns a readable
    measure (the five pinned columns alone total 628px), so the card list takes over. ---- */
 @media (max-width: 899px) {
@@ -252,6 +270,13 @@ tbody tr:hover { background: var(--panel-2); }
   .kb-cards { display: block; }
   .table-wrap { display: none; }
   h1 { font-size: 1.25rem; }
+  .kb-filters-desktop { display: none; }
+  .kb-filters-mobile { display: block; }
+  form.filters { flex-direction: column; align-items: stretch; border-top: 0;
+    border-top-left-radius: 0; border-top-right-radius: 0; }
+  form.filters label { width: 100%; }
+  form.filters input, form.filters select, form.filters button { width: 100%; min-width: 0;
+    min-height: 44px; font-size: 16px; }
 }
 `;
 
@@ -272,6 +297,14 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     `<label>to<input type="text" name="to" value="${esc(f.to ?? '')}" placeholder="YYYY-MM-DD"></label>` +
     `<button type="submit">Search</button>` +
     `</form>`;
+
+  const activeCount = activeFilterCount(f);
+  const filtersSummary =
+    activeCount === 0 ? 'Filters' : `Filters &middot; ${esc(String(activeCount))} active`;
+  const filtersBlock =
+    `<div class="kb-filters-desktop">${form}</div>` +
+    `<details class="kb-filters-mobile"${activeCount > 0 ? ' open' : ''}>` +
+    `<summary>${filtersSummary}</summary>${form}</details>`;
 
   const summaryBlock = `<div class="summary"><p>${esc(dto.summary.narrative)}</p></div>`;
 
@@ -311,7 +344,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     siteHeader('Knowledge base') +
     `<main>` +
     `<h1>Knowledge base</h1>` +
-    form +
+    filtersBlock +
     summaryBlock +
     exports +
     pager +

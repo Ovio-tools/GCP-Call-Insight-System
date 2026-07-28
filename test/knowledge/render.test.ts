@@ -218,3 +218,47 @@ describe('layout switch', () => {
     expect(mq).toContain('.table-wrap { display: none; }');
   });
 });
+
+describe('collapsible filters', () => {
+  it('labels the bar plainly when nothing is filtered, and stays closed', () => {
+    const html = renderKnowledgePage(view());
+    expect(html).toContain('<summary>Filters</summary>');
+    expect(html).not.toContain('<details class="kb-filters-mobile" open>');
+  });
+
+  it('counts the active filters and opens the bar so a filtered view never hides why', () => {
+    const html = renderKnowledgePage(view({ filters: { q: 'heater', urgency: 'emergency' } }));
+    expect(html).toContain('Filters &middot; 2 active');
+    expect(html).toContain('<details class="kb-filters-mobile" open>');
+  });
+
+  it('counts every filter kind, not just the free-text one', () => {
+    const html = renderKnowledgePage(
+      view({
+        filters: {
+          q: 'heater',
+          service_category: 'water_heater',
+          call_intent: 'new_booking',
+          urgency: 'emergency',
+          from: '2026-07-01',
+          to: '2026-07-31',
+        },
+      }),
+    );
+    expect(html).toContain('Filters &middot; 6 active');
+  });
+
+  it('renders the form for both layouts', () => {
+    const html = renderKnowledgePage(view());
+    expect(html).toContain('class="kb-filters-desktop"');
+    expect(html).toContain('class="kb-filters-mobile"');
+    // Both copies are real forms, so whichever one is visible can actually be submitted.
+    expect(html.split('<form class="filters"').length - 1).toBe(2);
+  });
+
+  it('raises mobile form controls to 16px so Safari stops force-zooming on focus', () => {
+    const html = renderKnowledgePage(view());
+    const mq = html.slice(html.indexOf('@media (max-width: 899px)'));
+    expect(mq).toContain('font-size: 16px');
+  });
+});
