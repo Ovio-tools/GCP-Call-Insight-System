@@ -355,8 +355,10 @@ describe('mobile tap targets', () => {
   it('shows the bottom pager only on mobile, so desktop keeps its single one', () => {
     const html = renderKnowledgePage(view());
     const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
-    expect(base).toContain('.pager-bottom { display: none; }');
-    expect(mobileRules(html)).toContain('.pager-bottom { display: flex; }');
+    // Both classes: at (0,2,0) this beats the page's own (0,1,0) `.pager { display: flex }`
+    // regardless of which comes first in the stylesheet.
+    expect(base).toContain('.pager.pager-bottom { display: none; }');
+    expect(mobileRules(html)).toContain('.pager.pager-bottom { display: flex; }');
   });
 
   it('gives the pager and export links a 44px minimum tap target on mobile', () => {

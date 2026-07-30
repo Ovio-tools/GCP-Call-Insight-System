@@ -54,7 +54,13 @@ export const CARD_STYLE = `
 .chip { display: inline-block; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 6px; padding: 2px 8px; margin: 0 6px 6px 0; font-size: 0.85rem; }
 .callid { margin: 10px 0 0; color: var(--muted); font-size: 0.8rem; }
-.pager-bottom { display: none; }
+/* Both classes, deliberately: the bottom pager carries class="pager pager-bottom", and a page's
+   own .pager { display: flex } is also (0,1,0) — so a single-class rule here would tie on
+   specificity and let SOURCE ORDER decide whether the duplicate pager shows on desktop. That would
+   make this block's placement load-bearing in a way nothing tests: splice it right after THEME (the
+   natural instinct) and the bottom pager silently appears at every width. At (0,2,0) it wins
+   wherever it sits. */
+.pager.pager-bottom { display: none; }
 /* ---- Below 900px a wide fixed-layout table cannot give its free-text columns a readable measure
    (the pinned columns alone exceed a phone viewport), so the card list takes over. ---- */
 @media (max-width: 899px) {
@@ -71,7 +77,7 @@ export const CARD_STYLE = `
   form.filters label { width: 100%; }
   form.filters input, form.filters select, form.filters button { width: 100%; min-width: 0;
     min-height: 44px; font-size: 16px; }
-  .pager-bottom { display: flex; }
+  .pager.pager-bottom { display: flex; }
   .pager { flex-wrap: wrap; gap: 8px; }
   /* .exports exists only on /knowledge; the selector is inert elsewhere, which is cheaper than
      duplicating these five declarations into that page and letting the two drift. */
