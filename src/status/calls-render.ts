@@ -5,6 +5,7 @@ import {
   type CallsPage,
 } from './calls.js';
 import { THEME, siteHeader, logoutScript, fmtTs, type Chrome } from '../ui/chrome.js';
+import { CARD_STYLE, cardField } from '../ui/cards.js';
 
 /**
  * Server-rendered, self-contained per-call pipeline page (companion to /status). READ-ONLY:
@@ -56,6 +57,36 @@ function rowHtml(item: CallListItem): string {
   );
 }
 
+/**
+ * One call as a mobile card. Flat — every field visible, no expander: with six short fields
+ * (an id, two timestamps, an enum badge, a short reason, a stage) a disclosure control would hide
+ * almost nothing while costing a tap. `Updated` appears ONLY when it differs from `Created`, so
+ * its presence carries information rather than restating the line above it.
+ */
+function cardHtml(item: CallListItem): string {
+  const reason = item.outcome.reason?.trim()
+    ? `<p class="card-meta">${esc(item.outcome.reason)}</p>`
+    : '';
+  const fields =
+    cardField('Stage', humanizeStage(item.current_stage)) +
+    (item.updated_at !== item.created_at ? cardField('Updated', fmtTs(item.updated_at)) : '') +
+    `<div class="field"><dt>Call</dt>` +
+    `<dd class="mono" title="${esc(item.call_id)}">${esc(item.call_id)}</dd></div>`;
+
+  // Identifying, not a bare timestamp the <time> element right below would only repeat.
+  const cardLabel = `${item.outcome.label} call, ${fmtTs(item.created_at)}`;
+
+  return (
+    `<article class="card" aria-label="${esc(cardLabel)}">` +
+    `<div class="card-head">` +
+    `<time datetime="${esc(item.created_at)}">${esc(fmtTs(item.created_at))}</time>` +
+    `${badge(item)}</div>` +
+    reason +
+    `<dl class="fields">${fields}</dl>` +
+    `</article>`
+  );
+}
+
 /** Column sizing for the fixed-layout table: narrow non-wrapping id/time cols; text cols share the rest. */
 const COLGROUP =
   `<colgroup><col class="c-id"><col class="c-time"><col class="c-outcome">` +
@@ -94,7 +125,10 @@ tbody tr:hover { background: var(--panel-2); }
   font-weight: 600; color: #eef2f7; white-space: nowrap; }
 .pager { margin: 12px 0; display: flex; gap: 12px; align-items: center; }
 .foot { margin-top: 24px; font-size: 0.8rem; color: var(--muted); }
-`;
+` +
+  // After this page's own base rules, per CARD_STYLE's documented placement contract: it may only
+  // override rules declared before it, and the page adds no media query of its own.
+  CARD_STYLE;
 
 export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
   const qs = dto.filter && dto.filter !== 'all' ? `?outcome=${encodeURIComponent(dto.filter)}` : '';
@@ -119,6 +153,13 @@ export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
       : `<tr><td colspan="6">No calls match this filter yet.</td></tr>`;
   const table = `<div class="table-wrap table-scroll"><table>${COLGROUP}<thead>${header}</thead><tbody>${body}</tbody></table></div>`;
 
+  const cards =
+    `<div class="cards">` +
+    (dto.items.length > 0
+      ? dto.items.map(cardHtml).join('')
+      : `<p class="muted">No calls match this filter yet.</p>`) +
+    `</div>`;
+
   const prevHref = dto.page > 1 ? esc(`/calls${qs ? `${qs}&` : '?'}page=${dto.page - 1}`) : '';
   const nextHref =
     dto.page < dto.total_pages ? esc(`/calls${qs ? `${qs}&` : '?'}page=${dto.page + 1}`) : '';
@@ -128,6 +169,9 @@ export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
     `<span>Page ${esc(String(dto.page))} of ${esc(String(dto.total_pages))} · ${esc(String(dto.total))} total</span>` +
     (nextHref ? `<a href="${nextHref}">Next &rarr;</a>` : '<span></span>') +
     `</div>`;
+  // Mobile-only duplicate below the results, so paging does not mean scrolling back up. CARD_STYLE
+  // hides `.pager.pager-bottom` at desktop widths.
+  const pagerBottom = pager.replace('<div class="pager">', '<div class="pager pager-bottom">');
 
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
@@ -140,6 +184,8 @@ export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
     form +
     pager +
     table +
+    cards +
+    pagerBottom +
     `<p class="foot">Read-only. Call outcomes only — no transcript content or PII.</p>` +
     `</main>` +
     logoutScript(chrome) +
