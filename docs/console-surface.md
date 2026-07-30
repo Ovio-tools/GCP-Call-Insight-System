@@ -19,6 +19,25 @@ The home page (`src/console/home-render.ts`) is self-contained HTML (inline CSS,
 script for the CSRF'd logout, no external assets, no PII) — a card per screen, matching the dark
 palette the other surfaces use.
 
+## Self-describing screens
+
+A first-time visitor should never have to guess what a screen is for. The home page opens with a
+plain-language paragraph describing what the system does end to end, each card blurb says what that
+screen answers, and **every** surface renders a one-paragraph description directly under its `<h1>`
+via the shared `pageIntro()` helper (`src/ui/chrome.ts`, styled by `.page-intro` in `THEME`):
+
+| Screen              | What its description tells the reader                                                                                           |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| **Pipeline health** | Whether the system is running and where calls are right now — per-step health, today's totals, spend vs budget. Counts only.    |
+| **All calls**       | One row per call and what became of it: finished, deliberately skipped (with the reason), waiting for review, or failed.        |
+| **Knowledge base**  | The finished per-call records — intent, category, urgency, symptoms, customer's own words — searchable, filterable, exportable. |
+| **Review queue**    | The calls the system paused because it wasn't confident, and what a reviewer does about them.                                   |
+| **Review detail**   | What one paused call needs from the reviewer, and that the transcript shown is already anonymised.                              |
+
+The copy is free to change; its presence is not — `test/ui/page-intro.test.ts` asserts every view
+renders a description of at least a sentence, that the intro is styled, and that `pageIntro()`
+escapes like the rest of the chrome. Descriptions are static prose: no PII, no per-call data.
+
 ## Why it composes cleanly
 
 All three surfaces build on the same `createInternalApp` factory, share one auth/session/CSRF/

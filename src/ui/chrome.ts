@@ -83,6 +83,9 @@ export const THEME = `
 .site-header .signout { font: inherit; min-height: 38px; padding: 6px 14px; border-radius: 8px;
   border: 1px solid var(--border); background: var(--panel-2); color: var(--text); cursor: pointer; }
 .site-header .signout:hover { background: var(--panel-3); }
+/* The one-paragraph "what this screen is" line every surface renders directly under its <h1>. */
+.page-intro { margin: 0 0 18px; max-width: 68ch; font-size: 0.95rem; line-height: 1.55;
+  color: var(--muted); }
 `;
 
 /**
@@ -124,6 +127,15 @@ export function logoutScript(chrome: Chrome): string {
     `window.location.href=next;});}` +
     `</script>`
   );
+}
+
+/**
+ * The short, plain-language description of what a screen shows, rendered directly under its `<h1>`.
+ * A first-time visitor should be able to read one sentence and know what they are looking at, so
+ * every surface renders one. Plain words only — no PII, no internal jargon, no per-call data.
+ */
+export function pageIntro(text: string): string {
+  return `<p class="page-intro">${esc(text)}</p>`;
 }
 
 /** Compact a strict ISO-8601 timestamp to "YYYY-MM-DD HH:MM"; leaves any other string untouched. */

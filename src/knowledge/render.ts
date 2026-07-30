@@ -1,7 +1,7 @@
 import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY, type Urgency } from '../db/enums.js';
 import type { KnowledgeFilters, KnowledgeRecord, KnowledgeView } from './dto.js';
 import { humanizeLabel } from './summary.js';
-import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
+import { THEME, siteHeader, logoutScript, pageIntro, type Chrome } from '../ui/chrome.js';
 
 /**
  * Formatter for the `Created` column: renders a UTC ISO timestamp in US Central Time
@@ -372,6 +372,13 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     siteHeader('Knowledge base') +
     `<main>` +
     `<h1>Knowledge base</h1>` +
+    pageIntro(
+      'The finished record of every customer call: what they were calling about, the type of ' +
+        'work, how urgent it was, the symptoms they described, and a few phrases in their own ' +
+        'words. Filter by date, intent, category or urgency, and export what you find as CSV ' +
+        'or JSON. Names, phone numbers and addresses were removed before any of this was ' +
+        'written down.',
+    ) +
     filtersBlock +
     summaryBlock +
     exports +

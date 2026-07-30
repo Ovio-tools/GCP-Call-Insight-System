@@ -1,5 +1,5 @@
 import type { ComponentNode, StageNode, StatusDTO } from './dto.js';
-import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
+import { THEME, siteHeader, logoutScript, pageIntro, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained status page (Task 7.3, plan §5). Inline CSS, no external
@@ -183,6 +183,12 @@ export function renderStatusPage(dto: StatusDTO, opts: RenderStatusOptions = {})
     siteHeader('Pipeline health') +
     `<main>` +
     `<h1>Pipeline status</h1>` +
+    pageIntro(
+      'Whether the system is working, and where calls are right now. Each step below — from ' +
+        'receiving a call to saving the finished record — reports healthy, idle or stuck, ' +
+        "alongside today's totals, anything waiting for a person, and spend against budget. " +
+        'This screen shows counts only: no transcripts, no customer details.',
+    ) +
     `<p class="nav"><a href="/calls">View all calls &amp; outcomes &rarr;</a></p>` +
     `<p class="summary state-${esc(s.pipeline_state)}">${esc(summarySentence(dto))}</p>` +
     `<div class="counts">` +

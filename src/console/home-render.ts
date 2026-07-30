@@ -20,22 +20,30 @@ const CARDS: readonly SurfaceCard[] = [
   {
     href: '/status',
     title: 'Pipeline health',
-    blurb: 'Live system status and per-stage counts. No call content.',
+    blurb:
+      'Is the system running, and where are calls right now? Health for each step, ' +
+      "today's totals, and spend against budget. No call content.",
   },
   {
     href: '/calls',
     title: 'All calls',
-    blurb: 'Every call the pipeline has seen — including non-customer and skipped.',
+    blurb:
+      'Every call that came in and what happened to it — finished, skipped as too ' +
+      'short or not a conversation, waiting for review, or failed.',
   },
   {
     href: '/knowledge',
     title: 'Knowledge base',
-    blurb: 'Search, filter, and export the structured call records.',
+    blurb:
+      'The finished records: what each customer wanted, how urgent it was, and their ' +
+      'own words. Search, filter, and export to CSV or JSON.',
   },
   {
     href: '/review',
     title: 'Review queue',
-    blurb: 'Resolve the calls the pipeline held for a human decision.',
+    blurb:
+      "Calls the system paused because it wasn't sure. Read the anonymised text, say " +
+      'what the call was, and it finishes processing.',
   },
 ];
 
@@ -46,7 +54,8 @@ const STYLE =
 body { margin: 0; font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: var(--bg); color: var(--text); }
 main { max-width: var(--content); margin: 0 auto; padding: 24px 16px 40px; }
-.lead { font-size: 0.95rem; margin: 0 0 20px; }
+h1 { font-size: 1.5rem; margin: 0 0 10px; }
+.lead { font-size: 0.95rem; line-height: 1.6; max-width: 68ch; margin: 0 0 24px; color: var(--muted); }
 ul.cards { list-style: none; padding: 0; margin: 0; display: grid; gap: 14px;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
 a.card { display: block; padding: 16px 18px; border-radius: var(--radius); border: 1px solid var(--border);
@@ -73,7 +82,14 @@ export function renderHome(opts: RenderHomeOptions = {}): string {
     `<title>Call Insights — Console</title><style>${STYLE}</style></head><body>` +
     siteHeader('Home') +
     `<main>` +
-    `<p class="lead muted">One sign-in for every screen. Pick where to go.</p>` +
+    `<h1>Call Insights</h1>` +
+    `<p class="lead">` +
+    `Every phone call that comes in is picked up automatically, stripped of names, numbers and ` +
+    `addresses, and turned into a short written record of what the customer actually asked for — ` +
+    `the problem, how urgent it is, and the words they used. Those records build up into a ` +
+    `searchable history you can filter and export. Anything the system isn't confident about is ` +
+    `set aside for a person instead of guessed at. One sign-in covers every screen below.` +
+    `</p>` +
     `<ul class="cards">${cards}</ul>` +
     `<p class="foot">Authorized internal use only. No customer content or personal data appears on this page.</p>` +
     `</main>` +

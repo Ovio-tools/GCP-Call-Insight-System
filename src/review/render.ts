@@ -1,5 +1,12 @@
 import type { ReviewDetail, ReviewList } from './dto.js';
-import { THEME, siteHeader, logoutScript, humanizeReason, type Chrome } from '../ui/chrome.js';
+import {
+  THEME,
+  siteHeader,
+  logoutScript,
+  pageIntro,
+  humanizeReason,
+  type Chrome,
+} from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained review pages (Task 6.2). READ-ONLY HTML: the shared middleware
@@ -103,6 +110,13 @@ export function renderReviewListPage(list: ReviewList, chrome: Chrome = {}): str
   return (
     HEAD('Review queue', 'Review queue') +
     `<h1>Review queue</h1>` +
+    pageIntro(
+      "Calls the system stopped and set aside because it wasn't confident enough to decide on " +
+        'its own — the conversation was unclear, the transcript never arrived, or personal ' +
+        'details may still be in the text. Open one, read the anonymised transcript, and say ' +
+        'what the call was; that answer is saved and the call finishes processing. Nothing here ' +
+        'is thrown away while it waits.',
+    ) +
     `<p class="meta">${list.items.length} call(s) waiting for a decision.</p>` +
     rows +
     FOOT(list.generated_at, chrome)
@@ -194,6 +208,11 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
     HEAD(`Review ${detail.id}`, 'Review') +
     `<p class="nav"><a href="/review">&larr; Review queue</a></p>` +
     `<h1>${esc(humanizeReason(detail.held_reason))}</h1>${slaPill(detail)}` +
+    pageIntro(
+      'One paused call. The heading is why it stopped; the transcript below has personal ' +
+        'details already swapped for labels like [NAME_1]. Read it, then choose what the call ' +
+        'really was — that closes the review and lets the call carry on.',
+    ) +
     `<p>${esc(detail.explanation)}</p>` +
     `<div class="meta">call ${esc(detail.call_id)} · status ${esc(detail.status)} · ` +
     `assignee ${esc(detail.assignee ?? 'unassigned')} · raw ${detail.raw_available ? 'available' : 'unavailable'}</div>` +

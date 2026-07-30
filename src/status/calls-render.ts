@@ -4,7 +4,7 @@ import {
   type CallOutcomeKey,
   type CallsPage,
 } from './calls.js';
-import { THEME, siteHeader, logoutScript, fmtTs, type Chrome } from '../ui/chrome.js';
+import { THEME, siteHeader, logoutScript, pageIntro, fmtTs, type Chrome } from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained per-call pipeline page (companion to /status). READ-ONLY:
@@ -137,6 +137,12 @@ export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
     `<main>` +
     `<p class="nav"><a href="/status">&larr; Pipeline health</a></p>` +
     `<h1>Calls — full pipeline</h1>` +
+    pageIntro(
+      'One row per call the system has seen, and what became of it: finished and saved, ' +
+        'skipped on purpose (with the reason — too short, not a conversation, internal), ' +
+        'waiting for someone to review it, or failed. Use it to check a single call or to ' +
+        'confirm nothing is quietly being dropped. Outcomes only — no transcript text.',
+    ) +
     form +
     pager +
     table +
