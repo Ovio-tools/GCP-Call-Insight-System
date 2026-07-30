@@ -280,6 +280,26 @@ describe('layout switch', () => {
     const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
     expect(base).toContain('.cards { display: none; }');
   });
+
+  it('splices CARD_STYLE after the page base rules, where the cascade needs it', () => {
+    // Five of CARD_STYLE's media rules TIE on specificity with this page's base rules
+    // (form.filters button/select at (0,1,2), form.filters at (0,1,1), main and h1 at (0,0,1)) and
+    // are therefore decided by SOURCE ORDER alone. The "obvious" splice right after THEME silently
+    // loses all five — 16px reverts to 15px and Safari resumes force-zooming, the 44px tap target
+    // reverts to 40px — with nothing else in this suite failing, because `mobileRules(...) contains
+    // 'font-size: 16px'` stays true when the rule is present but LOSES. So assert the ordering.
+    const html = renderKnowledgePage(view());
+    const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
+    // A rule from the page's OWN base CSS (and one of the five that ties), never from THEME or
+    // CARD_STYLE — an anchor drawn from either of those would not pin the splice point.
+    const anchor = base.indexOf('form.filters button { padding: 8px 16px;');
+    const shared = base.indexOf('.cards { display: none; }');
+    // Both must actually be found: a typo'd anchor returns -1 and every `>` comparison below would
+    // then pass for entirely the wrong reason.
+    expect(anchor).toBeGreaterThanOrEqual(0);
+    expect(shared).toBeGreaterThanOrEqual(0);
+    expect(shared).toBeGreaterThan(anchor);
+  });
 });
 
 describe('collapsible filters', () => {

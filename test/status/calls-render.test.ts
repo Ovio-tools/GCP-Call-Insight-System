@@ -94,13 +94,20 @@ describe('all-calls mobile cards', () => {
     expect(same).not.toContain('<dt>Updated</dt>');
   });
 
-  it('omits the reason line when there is no reason', () => {
+  // Both shapes of "no reason", because the renderer guards both (`reason?.trim()`) and only the
+  // null one is reachable today: `deriveOutcome` returns null or a non-blank string from a closed
+  // enum. That guarantee rests on a database CHECK constraint, not the type system — `reason` is
+  // typed `string | null` and `renderCallsPage` accepts ANY `CallsPage` — and `deriveOutcome`'s own
+  // docblock takes the opposite posture for `status` (degrade rather than trust the enum). So the
+  // guard stays, and both its cases get held to `cardField`'s five-case emptiness standard.
+  it.each([
+    ['there is no reason at all', null],
+    ['the reason is whitespace only', '   '],
+  ])('omits the reason line when %s', (_label, reason) => {
     const region = cardsOf(
       renderCallsPage(
         page({
-          items: [
-            item({ outcome: { key: 'customer_completed', label: 'Customer', reason: null } }),
-          ],
+          items: [item({ outcome: { key: 'customer_completed', label: 'Customer', reason } })],
         }),
       ),
     );
@@ -129,19 +136,29 @@ describe('all-calls mobile cards', () => {
 
   it('escapes HTML-significant characters in every card-rendered field', () => {
     const hostile = '<script>alert("x")</script>';
-    const html = renderCallsPage(
-      page({
-        items: [
-          item({
-            call_id: hostile,
-            current_stage: hostile,
-            outcome: { key: 'held', label: hostile, reason: hostile },
-          }),
-        ],
-      }),
+    // Scoped to the CARD region, not the page: the table escapes the same four values, so a
+    // whole-page assertion here stays green with every `esc()` stripped out of `cardHtml` — the
+    // exact vacuity this file's docblock warns about. The card is a NEW interpolation site and
+    // inherits none of the table's proof.
+    const region = cardsOf(
+      renderCallsPage(
+        page({
+          items: [
+            item({
+              call_id: hostile,
+              current_stage: hostile,
+              outcome: { key: 'held', label: hostile, reason: hostile },
+            }),
+          ],
+        }),
+      ),
     );
-    expect(html).not.toContain('<script>alert');
-    expect(html).toContain('&lt;script&gt;');
+    expect(region).not.toContain('<script>alert');
+    expect(region).toContain('&lt;script&gt;');
+    // Six interpolation sites carried the payload — the aria-label, the badge label, the reason,
+    // the stage, and the call id twice (its `title` attribute and its text) — so each must appear
+    // escaped rather than swallowed by a single lucky `esc()` somewhere.
+    expect(region.split('&lt;script&gt;').length - 1).toBeGreaterThanOrEqual(6);
   });
 });
 
@@ -162,6 +179,26 @@ describe('all-calls layout switch', () => {
 
   it('raises mobile form controls to 16px so Safari stops force-zooming on focus', () => {
     expect(mobileRules(renderCallsPage(page()))).toContain('font-size: 16px');
+  });
+
+  it('splices CARD_STYLE after the page base rules, where the cascade needs it', () => {
+    // Five of CARD_STYLE's media rules TIE on specificity with this page's base rules
+    // (form.filters button/select at (0,1,2), form.filters at (0,1,1), main and h1 at (0,0,1)) and
+    // are therefore decided by SOURCE ORDER alone. The "obvious" splice right after THEME silently
+    // loses all five — 16px reverts to 15px and Safari resumes force-zooming, the 44px tap target
+    // reverts to 40px — with nothing else in this suite failing, because `mobileRules(...) contains
+    // 'font-size: 16px'` stays true when the rule is present but LOSES. So assert the ordering.
+    const html = renderCallsPage(page());
+    const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
+    // A rule from the page's OWN base CSS (and one of the five that ties), never from THEME or
+    // CARD_STYLE — an anchor drawn from either of those would not pin the splice point.
+    const anchor = base.indexOf('form.filters button { padding: 8px 16px;');
+    const shared = base.indexOf('.cards { display: none; }');
+    // Both must actually be found: a typo'd anchor returns -1 and every `>` comparison below would
+    // then pass for entirely the wrong reason.
+    expect(anchor).toBeGreaterThanOrEqual(0);
+    expect(shared).toBeGreaterThanOrEqual(0);
+    expect(shared).toBeGreaterThan(anchor);
   });
 
   it('repeats the pager below the results, mobile-only', () => {
