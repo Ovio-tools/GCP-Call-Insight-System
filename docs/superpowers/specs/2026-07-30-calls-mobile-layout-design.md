@@ -118,15 +118,40 @@ This is a mechanical rename across `src/knowledge/render.ts` and its 30 referenc
 assert on these exact class strings and on the CSS rules themselves, so a missed
 rename fails loudly rather than silently.
 
-### Naming collision check — run, not deferred
+### Naming collision check — run, then found wrong, then fixed
 
-`.card`, `.cards`, `.field`, `.chip`, `.callid` and `.pager-bottom` are short, generic
-names entering a module two surfaces import, so they were checked against every
-stylesheet in `src/` before being adopted. **No collisions.** The only `cards` match is
-a JavaScript identifier in `src/redaction/regex-detectors.ts:251`, not a selector.
+An initial check claimed no collisions. **That was wrong**, and the way it was wrong is
+worth recording: the grep required a non-letter before the dot, so every
+**element-qualified** selector slipped through it. `src/console/home-render.ts` already
+owned both `.card` and `.cards` — as `a.card` and `ul.cards`, a nav-tile grid with
+entirely different semantics.
 
-`.badge` is defined in `src/status/calls-render.ts:93` — it stays owned by that page
-and does **not** enter the shared module, so it is not a collision either.
+There was no rendered defect: home does not import `CARD_STYLE`, and `ul.cards` (0,1,1)
+outranks `.cards` (0,1,0) regardless. But that is luck, not design — it holds only
+because the selectors happened to be element-qualified. Home's classes are therefore
+renamed to `.tile` / `.tiles`, which is also the more accurate name for what they are.
+
+Remaining shared names — `.card-head`, `.card-meta`, `.fields`, `.field`, `.chip` — are
+structurally scoped (they only ever appear inside a `.card`) and collide with nothing.
+`.badge` is defined in `src/status/calls-render.ts:93`, stays owned by that page, and
+does not enter the shared module.
+
+**Lesson for any future collision check on a CSS class:** grep for the bare name, not
+for a name preceded by a delimiter. `.foo` can be reached as `div.foo`, `.bar .foo`, or
+`.foo.baz`, and a delimiter-anchored pattern misses the first of those entirely.
+
+### The one real ordering hazard, removed rather than documented
+
+`CARD_STYLE`'s `.pager-bottom { display: none; }` and each consumer's
+`.pager { display: flex; }` are both specificity (0,1,0), and the bottom pager carries
+**both** classes — so source order alone decided which won, and splicing the shared
+block in the "obvious" place (right after `THEME`) would have silently shown the bottom
+pager on desktop with no test failing.
+
+Fixed in the cascade rather than in a comment: the rules are written
+`.pager.pager-bottom` (0,2,0), so placement no longer changes the outcome. This is
+verified by temporarily splicing `CARD_STYLE` before the page's base rules and
+confirming the suite still passes.
 
 ## Design
 
