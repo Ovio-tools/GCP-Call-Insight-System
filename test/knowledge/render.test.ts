@@ -36,12 +36,12 @@ function record(overrides: Partial<KnowledgeRecord> = {}): KnowledgeRecord {
   };
 }
 
-/** The `<div class="kb-cards">…</div>` region only. Depth-counted, because cards contain nested
+/** The `<div class="cards">…</div>` region only. Depth-counted, because cards contain nested
  *  divs and later tasks add markup after the list — a slice to the first `</div>` would lie. */
 function cardsOf(html: string): string {
-  const open = '<div class="kb-cards">';
+  const open = '<div class="cards">';
   const start = html.indexOf(open);
-  if (start === -1) throw new Error('no kb-cards region in the rendered page');
+  if (start === -1) throw new Error('no cards region in the rendered page');
   let depth = 0;
   for (let i = start; i < html.length; i += 1) {
     if (html.startsWith('<div', i)) depth += 1;
@@ -50,11 +50,18 @@ function cardsOf(html: string): string {
       if (depth === 0) return html.slice(start, i + 6);
     }
   }
-  throw new Error('unbalanced kb-cards region');
+  throw new Error('unbalanced cards region');
 }
 
 /** The BODY of the mobile media query only. A slice to end-of-document would let a rule that
- *  merely exists somewhere in the stylesheet satisfy a mobile-only assertion. */
+ *  merely exists somewhere in the stylesheet satisfy a mobile-only assertion.
+ *
+ *  ASSUMPTION CHANGED: the page now emits TWO `@media (max-width: 899px)` blocks — the SHARED one
+ *  from `src/ui/cards.ts` (`CARD_STYLE`) and, after it, the knowledge page's own. This helper takes
+ *  the FIRST, so it means "the shared card block" and nothing else; a knowledge-specific rule must
+ *  be asserted with {@link kbMobileRules}. Deliberately left matching the first block rather than
+ *  spanning both: spanning would let a rule land in either file and still pass, which is exactly
+ *  the shared-vs-page-specific distinction this refactor exists to keep honest. */
 function mobileRules(html: string): string {
   const open = '@media (max-width: 899px) {';
   const start = html.indexOf(open);
@@ -68,6 +75,29 @@ function mobileRules(html: string): string {
     }
   }
   throw new Error('unbalanced media query');
+}
+
+/** Everything AFTER the shared card media query — i.e. the knowledge page's own trailing chunk:
+ *  its base rules followed by its own `@media (max-width: 899px)` block. */
+function kbChunk(html: string): string {
+  const shared = mobileRules(html);
+  return html.slice(html.indexOf(shared) + shared.length);
+}
+
+/** The BODY of the knowledge page's OWN mobile media query (the second one). Same guarantee as
+ *  {@link mobileRules}, for the rules that stayed page-specific. */
+function kbMobileRules(html: string): string {
+  return mobileRules(kbChunk(html));
+}
+
+/** The knowledge page's own base rules: the region BETWEEN the two media queries, so a rule proven
+ *  here is proven to sit outside EVERY media query — the same strength the plain `base` slice used
+ *  to have before `CARD_STYLE` was spliced in ahead of these rules. */
+function kbBaseRules(html: string): string {
+  const chunk = kbChunk(html);
+  const idx = chunk.indexOf('@media (max-width: 899px)');
+  if (idx === -1) throw new Error('no knowledge-specific media query in the rendered page');
+  return chunk.slice(0, idx);
 }
 
 function view(overrides: Partial<KnowledgeView> = {}): KnowledgeView {
@@ -116,7 +146,7 @@ describe('mobile card layout', () => {
     // Labels must stay attached to their own values — a transposition is exactly the defect a
     // reader reports and a maintainer cannot reproduce.
     expect(region).toContain('<dt>Where in the home</dt><dd>Basement utility room</dd>');
-    expect(region).toContain('<dt>Symptoms</dt><dd><span class="kb-chip">no hot water</span>');
+    expect(region).toContain('<dt>Symptoms</dt><dd><span class="chip">no hot water</span>');
   });
 
   it('maps each urgency onto its own pill class, with a neutral fallback', () => {
@@ -153,9 +183,7 @@ describe('mobile card layout', () => {
 
     expect(cardsOf(html)).not.toContain('<details class="kb-more">');
     expect(cardsOf(html)).not.toContain('More details');
-    expect(cardsOf(html)).toContain(
-      '<p class="kb-callid mono" title="call_abc123">call_abc123</p>',
-    );
+    expect(cardsOf(html)).toContain('<p class="callid mono" title="call_abc123">call_abc123</p>');
     // The problem statement is NOT expandable, so it still shows on the collapsed card.
     expect(cardsOf(html)).toContain('No hot water since last night');
   });
@@ -183,18 +211,18 @@ describe('mobile card layout', () => {
     const region = cardsOf(html);
     // Matches the opening tag by its class attribute only (not the full `>`) so this stays
     // correct regardless of what other attributes (e.g. aria-label) the tag carries.
-    expect(region.split('<article class="kb-card"').length - 1).toBe(2);
+    expect(region.split('<article class="card"').length - 1).toBe(2);
     expect(region.indexOf('call_first')).toBeLessThan(region.indexOf('call_second'));
   });
 
   it('renders an empty card region when nothing matches', () => {
     const html = renderKnowledgePage(view({ results: [], total: 0, total_pages: 0 }));
-    expect(html).toContain('<div class="kb-cards"></div>');
+    expect(html).toContain('<div class="cards"></div>');
     expect(cardsOf(html)).not.toContain('<article');
   });
 
   it('includes only the populated blocks when a record is partly filled, dropping whitespace-only values too', () => {
-    // `symptoms: ['', '  ']` and `prior_attempts: '   '` are not EMPTY, just blank — `detailBlock`'s
+    // `symptoms: ['', '  ']` and `prior_attempts: '   '` are not EMPTY, just blank — `cardField`'s
     // doc comment promises these are dropped exactly like `[]`/`null`; this is what holds it to that.
     const html = renderKnowledgePage(
       view({ results: [record({ symptoms: ['', '  '], prior_attempts: '   ' })] }),
@@ -236,7 +264,7 @@ describe('mobile card layout', () => {
 describe('layout switch', () => {
   it('ships both layouts in one response, since the choice is made client-side', () => {
     const html = renderKnowledgePage(view());
-    expect(html).toContain('class="kb-cards"');
+    expect(html).toContain('class="cards"');
     expect(html).toContain('class="table-wrap table-scroll"');
   });
 
@@ -245,12 +273,12 @@ describe('layout switch', () => {
     expect(html).toContain('@media (max-width: 899px)');
     // Inside the breakpoint the roles invert: cards become visible, the table goes away.
     const mq = mobileRules(html);
-    expect(mq).toContain('.kb-cards { display: block; }');
+    expect(mq).toContain('.cards { display: block; }');
     expect(mq).toContain('.table-wrap { display: none; }');
     // ...and the base rule that keeps the card list off the desktop page — without this, the
     // whole card list stacks underneath the desktop table at every width.
     const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
-    expect(base).toContain('.kb-cards { display: none; }');
+    expect(base).toContain('.cards { display: none; }');
   });
 });
 
@@ -290,11 +318,11 @@ describe('collapsible filters', () => {
     // Both copies are real forms, so whichever one is visible can actually be submitted.
     expect(html.split('<form class="filters"').length - 1).toBe(2);
     // The class names alone prove nothing — assert the rules that actually do the switching.
-    expect(mobileRules(html)).toContain('.kb-filters-desktop { display: none; }');
-    expect(mobileRules(html)).toContain('.kb-filters-mobile { display: block; }');
+    // These two live in the knowledge page's OWN mobile block, not the shared card one.
+    expect(kbMobileRules(html)).toContain('.kb-filters-desktop { display: none; }');
+    expect(kbMobileRules(html)).toContain('.kb-filters-mobile { display: block; }');
     // ...and the base rule that keeps the mobile bar off the desktop page.
-    const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
-    expect(base).toContain('.kb-filters-mobile { display: none; }');
+    expect(kbBaseRules(html)).toContain('.kb-filters-mobile { display: none; }');
   });
 
   it('raises mobile form controls to 16px so Safari stops force-zooming on focus', () => {
@@ -319,7 +347,7 @@ describe('collapsible filters', () => {
 describe('mobile tap targets', () => {
   it('repeats the pager below the results so paging does not mean scrolling back up', () => {
     const html = renderKnowledgePage(view({ page: 2, total_pages: 4, total: 168 }));
-    expect(html).toContain('class="pager kb-pager-bottom"');
+    expect(html).toContain('class="pager pager-bottom"');
     // Above and below: the page indicator appears exactly twice.
     expect(html.split('Page 2 of 4').length - 1).toBe(2);
   });
@@ -327,8 +355,8 @@ describe('mobile tap targets', () => {
   it('shows the bottom pager only on mobile, so desktop keeps its single one', () => {
     const html = renderKnowledgePage(view());
     const base = html.slice(0, html.indexOf('@media (max-width: 899px)'));
-    expect(base).toContain('.kb-pager-bottom { display: none; }');
-    expect(mobileRules(html)).toContain('.kb-pager-bottom { display: flex; }');
+    expect(base).toContain('.pager-bottom { display: none; }');
+    expect(mobileRules(html)).toContain('.pager-bottom { display: flex; }');
   });
 
   it('gives the pager and export links a 44px minimum tap target on mobile', () => {
