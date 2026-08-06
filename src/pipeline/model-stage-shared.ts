@@ -4,6 +4,7 @@ import type { Config } from '../config/schema.js';
 import { ModelApiError } from '../anthropic/client.js';
 import { type BudgetReservation, releaseModelReservation } from '../model/cost.js';
 import {
+  type Component,
   type ErrorCode,
   type ProcessingState,
   createFailure,
@@ -15,15 +16,22 @@ import { appendLog } from '../db/repositories/processing-log-repo.js';
 import { query, withTransaction } from '../db/sql.js';
 
 /**
- * Helpers shared by the model-backed pipeline stages (classify, and Task 5.2's extract).
- * Everything here is parameterized by `stage` so both handlers reuse one implementation of
- * the kill-switch park, the deduped stage alert, and the model-error disposition logic.
+ * Helpers shared by the model-backed pipeline stages (classify, and Task 5.2's extract) and by
+ * the out-of-pipeline technician-note batch generator (ADR 0009). Everything here is
+ * parameterized by `stage` so every caller reuses one implementation of the kill-switch park,
+ * the deduped stage alert, and the model-error disposition logic.
+ *
+ * NON-PIPELINE CALLERS must also pass `component`. `sanitizeContext` validates the `stage`
+ * context key against `isPipelineStage` and silently DROPS anything else, so a caller whose
+ * `stage` is not a member of PIPELINE_STAGES (e.g. 'technician-note') would otherwise produce
+ * an alert with no scope at all. The `stage` argument is still threaded through — it names the
+ * work in log lines and in the snapshot's top-level diagnostics, where no allowlist applies.
  */
 
 /**
  * Record a deduped stage alert for a mapped model failure. Context is sanitized to
- * call_id/stage/environment only; the failureSnapshot mirrors fetch-transcript's shape and
- * NEVER carries transcript content, model reasons, or a raw SDK error message.
+ * call_id/stage/component/environment only; the failureSnapshot mirrors fetch-transcript's shape
+ * and NEVER carries transcript content, model reasons, or a raw SDK error message.
  */
 export async function recordStageAlert(
   pool: Pool,
@@ -33,10 +41,16 @@ export async function recordStageAlert(
   code: ErrorCode,
   processingState: ProcessingState,
   extraSnapshot: Record<string, string | number | boolean | null> = {},
+  component?: Component,
 ): Promise<void> {
   const failure = createFailure(code, {
     processingState,
-    context: { call_id: callId, stage, environment: config.NODE_ENV },
+    context: {
+      call_id: callId,
+      stage,
+      environment: config.NODE_ENV,
+      ...(component !== undefined ? { component } : {}),
+    },
   });
   await recordAlert(pool, {
     errorCode: failure.error_code,
@@ -98,9 +112,14 @@ export async function recordVerbatimPiiDetectedAlertResilient(
  * The lock closes the check-then-insert TOCTOU (without it two workers could both see "no active
  * row" after an ack and both insert). The next UTC day the key changes → a fresh row re-fires.
  *
- * PRIVACY: context is `{ stage, environment }` only (no call_id — the alert is day-scoped, not
- * call-scoped) and the day rides in the dedup KEY, never in `context` (sanitizeContext's allowlist
- * would strip a day key). The persisted snapshot is the full sanitized §4 failure — no PII.
+ * PRIVACY: context is `{ stage, component?, environment }` only (no call_id — the alert is
+ * day-scoped, not call-scoped) and the day rides in the dedup KEY, never in `context`
+ * (sanitizeContext's allowlist would strip a day key). The persisted snapshot is the full
+ * sanitized §4 failure — no PII.
+ *
+ * The dedup key is deliberately NOT component-scoped: the daily cap is shared across every model
+ * caller, so the warning stays one-per-UTC-day system-wide. A non-pipeline caller passing
+ * `component` only changes which scope the alert is LABELLED with, never how often it fires.
  */
 export async function emitCostWarningIfReached(
   pool: Pool,
@@ -109,11 +128,16 @@ export async function emitCostWarningIfReached(
   config: Config,
   reservation: BudgetReservation,
   logger: Logger,
+  component?: Component,
 ): Promise<void> {
   if (!reservation.warningThresholdReached) return;
   const failure = createFailure('MODEL_COST_WARNING_THRESHOLD_EXCEEDED', {
     processingState: 'continuing',
-    context: { stage, environment: config.NODE_ENV },
+    context: {
+      stage,
+      environment: config.NODE_ENV,
+      ...(component !== undefined ? { component } : {}),
+    },
   });
   const dedupKeyForDay = `MODEL_COST_WARNING_THRESHOLD_EXCEEDED:day:${reservation.day}`;
   await resilientSideEffect(
@@ -250,6 +274,7 @@ export async function handleModelError(
   reservation: BudgetReservation,
   err: unknown,
   logger: Logger,
+  component?: Component,
 ): Promise<void> {
   if (err instanceof ModelApiError) {
     // Release for not_sent/not_billed; KEEP for maybe_billed — releasing a maybe-billed
@@ -261,15 +286,29 @@ export async function handleModelError(
     }
     if (err.kind === 'auth') {
       await resilientSideEffect(logger, callId, stage, 'alert MODEL_AUTH_FAILED', () =>
-        recordStageAlert(pool, callId, stage, config, 'MODEL_AUTH_FAILED', 'paused', {
-          status: err.status ?? null,
-        }),
+        recordStageAlert(
+          pool,
+          callId,
+          stage,
+          config,
+          'MODEL_AUTH_FAILED',
+          'paused',
+          { status: err.status ?? null },
+          component,
+        ),
       );
     } else if (err.kind === 'rate_limited') {
       await resilientSideEffect(logger, callId, stage, 'alert MODEL_RATE_LIMITED', () =>
-        recordStageAlert(pool, callId, stage, config, 'MODEL_RATE_LIMITED', 'degraded', {
-          status: err.status ?? null,
-        }),
+        recordStageAlert(
+          pool,
+          callId,
+          stage,
+          config,
+          'MODEL_RATE_LIMITED',
+          'degraded',
+          { status: err.status ?? null },
+          component,
+        ),
       );
     }
     // 'transient'/'unexpected' → no stage alert; the dead-letter path (DEAD_LETTER_CREATED)
@@ -288,7 +327,12 @@ export async function handleModelError(
   if (hasConfigMissingCode(err)) {
     const failure = createFailure('CONFIG_MISSING_OR_INVALID', {
       processingState: 'paused',
-      context: { call_id: callId, stage, environment: config.NODE_ENV },
+      context: {
+        call_id: callId,
+        stage,
+        environment: config.NODE_ENV,
+        ...(component !== undefined ? { component } : {}),
+      },
     });
     // The offending variable NAME goes in the snapshot, NOT context — sanitizeContext
     // whitelists only call_id/job_id/environment/stage/component, so a `variable` key would

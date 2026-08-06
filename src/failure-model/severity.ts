@@ -54,6 +54,11 @@ export const DEFAULT_SEVERITY: Record<ErrorCode, Severity> = {
   // promise unmet (old material still recoverable) — the launch gate and operator must act.
   KEY_ROTATION_FAILED: 'critical',
   KEY_REVOCATION_FAILED: 'critical',
+  // Technician notes (ADR 0009). Medium: nothing is held, retried, or dropped and no customer
+  // data is at risk — the notes are simply missing until the job is re-run. Deliberately not
+  // 'low': a persistently degraded run means the note prompt or schema has drifted, which the
+  // ADR 0009 feedback loop depends on someone noticing.
+  TECHNICIAN_NOTE_RUN_DEGRADED: 'medium',
 };
 
 /** The default severity for a code. Throws on an unknown code (no fallback). */

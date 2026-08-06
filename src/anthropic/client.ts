@@ -1,12 +1,25 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
 import type { Config } from '../config/schema.js';
-import { CALL_INTENT, SERVICE_CATEGORIES, SENTIMENTS, URGENCY } from '../db/enums.js';
+import {
+  CALL_INTENT,
+  NOTE_COMMITMENTS_MADE_KEYS,
+  NOTE_EQUIPMENT_KEYS,
+  NOTE_OCCUPANCIES,
+  NOTE_PAYER_AUTHORITY_KEYS,
+  NOTE_PRIOR_WORK_KEYS,
+  NOTE_SCOPE_SIGNALS,
+  NOTE_SYSTEM_CONTEXT_KEYS,
+  NOTE_WATER_STATUS_KEYS,
+  SERVICE_CATEGORIES,
+  SENTIMENTS,
+  URGENCY,
+} from '../db/enums.js';
 
 /**
- * Anthropic classify- and extract-model client wrappers — the ONLY module that imports
- * `@anthropic-ai/sdk`. The classify handler consumes the {@link ClassifyModelClient}
- * interface and the extract handler consumes the {@link ExtractModelClient} interface;
+ * Anthropic classify-, extract-, and technician-note model client wrappers — the ONLY module
+ * that imports `@anthropic-ai/sdk`. Each consumer takes an interface
+ * ({@link ClassifyModelClient} / {@link ExtractModelClient} / {@link TechnicianNoteModelClient});
  * tests inject fakes.
  *
  * Model ID + structured-output support verified against Anthropic docs 2026-07-02
@@ -326,6 +339,136 @@ export function createAnthropicExtractClient(
           system,
           messages: [{ role: 'user', content: userText }],
           output_config: { format: EXTRACT_OUTPUT_FORMAT },
+        });
+      } catch (error) {
+        throw toModelApiError(error);
+      }
+      return normalize(response);
+    },
+  };
+}
+
+/** A jsonb sub-object of the note: a fixed key set, every member nullable, nothing else. */
+function noteGroup(
+  keys: readonly string[],
+  member: { readonly type: readonly string[] },
+): {
+  type: 'object';
+  properties: Record<string, { readonly type: readonly string[] }>;
+  required: readonly string[];
+  additionalProperties: false;
+} {
+  return {
+    type: 'object',
+    properties: Object.fromEntries(keys.map((k) => [k, member])),
+    required: keys,
+    additionalProperties: false,
+  };
+}
+
+const NULLABLE_STRING = { type: ['string', 'null'] } as const;
+const NULLABLE_BOOLEAN = { type: ['boolean', 'null'] } as const;
+
+/**
+ * Structured-output format sent on every technician-note request (ADR 0009).
+ *
+ * Same conventions as {@link EXTRACT_OUTPUT_FORMAT}: hand-written json_schema,
+ * `additionalProperties: false` at every level, enum tuples imported from `../db/enums.js`, and
+ * NO min/max/length keywords anywhere — structured outputs reject them. That last point is why
+ * the 800-character `dispatch_summary` cap lives in the zod layer instead, where an over-long
+ * summary becomes a `schema_invalid` parse failure (and therefore a bounded retry) rather than a
+ * silent truncation.
+ *
+ * Two deliberate omissions:
+ * - `not_established` is NOT in this schema. That array is computed in code from a fixed
+ *   REQUIRED_FOR_DISPATCH list after validation; letting the model write its own gap list would
+ *   make it a self-assessment rather than a deterministic gate.
+ * - No sentiment, tone, or characterization of the caller. Those live in `structured_knowledge`
+ *   and are internal-only; the note is read by a technician standing in a driveway.
+ *
+ * As with extract there is deliberately NO confidence/probability field anywhere.
+ */
+export const TECHNICIAN_NOTE_OUTPUT_FORMAT = {
+  type: 'json_schema',
+  schema: {
+    type: 'object',
+    properties: {
+      scope_signal: { type: 'string', enum: NOTE_SCOPE_SIGNALS },
+      occupancy: { type: 'string', enum: NOTE_OCCUPANCIES },
+      equipment: noteGroup(NOTE_EQUIPMENT_KEYS, NULLABLE_STRING),
+      system_context: noteGroup(NOTE_SYSTEM_CONTEXT_KEYS, NULLABLE_STRING),
+      water_status: noteGroup(NOTE_WATER_STATUS_KEYS, NULLABLE_BOOLEAN),
+      payer_authority: noteGroup(NOTE_PAYER_AUTHORITY_KEYS, NULLABLE_BOOLEAN),
+      prior_work: noteGroup(NOTE_PRIOR_WORK_KEYS, NULLABLE_BOOLEAN),
+      commitments_made: noteGroup(NOTE_COMMITMENTS_MADE_KEYS, NULLABLE_BOOLEAN),
+      location_on_property: NULLABLE_STRING,
+      symptom_verbatim: NULLABLE_STRING,
+      prior_attempts_detail: NULLABLE_STRING,
+      access_notes: NULLABLE_STRING,
+      hazards: { type: 'array', items: { type: 'string' } },
+      urgency_context: { type: 'array', items: { type: 'string' } },
+      dispatch_summary: NULLABLE_STRING,
+    },
+    required: [
+      'scope_signal',
+      'occupancy',
+      'equipment',
+      'system_context',
+      'water_status',
+      'payer_authority',
+      'prior_work',
+      'commitments_made',
+      'location_on_property',
+      'symptom_verbatim',
+      'prior_attempts_detail',
+      'access_notes',
+      'hazards',
+      'urgency_context',
+      'dispatch_summary',
+    ],
+    additionalProperties: false,
+  },
+} as const satisfies Anthropic.Messages.JSONOutputFormat;
+
+/** JSON string form — used for reservation/payload-size estimation. */
+export const TECHNICIAN_NOTE_OUTPUT_FORMAT_JSON = JSON.stringify(TECHNICIAN_NOTE_OUTPUT_FORMAT);
+
+export interface TechnicianNoteModelClient {
+  generate(req: { system: string; userText: string }): Promise<ModelTextResult>;
+}
+
+export function createAnthropicTechnicianNoteClient(
+  config: Config,
+  options: { fetch?: typeof fetch } = {},
+): TechnicianNoteModelClient {
+  // Fail fast with the shared config error shape, naming the missing variable.
+  if (!config.ANTHROPIC_API_KEY) {
+    throw new ConfigError(
+      ['ANTHROPIC_API_KEY'],
+      `${CONFIG_ERROR_CODE}: ANTHROPIC_API_KEY is required to call the Anthropic API`,
+    );
+  }
+
+  const client = new Anthropic({
+    apiKey: config.ANTHROPIC_API_KEY,
+    // maxRetries: 0 for the same reason as the extract client — an SDK-internal retry would hide
+    // a maybe-billed attempt behind one cost reservation. The note generator re-reserves per
+    // attempt instead.
+    maxRetries: 0,
+    timeout: config.ANTHROPIC_TIMEOUT_MS,
+    ...(options.fetch ? { fetch: options.fetch } : {}),
+  });
+
+  return {
+    async generate({ system, userText }): Promise<ModelTextResult> {
+      let response: Anthropic.Message;
+      try {
+        response = await client.messages.create({
+          model: config.TECHNICIAN_NOTE_MODEL_ID,
+          max_tokens: config.TECHNICIAN_NOTE_MAX_TOKENS,
+          system,
+          messages: [{ role: 'user', content: userText }],
+          output_config: { format: TECHNICIAN_NOTE_OUTPUT_FORMAT },
         });
       } catch (error) {
         throw toModelApiError(error);

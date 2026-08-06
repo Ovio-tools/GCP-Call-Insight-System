@@ -97,6 +97,47 @@ export async function upsertTechnicianNote(
   return parseOrThrow(TABLE, technicianNoteRowSchema, rows[0]);
 }
 
+/**
+ * One page of calls eligible for note generation, keyset-paged on `call_id`
+ * (`structured_knowledge.call_id` is the primary key, so it is a stable unique cursor).
+ *
+ * Eligibility is deliberately narrow: a call has a stored `structured_knowledge` row and is not a
+ * superseded duplicate leg. Two things this query does NOT do, both on purpose:
+ *
+ * - It does NOT join `clean_transcripts`. Readability is checked per call by the generator so an
+ *   absent / soft-deleted / hard-deleted transcript becomes a COUNTED SKIP. Filtering it here
+ *   would make those calls silently invisible, and the dry-run counters exist precisely to
+ *   surface them.
+ * - It does NOT look at `call_state.status`. A stored knowledge row already implies the call
+ *   reached the end of the pipeline.
+ *
+ * `superseded_by_call_id IS NULL` matches every other knowledge reader (see `buildWhere` in
+ * structured-knowledge-repo): one conversation can arrive as several Dialpad legs, and generating
+ * a note per leg would hand a technician the same job twice.
+ *
+ * `regenerate` false (the default re-run) skips calls that already have a note at
+ * `promptVersion`, which is what makes the job cheaply re-runnable. `regenerate` true returns
+ * them anyway so a new prompt version can be rolled over an existing corpus.
+ */
+export async function listNoteCandidateCallIds(
+  db: Queryable,
+  opts: { promptVersion: string; regenerate: boolean; limit: number; cursor?: string },
+): Promise<string[]> {
+  const rows = await query<{ call_id: string }>(
+    db,
+    `SELECT sk.call_id
+       FROM structured_knowledge sk
+       LEFT JOIN technician_notes tn ON tn.call_id = sk.call_id
+      WHERE sk.superseded_by_call_id IS NULL
+        AND ($1 OR tn.call_id IS NULL OR tn.prompt_version <> $2)
+        AND ($3::text IS NULL OR sk.call_id > $3::text)
+      ORDER BY sk.call_id
+      LIMIT $4`,
+    [opts.regenerate, opts.promptVersion, opts.cursor ?? null, opts.limit],
+  );
+  return rows.map((r) => r.call_id);
+}
+
 export async function getTechnicianNote(
   db: Queryable,
   callId: string,

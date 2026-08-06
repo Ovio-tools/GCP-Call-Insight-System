@@ -553,3 +553,28 @@ backups** until the shred completes.
   declaring the shred complete. Restart every DEK-caching service (worker, review surface) so no
   process still holds a cached unwrapped DEK.
 - **Longer-term fix:** Monitor revocation completion off `store.recoverability`, never the DB flag.
+
+## Technician-note run degraded
+
+<!-- anchor: technician-note-run-degraded — TECHNICIAN_NOTE_RUN_DEGRADED -->
+
+**Code:** `TECHNICIAN_NOTE_RUN_DEGRADED` · **Severity:** medium · **Calls:** none · **Owner:** OVIO on-call · **Data safe:** yes
+
+A batch run of the technician-note generator (`npm run notes:generate`, ADR 0009) finished with a
+failure rate above `TECHNICIAN_NOTES_FAILURE_RATE_ALERT_THRESHOLD` over at least
+`TECHNICIAN_NOTES_FAILURE_ALERT_MIN_ATTEMPTS` attempted calls.
+
+**Nothing else is affected.** A technician note is derived and optional: the calls were already
+processed, their `structured_knowledge` records are already stored, and this job never holds a call
+or writes a `review_queue` row (a hold would block the CLEAN retention purge through `cleanBlocking`
+and silently extend PII retention for a cosmetic failure). No note is the correct degraded state,
+and a re-run regenerates whatever is missing.
+
+- **Do now:** Re-run `npm run notes:generate`. Failures are counted per call in `processing_log`
+  under stage `technician-note` with a counts-only detail (`schema_invalid` vs a model error) — read
+  those to tell a prompt/schema drift apart from an Anthropic outage. Check for a companion
+  `MODEL_AUTH_FAILED` / `MODEL_RATE_LIMITED` alert before changing anything.
+- **Longer-term fix:** If the failures are `schema_invalid`, fix the note prompt or schema, bump
+  `TECHNICIAN_NOTE_PROMPT_VERSION`, and regenerate the affected calls with
+  `npm run notes:generate -- --regenerate`. Reviewer verdicts are scoped to the prompt version they
+  were given against, so a version bump keeps the ADR 0009 feedback loop honest.

@@ -1,0 +1,61 @@
+{
+  "name": "golden-grinder-pump",
+  "redactedTranscript": "Agent: Tell me what is happening.\nCaller: The grinder pump alarm in the basement is going off and it smells down there.\nAgent: Is anything backing up?\nCaller: Not yet. We are on a septic system out here.\nAgent: Do you own the property?\nCaller: We do. Whoever comes should park on the gravel pad.",
+  "modelResponse": {
+    "text": "{\"scope_signal\":\"whole_property\",\"occupancy\":\"owner\",\"equipment\":{\"type\":\"grinder pump\",\"brand\":null,\"model\":null,\"capacity\":null,\"approximate_age\":null,\"fuel_type\":null},\"system_context\":{\"waste_system\":\"septic\",\"water_source\":null,\"foundation_type\":null,\"property_age\":null},\"water_status\":{\"actively_running\":false,\"supply_shut_off\":null,\"shutoff_location_known\":null,\"active_damage\":false},\"payer_authority\":{\"can_approve_work\":true,\"home_warranty\":null,\"insurance_claim\":null,\"third_party_payer\":null},\"prior_work\":{\"is_repeat_visit\":null,\"is_warranty_claim\":null,\"prior_work_by_others\":null},\"commitments_made\":{\"price_quoted\":null,\"dispatch_fee_mentioned\":null,\"arrival_window_given\":null,\"technician_named\":null,\"scope_described\":null},\"location_on_property\":\"basement\",\"symptom_verbatim\":\"the grinder pump alarm is going off and it smells down there\",\"prior_attempts_detail\":null,\"access_notes\":\"park on the gravel pad\",\"hazards\":[\"sewage odour in the basement\"],\"urgency_context\":[\"pump alarm is active\"],\"dispatch_summary\":\"Grinder pump alarm sounding in the basement with a sewage odour, nothing backing up yet. Property is on septic. Homeowner is on site and can approve work. Park on the gravel pad. Not confirmed on this call: whether the supply is shut off.\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "scope_signal": "whole_property",
+      "occupancy": "owner",
+      "equipment": {
+        "type": "grinder pump",
+        "brand": null,
+        "model": null,
+        "capacity": null,
+        "approximate_age": null,
+        "fuel_type": null
+      },
+      "system_context": {
+        "waste_system": "septic",
+        "water_source": null,
+        "foundation_type": null,
+        "property_age": null
+      },
+      "water_status": {
+        "actively_running": false,
+        "supply_shut_off": null,
+        "shutoff_location_known": null,
+        "active_damage": false
+      },
+      "payer_authority": {
+        "can_approve_work": true,
+        "home_warranty": null,
+        "insurance_claim": null,
+        "third_party_payer": null
+      },
+      "prior_work": {
+        "is_repeat_visit": null,
+        "is_warranty_claim": null,
+        "prior_work_by_others": null
+      },
+      "commitments_made": {
+        "price_quoted": null,
+        "dispatch_fee_mentioned": null,
+        "arrival_window_given": null,
+        "technician_named": null,
+        "scope_described": null
+      },
+      "location_on_property": "basement",
+      "symptom_verbatim": "the grinder pump alarm is going off and it smells down there",
+      "prior_attempts_detail": null,
+      "access_notes": "park on the gravel pad",
+      "hazards": ["sewage odour in the basement"],
+      "urgency_context": ["pump alarm is active"],
+      "dispatch_summary": "Grinder pump alarm sounding in the basement with a sewage odour, nothing backing up yet. Property is on septic. Homeowner is on site and can approve work. Park on the gravel pad. Not confirmed on this call: whether the supply is shut off."
+    }
+  },
+  "expectedNotEstablished": ["water_status.supply_shut_off"]
+}

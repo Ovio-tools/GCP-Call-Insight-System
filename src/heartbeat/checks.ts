@@ -7,7 +7,12 @@ import { CONFIG_ERROR_CODE, ConfigError } from '../config/index.js';
  * because a single green light would mask a dead cron.
  */
 export type HeartbeatComponent =
-  'worker' | 'reconciliation-cron' | 'retention-cron' | 'evaluation-cron' | 'backfill';
+  | 'worker'
+  | 'reconciliation-cron'
+  | 'retention-cron'
+  | 'evaluation-cron'
+  | 'backfill'
+  | 'technician-notes';
 
 /**
  * SINGLE source of truth mapping a component to its own check-URL config variable. This is
@@ -20,6 +25,7 @@ const CHECK_URL_VAR = {
   'retention-cron': 'RETENTION_CHECK_URL',
   'evaluation-cron': 'EVALUATION_CHECK_URL',
   backfill: 'BACKFILL_CHECK_URL',
+  'technician-notes': 'TECHNICIAN_NOTES_CHECK_URL',
 } as const satisfies Record<HeartbeatComponent, keyof Config>;
 
 /** Environments where a component running unmonitored is a broken backstop: fail fast. */

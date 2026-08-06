@@ -13,7 +13,7 @@ import { PIPELINE_STAGES } from '../../src/pipeline/stages.js';
 
 describe('categories', () => {
   it('has 37 root-cause categories and 1:1 error codes', () => {
-    expect(ROOT_CAUSE_CATEGORIES).toHaveLength(37);
+    expect(ROOT_CAUSE_CATEGORIES).toHaveLength(38);
     expect([...ERROR_CODES].sort()).toEqual([...ROOT_CAUSE_CATEGORIES].sort());
   });
 
@@ -45,6 +45,7 @@ describe('categories', () => {
         'status-surface',
         'knowledge-base-surface',
         'evaluation-cron',
+        'technician-notes',
       ]);
     });
 

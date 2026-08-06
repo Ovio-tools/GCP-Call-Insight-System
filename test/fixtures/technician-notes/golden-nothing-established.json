@@ -1,0 +1,69 @@
+{
+  "name": "golden-nothing-established",
+  "redactedTranscript": "Agent: Thanks for calling, how can I help?\nCaller: Something is wrong with the plumbing. Can someone come look?\nAgent: Can you tell me anything more about it?\nCaller: Not really. I have to run, can you call me back?\nAgent: Of course.",
+  "modelResponse": {
+    "text": "{\"scope_signal\":\"unknown\",\"occupancy\":\"unknown\",\"equipment\":{\"type\":null,\"brand\":null,\"model\":null,\"capacity\":null,\"approximate_age\":null,\"fuel_type\":null},\"system_context\":{\"waste_system\":null,\"water_source\":null,\"foundation_type\":null,\"property_age\":null},\"water_status\":{\"actively_running\":null,\"supply_shut_off\":null,\"shutoff_location_known\":null,\"active_damage\":null},\"payer_authority\":{\"can_approve_work\":null,\"home_warranty\":null,\"insurance_claim\":null,\"third_party_payer\":null},\"prior_work\":{\"is_repeat_visit\":null,\"is_warranty_claim\":null,\"prior_work_by_others\":null},\"commitments_made\":{\"price_quoted\":null,\"dispatch_fee_mentioned\":null,\"arrival_window_given\":null,\"technician_named\":null,\"scope_described\":null},\"location_on_property\":null,\"symptom_verbatim\":\"something is wrong with the plumbing\",\"prior_attempts_detail\":null,\"access_notes\":null,\"hazards\":[],\"urgency_context\":[],\"dispatch_summary\":\"Caller reports a plumbing problem but gave no detail before ending the call. Nothing about the property, the equipment, or access was established. Not confirmed on this call: what the problem is, where it is, who owns the property, who can approve work, whether the supply is shut off, and access details.\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "scope_signal": "unknown",
+      "occupancy": "unknown",
+      "equipment": {
+        "type": null,
+        "brand": null,
+        "model": null,
+        "capacity": null,
+        "approximate_age": null,
+        "fuel_type": null
+      },
+      "system_context": {
+        "waste_system": null,
+        "water_source": null,
+        "foundation_type": null,
+        "property_age": null
+      },
+      "water_status": {
+        "actively_running": null,
+        "supply_shut_off": null,
+        "shutoff_location_known": null,
+        "active_damage": null
+      },
+      "payer_authority": {
+        "can_approve_work": null,
+        "home_warranty": null,
+        "insurance_claim": null,
+        "third_party_payer": null
+      },
+      "prior_work": {
+        "is_repeat_visit": null,
+        "is_warranty_claim": null,
+        "prior_work_by_others": null
+      },
+      "commitments_made": {
+        "price_quoted": null,
+        "dispatch_fee_mentioned": null,
+        "arrival_window_given": null,
+        "technician_named": null,
+        "scope_described": null
+      },
+      "location_on_property": null,
+      "symptom_verbatim": "something is wrong with the plumbing",
+      "prior_attempts_detail": null,
+      "access_notes": null,
+      "hazards": [],
+      "urgency_context": [],
+      "dispatch_summary": "Caller reports a plumbing problem but gave no detail before ending the call. Nothing about the property, the equipment, or access was established. Not confirmed on this call: what the problem is, where it is, who owns the property, who can approve work, whether the supply is shut off, and access details."
+    }
+  },
+  "expectedNotEstablished": [
+    "scope_signal",
+    "equipment.type",
+    "location_on_property",
+    "water_status.supply_shut_off",
+    "occupancy",
+    "payer_authority.can_approve_work",
+    "access_notes"
+  ]
+}
