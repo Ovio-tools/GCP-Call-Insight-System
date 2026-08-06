@@ -92,9 +92,28 @@ only when the run exercises that path) that blocks before any fetch/model/enqueu
 the FULL existing `runPipeline` (injected, never duplicated), a PII-free side-by-side report built
 only from de-identified stores (never `raw_transcripts`/`token_vault`, sentiment excluded, residual-
 gated), and `markSample`→`seedLabeledBaseline` seeding the Phase 6.3 corpus via the existing
-`syncLabeledExamples` (no duplicated label logic). The
-remaining work (the historical backfill runner Task 11.2, and the ServiceTitan write-back Phase 12)
-does not yet exist. ADR 0008 Move 2 (raw-store DB isolation) moved `raw_transcripts` +
+`syncLabeledExamples` (no duplicated label logic), and the technician-note batch generator
+(ADR 0009, `src/technician-notes/` + `src/scripts/generate-technician-notes.ts`, `npm run
+notes:generate`): the writer for the `technician_notes` store, laid out like
+`src/pipeline/extract/` (pure `prompt`/`parse`/`gates`, impure `generate.ts`, `run.ts` runner).
+It is deliberately **NOT** a pipeline stage and is absent from `PIPELINE_STAGES` — a note is
+derived and optional, so a failure NEVER holds the call and NEVER writes a `review_queue` row
+(a hold would block the CLEAN purge through `cleanBlocking` and silently extend PII retention
+for a cosmetic failure); the outcome goes to `processing_log` under stage `technician-note` and
+a run-level failure rate emits `TECHNICIAN_NOTE_RUN_DEGRADED`. Input is `getCleanTranscript`
+ONLY (a missing/soft-deleted/hard-deleted transcript is a counted SKIP, never a fallback to
+`structured_knowledge`), and `createTechnicianNoteGenerator` refuses at CONSTRUCTION if handed a
+DB-B pool, a restricted runner, or anything exposing key material. `not_established` is computed
+in code from a fixed `REQUIRED_FOR_DISPATCH` list (never model self-assessment); a residual-scan
+hit NULLS the field and counts it rather than holding; `dispatch_summary` over 800 chars is a
+`schema_invalid` (hence retryable) failure, not a truncation. It reuses the backfill four-signal
+ping contract but NOT `backfill_runs` (window-keyed, no job-kind discriminator), so there is no
+migration and no `--resume`: a re-run skips calls already noted at the current prompt version,
+and `--regenerate` rolls a new `TECHNICIAN_NOTE_PROMPT_VERSION` over the corpus. Its alerts are
+scoped by `component: 'technician-notes'`, because `sanitizeContext` validates `stage` against
+`isPipelineStage` and silently DROPS a non-stage value. The
+remaining work (the ServiceTitan write-back Phase 12, and the note-feedback review surface that
+fills `note_feedback`) does not yet exist. ADR 0008 Move 2 (raw-store DB isolation) moved `raw_transcripts` +
 `token_vault` out of the main DB (DB-A) into a separate backups-off Postgres (DB-B),
 reached via `RAW_DATABASE_URL` with its own pool family (`src/db/raw-store.ts`) and
 migration set (`migrations-raw/`); see
