@@ -13,9 +13,10 @@ import { hasTestDb, makePool, migrate } from './_pg.js';
  * status, Task 11.2) + 019 (kek_versions app read grant) + 1782864100000 (drop raw/vault from
  * DB-A, ADR 0008 Move 2) + 1782864100001 (grinder_pump service_category) + 1782864100002
  * (duplicate_call_leg drop reason) + 1782864100003 (structured_knowledge.superseded_by_call_id)
- * + 1782864100004 (below_minimum_duration drop reason) = 13.
+ * + 1782864100004 (below_minimum_duration drop reason) + 1782864100005 (technician_notes +
+ * note_feedback, ADR 0009) = 14.
  */
-const ABOVE = 13;
+const ABOVE = 14;
 const PATTERN = 'test-rqau-%';
 
 describe.skipIf(!hasTestDb)('migration 012 review_queue active-row invariants', () => {

@@ -213,6 +213,181 @@ export const REPROCESS_REQUEST_STATUSES = ['pending', 'sent', 'superseded'] as c
 export const reprocessRequestStatusSchema = z.enum(REPROCESS_REQUEST_STATUSES);
 export type ReprocessRequestStatus = z.infer<typeof reprocessRequestStatusSchema>;
 
+/**
+ * Technician-note controlled vocabularies (`technician_notes` / `note_feedback`).
+ *
+ * All of these are `text` columns guarded by CHECK constraints added by migration
+ * `1782864100005_technician_notes_and_note_feedback`, NOT native pg enums (same convention as
+ * `DROP_REASONS` / `PII_SCAN_STATUSES` above). They MUST stay in sync with those CHECK lists by
+ * hand; `test/db/note-vocabulary-parity.test.ts` reads the live `pg_get_constraintdef` and fails
+ * on drift. Do NOT add any of them to `PG_ENUMS`.
+ */
+
+/** `technician_notes.scope_signal` — how much of the property the job touches. */
+export const NOTE_SCOPE_SIGNALS = [
+  'single_fixture',
+  'multiple_fixtures',
+  'whole_property',
+  'unknown',
+] as const;
+
+/** `technician_notes.occupancy` — who the person on the call is relative to the property. */
+export const NOTE_OCCUPANCIES = ['owner', 'tenant', 'property_manager', 'unknown'] as const;
+
+/** `note_feedback.verdict` — a reviewer's judgement of ONE note field. */
+export const NOTE_FEEDBACK_VERDICTS = [
+  'correct',
+  'wrong',
+  'missing',
+  'should_not_be_here',
+] as const;
+
+/**
+ * The keys of each `technician_notes` jsonb object. These drive the zod object shapes in
+ * `src/db/schemas/technician-notes.ts` AND appear dotted in {@link NOTE_FIELD_PATHS};
+ * `test/db/note-vocabulary-parity.test.ts` asserts the two agree, so a key added here without a
+ * matching field path (or vice versa) fails loudly.
+ *
+ * The four boolean groups record WHETHER something is true, never the value: a nullable boolean
+ * cannot carry a price, an address, or a person's name. That is deliberate — `technician_notes` is
+ * a durable, never-purged store, so every column on it must be structurally incapable of holding
+ * free text that residual scanning might miss (ADR 0009).
+ */
+export const NOTE_EQUIPMENT_KEYS = [
+  'type',
+  'brand',
+  'model',
+  'capacity',
+  'approximate_age',
+  'fuel_type',
+] as const;
+export const NOTE_SYSTEM_CONTEXT_KEYS = [
+  'waste_system',
+  'water_source',
+  'foundation_type',
+  'property_age',
+] as const;
+export const NOTE_WATER_STATUS_KEYS = [
+  'actively_running',
+  'supply_shut_off',
+  'shutoff_location_known',
+  'active_damage',
+] as const;
+export const NOTE_PAYER_AUTHORITY_KEYS = [
+  'can_approve_work',
+  'home_warranty',
+  'insurance_claim',
+  'third_party_payer',
+] as const;
+export const NOTE_PRIOR_WORK_KEYS = [
+  'is_repeat_visit',
+  'is_warranty_claim',
+  'prior_work_by_others',
+] as const;
+export const NOTE_COMMITMENTS_MADE_KEYS = [
+  'price_quoted',
+  'dispatch_fee_mentioned',
+  'arrival_window_given',
+  'technician_named',
+  'scope_described',
+] as const;
+
+/**
+ * `note_feedback.field_path` — every addressable field of a technician note, dotted for the jsonb
+ * sub-fields. Listed literally (not derived) so the tuple reads as the exact mirror of the CHECK
+ * constraint a reviewer compares it against.
+ */
+export const NOTE_FIELD_PATHS = [
+  'scope_signal',
+  'equipment.type',
+  'equipment.brand',
+  'equipment.model',
+  'equipment.capacity',
+  'equipment.approximate_age',
+  'equipment.fuel_type',
+  'system_context.waste_system',
+  'system_context.water_source',
+  'system_context.foundation_type',
+  'system_context.property_age',
+  'water_status.actively_running',
+  'water_status.supply_shut_off',
+  'water_status.shutoff_location_known',
+  'water_status.active_damage',
+  'payer_authority.can_approve_work',
+  'payer_authority.home_warranty',
+  'payer_authority.insurance_claim',
+  'payer_authority.third_party_payer',
+  'prior_work.is_repeat_visit',
+  'prior_work.is_warranty_claim',
+  'prior_work.prior_work_by_others',
+  'commitments_made.price_quoted',
+  'commitments_made.dispatch_fee_mentioned',
+  'commitments_made.arrival_window_given',
+  'commitments_made.technician_named',
+  'commitments_made.scope_described',
+  'location_on_property',
+  'symptom_verbatim',
+  'prior_attempts_detail',
+  'access_notes',
+  'hazards',
+  'urgency_context',
+  'occupancy',
+  'not_established',
+  'dispatch_summary',
+] as const;
+
+export const noteScopeSignalSchema = z.enum(NOTE_SCOPE_SIGNALS);
+export const noteOccupancySchema = z.enum(NOTE_OCCUPANCIES);
+export const noteFeedbackVerdictSchema = z.enum(NOTE_FEEDBACK_VERDICTS);
+export const noteFieldPathSchema = z.enum(NOTE_FIELD_PATHS);
+
+export type NoteScopeSignal = z.infer<typeof noteScopeSignalSchema>;
+export type NoteOccupancy = z.infer<typeof noteOccupancySchema>;
+export type NoteFeedbackVerdict = z.infer<typeof noteFeedbackVerdictSchema>;
+export type NoteFieldPath = z.infer<typeof noteFieldPathSchema>;
+
+/** The boolean-valued note field paths — the ones a correction expresses as 'true'/'false'. */
+export const NOTE_BOOLEAN_FIELD_PATHS = [
+  'water_status.actively_running',
+  'water_status.supply_shut_off',
+  'water_status.shutoff_location_known',
+  'water_status.active_damage',
+  'payer_authority.can_approve_work',
+  'payer_authority.home_warranty',
+  'payer_authority.insurance_claim',
+  'payer_authority.third_party_payer',
+  'prior_work.is_repeat_visit',
+  'prior_work.is_warranty_claim',
+  'prior_work.prior_work_by_others',
+  'commitments_made.price_quoted',
+  'commitments_made.dispatch_fee_mentioned',
+  'commitments_made.arrival_window_given',
+  'commitments_made.technician_named',
+  'commitments_made.scope_described',
+] as const satisfies readonly NoteFieldPath[];
+
+/** The two values a boolean-field correction may carry. Text, because `corrected_enum_value` is
+ * one column serving every field path. */
+export const NOTE_BOOLEAN_CORRECTED_VALUES = ['true', 'false'] as const;
+
+/**
+ * Which values `note_feedback.corrected_enum_value` may carry, per `field_path`.
+ *
+ * A path ABSENT from this map is free text (a brand, a symptom in the caller's words, an access
+ * note) and therefore admits NO correction value at all — the reviewer may still say the field is
+ * wrong, but may not retype it. That absence is the whole point: it is what keeps reviewer prose
+ * out of `note_feedback`, exactly as `src/review/correction-constants.ts` keeps it out of a
+ * `correct_extraction` action. The DB CHECK mirrors this map, so the rule holds even against a
+ * raw-SQL writer.
+ */
+export const NOTE_CORRECTABLE_VALUES = {
+  scope_signal: NOTE_SCOPE_SIGNALS,
+  occupancy: NOTE_OCCUPANCIES,
+  ...Object.fromEntries(
+    NOTE_BOOLEAN_FIELD_PATHS.map((p) => [p, NOTE_BOOLEAN_CORRECTED_VALUES] as const),
+  ),
+} as Readonly<Partial<Record<NoteFieldPath, readonly string[]>>>;
+
 /** name -> value tuple, for the parity test to iterate. */
 export const PG_ENUMS = {
   severity: SEVERITY,

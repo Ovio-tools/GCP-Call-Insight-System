@@ -671,4 +671,86 @@ describe.skipIf(!hasTestDb || !hasRawTestDb)('runPurge (Task 8.1 / 8.2d two-pool
     expect(ok.skipped).toBeFalsy();
     expect(await col('raw_transcripts', 'test-purge-conc', 'hard_deleted_at')).not.toBeNull();
   });
+
+  /**
+   * ADR 0009 — `technician_notes` and `note_feedback` are DURABLE. The source guard in
+   * `test/db/technician-notes-no-purge-group.test.ts` proves they are in no group; this proves what
+   * that MEANS at runtime: rows sitting far past every window are still reported as nothing to do
+   * and are still there afterwards.
+   */
+  describe('durable technician-note stores are never purged (ADR 0009)', () => {
+    const CALL = 'test-purge-note';
+
+    async function seedNoteAndFeedback(): Promise<void> {
+      await ensureCall(CALL, 'completed');
+      // retention_eligible_at is stamped LONG past every configured window (the widest is CLEAN's
+      // 365-day hard). If the table were registered anywhere, this row would be eligible.
+      await owner.query(
+        `INSERT INTO technician_notes
+           (call_id, prompt_version, model_id, schema_version, scope_signal, occupancy,
+            retention_eligible_at)
+         VALUES ($1, 'note-v1', 'model-x', 1, 'single_fixture', 'owner', $2)
+         ON CONFLICT (call_id) DO NOTHING`,
+        [CALL, daysAgo(9999)],
+      );
+      await owner.query(
+        `INSERT INTO note_feedback
+           (call_id, note_prompt_version, reviewer_actor, field_path, verdict, created_at)
+         VALUES ($1, 'note-v1', 'purge-test', 'occupancy', 'correct', $2)`,
+        [CALL, daysAgo(9999)],
+      );
+    }
+
+    it('a dry run reports ZERO rows for technician_notes and note_feedback', async () => {
+      await seedNoteAndFeedback();
+      const report = await runPurge({
+        pool: purge,
+        rawPool: rawPurge,
+        config: purgeConfig(),
+        logger,
+        now: NOW,
+      });
+      expect(report.dryRun).toBe(false);
+
+      const dry = await runPurge({
+        pool: purge,
+        rawPool: rawPurge,
+        config: purgeConfig({ RETENTION_DRY_RUN: true }),
+        logger,
+        now: NOW,
+      });
+      for (const table of ['technician_notes', 'note_feedback']) {
+        expect(
+          dry.actions.filter((a) => a.table === table),
+          `${table} must appear in no purge action`,
+        ).toEqual([]);
+        expect(report.actions.filter((a) => a.table === table)).toEqual([]);
+      }
+    });
+
+    it('a REAL run leaves both rows present and unstamped', async () => {
+      await seedNoteAndFeedback();
+      await run();
+
+      const note = await owner.query<{
+        n: number;
+        soft_deleted_at: Date | null;
+        hard_deleted_at: Date | null;
+      }>(
+        `SELECT count(*)::int AS n, min(soft_deleted_at) AS soft_deleted_at,
+                min(hard_deleted_at) AS hard_deleted_at
+           FROM technician_notes WHERE call_id = $1`,
+        [CALL],
+      );
+      expect(note.rows[0]!.n).toBe(1);
+      expect(note.rows[0]!.soft_deleted_at).toBeNull();
+      expect(note.rows[0]!.hard_deleted_at).toBeNull();
+
+      const feedback = await owner.query<{ n: number }>(
+        `SELECT count(*)::int AS n FROM note_feedback WHERE call_id = $1`,
+        [CALL],
+      );
+      expect(feedback.rows[0]!.n).toBe(1);
+    });
+  });
 });

@@ -288,6 +288,166 @@ describe.skipIf(!hasTestDb)('upsert idempotency', () => {
     expect(soft.rows[0]?.n).toBe('3');
   });
 
+  it('technician_notes upsert keeps one row and reflects the latest write', async () => {
+    const callId = 'test-idem-note';
+    await seedCall(callId);
+    const base = {
+      callId,
+      promptVersion: 'note-v1',
+      modelId: 'claude-sonnet-5',
+      schemaVersion: 1,
+      scopeSignal: 'single_fixture' as const,
+      occupancy: 'owner' as const,
+    };
+    await repositories.technicianNotes.upsertTechnicianNote(app, {
+      ...base,
+      waterStatus: { actively_running: true },
+      hazards: ['dog on property'],
+    });
+    const second = await repositories.technicianNotes.upsertTechnicianNote(app, {
+      ...base,
+      scopeSignal: 'whole_property',
+      waterStatus: { actively_running: false, supply_shut_off: true },
+      hazards: [],
+    });
+    expect(second.scope_signal).toBe('whole_property');
+    expect(second.water_status.actively_running).toBe(false);
+    expect(second.water_status.supply_shut_off).toBe(true);
+    // Re-running REPLACES rather than merging: a hazard that is no longer true must disappear.
+    expect(second.hazards).toEqual([]);
+    expect(await countActive('technician_notes', callId)).toBe(1);
+  });
+
+  it('technician_notes stores a COMPLETE key set even from a partial write', async () => {
+    const callId = 'test-idem-note-partial';
+    await seedCall(callId);
+    const row = await repositories.technicianNotes.upsertTechnicianNote(app, {
+      callId,
+      promptVersion: 'note-v1',
+      modelId: 'm1',
+      schemaVersion: 1,
+      scopeSignal: 'unknown',
+      occupancy: 'unknown',
+      equipment: { brand: 'Rheem' },
+    });
+    // Every unestablished member is an explicit null, not an absent key — the strict row schema
+    // depends on it, and it keeps "we didn't ask" distinguishable from "we don't track that".
+    expect(row.equipment).toEqual({
+      type: null,
+      brand: 'Rheem',
+      model: null,
+      capacity: null,
+      approximate_age: null,
+      fuel_type: null,
+    });
+    expect(row.commitments_made).toEqual({
+      price_quoted: null,
+      dispatch_fee_mentioned: null,
+      arrival_window_given: null,
+      technician_named: null,
+      scope_described: null,
+    });
+  });
+
+  it('note_feedback is append-only: a revised verdict adds a row and the latest wins', async () => {
+    const callId = 'test-idem-feedback';
+    await seedCall(callId);
+    const base = {
+      callId,
+      notePromptVersion: 'note-v1',
+      reviewerActor: 'reviewer-a',
+      fieldPath: 'occupancy' as const,
+    };
+    await repositories.noteFeedback.recordNoteFeedback(app, {
+      ...base,
+      verdict: 'wrong',
+      correctedEnumValue: 'tenant',
+    });
+    await repositories.noteFeedback.recordNoteFeedback(app, { ...base, verdict: 'correct' });
+
+    // Both rows survive — the history of what a reviewer thought is the point of the table.
+    expect(await countActive('note_feedback', callId)).toBe(2);
+    const all = await repositories.noteFeedback.listNoteFeedbackForCall(app, callId);
+    expect(all.map((r) => r.verdict)).toEqual(['wrong', 'correct']);
+
+    // ...but only the newest counts as the standing verdict.
+    const latest = await repositories.noteFeedback.getLatestNoteFeedback(app, callId, 'note-v1');
+    expect(latest).toHaveLength(1);
+    expect(latest[0]!.verdict).toBe('correct');
+    expect(latest[0]!.corrected_enum_value).toBeNull();
+  });
+
+  it('note_feedback scopes standing verdicts to the note prompt version', async () => {
+    const callId = 'test-idem-feedback-ver';
+    await seedCall(callId);
+    await repositories.noteFeedback.recordNoteFeedback(app, {
+      callId,
+      notePromptVersion: 'note-v1',
+      reviewerActor: 'reviewer-a',
+      fieldPath: 'occupancy',
+      verdict: 'wrong',
+    });
+    await repositories.noteFeedback.recordNoteFeedback(app, {
+      callId,
+      notePromptVersion: 'note-v2',
+      reviewerActor: 'reviewer-a',
+      fieldPath: 'occupancy',
+      verdict: 'correct',
+    });
+    // A verdict on v1 says nothing about a v2 note, so accuracy is measured within a version.
+    const v1 = await repositories.noteFeedback.getLatestNoteFeedback(app, callId, 'note-v1');
+    expect(v1.map((r) => r.verdict)).toEqual(['wrong']);
+    const v2 = await repositories.noteFeedback.getLatestNoteFeedback(app, callId, 'note-v2');
+    expect(v2.map((r) => r.verdict)).toEqual(['correct']);
+  });
+
+  it('note_feedback rejects a corrected value on a free-text field before any SQL runs', async () => {
+    const callId = 'test-idem-feedback-prose';
+    await seedCall(callId);
+    // The zod refinement is the first gate; the DB CHECK is the backstop for raw-SQL writers.
+    await expect(
+      repositories.noteFeedback.recordNoteFeedback(app, {
+        callId,
+        notePromptVersion: 'note-v1',
+        reviewerActor: 'reviewer-a',
+        fieldPath: 'access_notes',
+        verdict: 'wrong',
+        correctedEnumValue: 'gate code is 4417',
+      }),
+    ).rejects.toThrow(/DAL_VALIDATION_FAILED/);
+    // The offending text must not be echoed in the error — it could be PII.
+    await repositories.noteFeedback
+      .recordNoteFeedback(app, {
+        callId,
+        notePromptVersion: 'note-v1',
+        reviewerActor: 'reviewer-a',
+        fieldPath: 'access_notes',
+        verdict: 'wrong',
+        correctedEnumValue: 'gate code is 4417',
+      })
+      .catch((err: unknown) => {
+        expect(String(err)).not.toContain('4417');
+      });
+    expect(await countActive('note_feedback', callId)).toBe(0);
+  });
+
+  it('note_feedback rejects a value from another field’s vocabulary', async () => {
+    const callId = 'test-idem-feedback-xvocab';
+    await seedCall(callId);
+    await expect(
+      repositories.noteFeedback.recordNoteFeedback(app, {
+        callId,
+        notePromptVersion: 'note-v1',
+        reviewerActor: 'reviewer-a',
+        fieldPath: 'occupancy',
+        // A real scope_signal value, but not a real occupancy value.
+        correctedEnumValue: 'whole_property',
+        verdict: 'wrong',
+      }),
+    ).rejects.toThrow(/DAL_VALIDATION_FAILED/);
+    expect(await countActive('note_feedback', callId)).toBe(0);
+  });
+
   it('match_keys set-replacement: 1 active, previous digest soft-deleted', async () => {
     const callId = 'test-idem-mk';
     await seedCall(callId);

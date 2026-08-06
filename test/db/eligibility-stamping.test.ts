@@ -225,11 +225,12 @@ describe.skipIf(!hasTestDb)('creation-time retention eligibility stamping (Task 
       // service_category) + 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) + 019
       // (kek_versions app read grant) + 018 (backfill run status, Task 11.2) + 017 (key lifecycle,
       // Task 8.2) + 016 (labeled_examples, Task 6.3) + 015 (reprocess_requests) + 014 (reveal_raw
-      // enum) — all stacked above 013 — then 013 itself; the following `up` re-applies all twelve,
+      // enum) + 1782864100005 (technician_notes + note_feedback, ADR 0009) — all stacked above 013
+      // — then 013 itself; the following `up` re-applies all thirteen,
       // re-running 013's backfill. (The drop migration's down() transiently recreates raw/vault in
       // DB-A while rolled down, but 013's backfill never touches raw, and the drop re-applies on the
       // way up, so DB-A ends with no raw_transcripts.)
-      await migrate('down', 12);
+      await migrate('down', 13);
       await migrate('up');
 
       expect(await cleanEligibleAt('test-elig-bf')).not.toBeNull();
