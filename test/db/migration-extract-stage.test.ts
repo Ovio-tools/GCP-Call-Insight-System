@@ -19,9 +19,9 @@ describe.skipIf(!hasTestDb)('migration 9 down-guard (extraction_candidates rows)
   // lifecycle, Task 8.2) + 18 (backfill run status, Task 11.2) + 19 (kek_versions app read grant)
   // + 1782864100000 (drop raw/vault from DB-A, ADR 0008 Move 2) + 1782864100001 (grinder_pump
   // service_category) + 1782864100002 (duplicate_call_leg drop reason) + 1782864100003
-  // (structured_knowledge.superseded_by_call_id) and
-  // 1782864100004 (below_minimum_duration drop reason) sit above 9.
-  const MIGRATIONS_ABOVE_9 = 15;
+  // (structured_knowledge.superseded_by_call_id) + 1782864100004 (below_minimum_duration drop
+  // reason) and 1782864100005 (technician_notes + note_feedback, ADR 0009) sit above 9.
+  const MIGRATIONS_ABOVE_9 = 16;
 
   beforeAll(async () => {
     await migrate('up');

@@ -19,3 +19,5 @@ export * as rawWebhookEvents from './raw-webhook-events-repo.js';
 export * as keyVersions from './key-versions-repo.js';
 export * as rawTranscripts from './raw-transcripts-repo.js';
 export * as rawPurgeTombstone from './raw-purge-tombstone-repo.js';
+export * as technicianNotes from './technician-notes-repo.js';
+export * as noteFeedback from './note-feedback-repo.js';

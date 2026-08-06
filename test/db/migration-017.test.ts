@@ -32,7 +32,7 @@ import { TEST_DATABASE_URL } from './_pg.js';
  * too, so a `pg_roles` existence check is topology-dependent; an ACL-grant check is 0 in both the
  * shared-local and separate-CI-cluster topologies and is not flaky under concurrent role drops.)
  */
-const ABOVE = 8;
+const ABOVE = 9;
 
 describe.skipIf(!hasTestDb)('migration 017 — key lifecycle', () => {
   let owner!: Pool;

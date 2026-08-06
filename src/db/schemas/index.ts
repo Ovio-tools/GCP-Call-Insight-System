@@ -19,3 +19,5 @@ export * from './dead-letter.js';
 export * from './raw-transcripts.js';
 export * from './token-vault.js';
 export * from './match-keys.js';
+export * from './technician-notes.js';
+export * from './note-feedback.js';
