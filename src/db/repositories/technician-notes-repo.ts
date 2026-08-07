@@ -4,6 +4,7 @@ import type { Queryable } from '../types.js';
 import {
   NOTE_COMMITMENTS_MADE_KEYS,
   NOTE_EQUIPMENT_KEYS,
+  NOTE_NON_DISPATCH_INTENTS,
   NOTE_PAYER_AUTHORITY_KEYS,
   NOTE_PRIOR_WORK_KEYS,
   NOTE_SYSTEM_CONTEXT_KEYS,
@@ -111,6 +112,16 @@ export async function upsertTechnicianNote(
  * - It does NOT look at `call_state.status`. A stored knowledge row already implies the call
  *   reached the end of the pipeline.
  *
+ * It DOES exclude calls `extract` already judged non-dispatchable — intent on
+ * {@link NOTE_NON_DISPATCH_INTENTS} AND no plumbing topic (`service_category = 'other'`). A
+ * technician is never sent to a general enquiry or a billing question, so a note for one costs a
+ * model call to produce an empty gap list that then sits on the review surface looking like a
+ * failure. The exclusion lives HERE rather than in the generator on purpose: the generator's input
+ * is `getCleanTranscript` and nothing else (ADR 0009), and this query already reads
+ * `structured_knowledge`, so no new dependency is introduced and no model call is ever reserved
+ * for a call that will not be noted. {@link countNonDispatchableCandidates} reports how many the
+ * rule removes.
+ *
  * `superseded_by_call_id IS NULL` matches every other knowledge reader (see `buildWhere` in
  * structured-knowledge-repo): one conversation can arrive as several Dialpad legs, and generating
  * a note per leg would hand a technician the same job twice.
@@ -129,13 +140,51 @@ export async function listNoteCandidateCallIds(
        FROM structured_knowledge sk
        LEFT JOIN technician_notes tn ON tn.call_id = sk.call_id
       WHERE sk.superseded_by_call_id IS NULL
+        -- ::text casts because both columns are Postgres ENUMs; comparing one to a text[]
+        -- parameter without the cast fails with "operator does not exist: call_intent = text".
+        AND NOT (sk.call_intent::text = ANY($5::text[]) AND sk.service_category::text = 'other')
         AND ($1 OR tn.call_id IS NULL OR tn.prompt_version <> $2)
         AND ($3::text IS NULL OR sk.call_id > $3::text)
       ORDER BY sk.call_id
       LIMIT $4`,
-    [opts.regenerate, opts.promptVersion, opts.cursor ?? null, opts.limit],
+    [
+      opts.regenerate,
+      opts.promptVersion,
+      opts.cursor ?? null,
+      opts.limit,
+      [...NOTE_NON_DISPATCH_INTENTS],
+    ],
   );
   return rows.map((r) => r.call_id);
+}
+
+/**
+ * How many candidates the non-dispatchable rule removes, for the run summary.
+ *
+ * CORPUS-WIDE, not bounded by `--limit`: it answers "how many calls will this rule never note",
+ * which is what a dry-run preview needs before committing to a full pass. It counts only calls
+ * that would OTHERWISE have been candidates, so it shrinks as notes are written, exactly as
+ * `listNoteCandidateCallIds` does.
+ *
+ * Excluded calls get no `processing_log` row — they were never attempted, and one row per excluded
+ * call per run would be pure noise. This count is the record.
+ */
+export async function countNonDispatchableCandidates(
+  db: Queryable,
+  opts: { promptVersion: string; regenerate: boolean },
+): Promise<number> {
+  const rows = await query<{ n: string }>(
+    db,
+    `SELECT count(*)::text AS n
+       FROM structured_knowledge sk
+       LEFT JOIN technician_notes tn ON tn.call_id = sk.call_id
+      WHERE sk.superseded_by_call_id IS NULL
+        AND sk.call_intent::text = ANY($3::text[])
+        AND sk.service_category::text = 'other'
+        AND ($1 OR tn.call_id IS NULL OR tn.prompt_version <> $2)`,
+    [opts.regenerate, opts.promptVersion, [...NOTE_NON_DISPATCH_INTENTS]],
+  );
+  return Number(rows[0]?.n ?? 0);
 }
 
 export async function getTechnicianNote(

@@ -15,9 +15,9 @@ import { slaMinutesFor } from '../review-queue/sla.js';
 import {
   checkUrlFor,
   createBackfillMonitor,
+  deriveJobSignalUrls,
   httpPing,
   requireCheckUrl,
-  type BackfillSignalUrls,
   type IntervalScheduler,
 } from '../heartbeat/index.js';
 import { httpPostAlert, requireAlertWebhookUrl, emitAlert } from '../alerting/index.js';
@@ -86,12 +86,6 @@ function parseArgs(argv: readonly string[]): BackfillArgs {
   };
 }
 
-/** Derive the four distinct signal URLs from BACKFILL_CHECK_URL (validated distinct in the monitor). */
-function deriveSignals(base: string): BackfillSignalUrls {
-  const b = base.replace(/\/+$/, '');
-  return { start: `${b}/start`, progress: `${b}/progress`, success: b, fail: `${b}/fail` };
-}
-
 const realScheduler: IntervalScheduler = {
   set: (cb, ms) => setInterval(cb, ms),
   clear: (h) => clearInterval(h as ReturnType<typeof setInterval>),
@@ -134,7 +128,7 @@ export async function main(): Promise<void> {
   // Redis / key / Dialpad / pipeline dependency (which would fetch/enqueue/process).
   const pool = createAppPool(config.DATABASE_URL);
   const monitor = createBackfillMonitor({
-    signals: deriveSignals(base),
+    signals: deriveJobSignalUrls(base),
     component: 'backfill',
     ping: httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
     scheduler: realScheduler,

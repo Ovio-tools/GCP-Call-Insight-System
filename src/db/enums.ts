@@ -260,6 +260,23 @@ export const NOTE_UNSET_TEXT = '';
 export const NOTE_TRISTATE = ['yes', 'no', 'unknown'] as const;
 
 /**
+ * Call intents that never put a technician in a driveway: a general enquiry and a billing matter.
+ * A note for one of those is a model call spent to produce an empty gap list that then sits on the
+ * review surface looking like a failure.
+ *
+ * This is HALF a rule. A call is excluded only when its intent is on this list AND `extract` could
+ * not name a plumbing topic for it (`service_category = 'other'`) — see
+ * `listNoteCandidateCallIds`. The conjunction is deliberate and fail-safe: 10 of the 42
+ * general/billing calls in the first corpus DID name a real topic (a water heater, a toilet, a
+ * repipe), and a call misfiled under the wrong intent must still get its note. Excluding on intent
+ * alone would silently lose those; the cost of being wrong the other way is about two cents.
+ */
+export const NOTE_NON_DISPATCH_INTENTS = [
+  'general',
+  'billing',
+] as const satisfies readonly CallIntent[];
+
+/**
  * The keys of each `technician_notes` jsonb object. These drive the zod object shapes in
  * `src/db/schemas/technician-notes.ts` AND appear dotted in {@link NOTE_FIELD_PATHS};
  * `test/db/note-vocabulary-parity.test.ts` asserts the two agree, so a key added here without a

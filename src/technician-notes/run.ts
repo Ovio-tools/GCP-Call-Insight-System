@@ -2,7 +2,10 @@ import type { Pool } from 'pg';
 import type { Logger } from 'pino';
 import type { Config } from '../config/schema.js';
 import { getCleanTranscript } from '../db/repositories/clean-transcripts-repo.js';
-import { listNoteCandidateCallIds } from '../db/repositories/technician-notes-repo.js';
+import {
+  countNonDispatchableCandidates,
+  listNoteCandidateCallIds,
+} from '../db/repositories/technician-notes-repo.js';
 import { query } from '../db/sql.js';
 import type { BackfillMonitor } from '../heartbeat/backfill-monitor.js';
 import { TechnicianNoteError } from './errors.js';
@@ -35,6 +38,12 @@ export interface TechnicianNoteRunSummary {
   generated: number;
   /** Eligible calls with no readable clean transcript (absent, soft-deleted, or hard-deleted). */
   skippedNoTranscript: number;
+  /**
+   * Calls `extract` judged non-dispatchable (a general or billing call with no plumbing topic), so
+   * never a candidate and never a model call. CORPUS-WIDE — unlike every other counter here it is
+   * not bounded by `--limit`, because it answers "how many will this rule never note".
+   */
+  nonDispatchableExcluded: number;
   failedSchema: number;
   failedModel: number;
   /** Notes whose residual scan nulled at least one field. */
@@ -84,6 +93,7 @@ export async function runTechnicianNotes(
     attempted: 0,
     generated: 0,
     skippedNoTranscript: 0,
+    nonDispatchableExcluded: 0,
     failedSchema: 0,
     failedModel: 0,
     residualNullings: 0,
@@ -113,6 +123,13 @@ export async function runTechnicianNotes(
     // success ping for work that never happened would keep the external check green on a
     // schedule that is only ever previewing.
     const monitor = dryRun ? undefined : deps.monitor;
+
+    // Counted once per run, not per page: it is a property of the corpus, and a dry-run preview
+    // needs it BEFORE anyone commits to a full pass.
+    summary.nonDispatchableExcluded = await countNonDispatchableCandidates(pool, {
+      promptVersion: TECHNICIAN_NOTE_PROMPT_VERSION,
+      regenerate,
+    });
 
     await monitor?.start();
 
