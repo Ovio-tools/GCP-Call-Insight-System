@@ -50,6 +50,10 @@ listener-binding service is not a live surface joined to a real `liveSuite`.
 | review          | POST   | `/review/:id/reveal-raw`          | internal | `createInternalApp`       | session + CSRF + **elevated** | raw/vault reveal (call-scoped), one audit row            |
 | knowledge-base  | GET    | `/knowledge`, `/knowledge.json`   | internal | `createInternalApp`       | session                       | none; reads only `structured_knowledge`                  |
 | knowledge-base  | GET    | `/knowledge/export.csv`, `.json`  | internal | `createInternalApp`       | session                       | none; all filtered rows, capped                          |
+| notes           | GET    | `/notes`, `/notes.json`           | internal | `createInternalApp`       | session                       | none; reads `technician_notes` + `structured_knowledge`  |
+| notes           | GET    | `/notes/:callId`, `.json`         | internal | `createInternalApp`       | session                       | none; shows this reviewer's own standing verdicts        |
+| notes           | GET    | `/notes/:callId/transcript.json`  | internal | `createInternalApp`       | session                       | none; `clean_transcripts` only, fail-closed on residual  |
+| notes           | POST   | `/notes/:callId/feedback`         | internal | `createInternalApp`       | session + CSRF                | one append-only `note_feedback` row; note never mutated  |
 | dialpad-webhook | POST   | `/webhooks/dialpad`               | webhook  | `buildWebhookReceiverApp` | HS256 signature               | call_state seed + minimized audit row + one enqueue      |
 | servicetitan    | POST   | _(Task 12.1 — planned)_           | webhook  | _(future)_                | signature                     | _(future)_                                               |
 
@@ -137,6 +141,23 @@ documented, owner assigned, not fixed here; **doc-only** → recorded.
   guard and touches only `structured_knowledge`; the review detail never preloads raw/vault and the
   reveal audit row records field names + call_id + token label, never plaintext; HTML output is fully
   entity-escaped (no reflected-XSS surface).
+- **Note-review isolation (ADR 0009)** — the surface is unreachable from the raw store and the key
+  provider, proven by a TRANSITIVE module-graph walk (`test/notes/module-graph.test.ts`) rather than
+  a direct-import scan: no module reachable from `src/notes/**` imports `db/raw-store`,
+  `db/restricted/*`, the raw/vault repos, a db barrel, `crypto/*`, or `key-lifecycle/*`. There is no
+  allowlist. Its route deps carry no raw pool, key provider, restricted runner, or queue.
+- **Note transcript fails closed** — a residual-scan hit withholds the WHOLE body (`withheld`), never
+  a partially-scrubbed transcript; absent / soft-deleted / hard-deleted / unknown-call-id all answer
+  one byte-identical 200 (`unavailable`), so ids cannot be enumerated and an ordinary retention
+  outcome is not dressed up as an error.
+- **Note feedback is append-only and attributable** — a verdict never mutates `technician_notes`
+  (asserted column by column); `note_prompt_version` comes from the note, never the request
+  (`.strict()` rejects a supplied one); a revision is a new row that supersedes at read time with
+  both rows retained; and the 18 free-text field paths admit no corrected value at all, so reviewer
+  prose cannot enter the store. This surface has no free-text input anywhere.
+- **Strict CSP with no inline handlers** — the note pages carry no `on*=` attribute and every
+  `<script>` is nonce'd (`test/notes/render-csp.test.ts`), including the transcript modal, which is a
+  native `<dialog>` whose three dismissal routes converge on one `close` listener.
 
 ## Completion checklist (Task 9.1)
 
@@ -156,7 +177,10 @@ extension point. To add a surface:
 
 1. Register it in `SURFACES` with its `bootFile`, `factory`, `routes[]` (each with `maliciousPolicy`),
    `sharedFactorySuite`, and `liveSuite`. The conformance guard fails if a discovered route or a
-   listener-binding service is not represented.
+   listener-binding service is not represented. A surface with NO service of its own (mounted only
+   into the console, as `/notes` is) lists its routes under the `console` entry — that is where its
+   listener actually binds, and inventing a `bootFile` that no file matches would fail the
+   services↔surfaces cross-check.
 2. While it is only planned, set `status:'planned'` with a `plannedPlaceholder`, and add the matching
    `describe.todo` in `planned-surfaces.test.ts` (its names are derived from the registry, so they
    cannot drift). The conformance guard pins the planned set and forbids a live surface lingering as a

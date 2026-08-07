@@ -5,6 +5,7 @@ import { registerConsoleHomeRoute } from '../../src/console/routes.js';
 import { registerStatusRoutes } from '../../src/status/routes.js';
 import { registerKnowledgeRoutes } from '../../src/knowledge/routes.js';
 import { registerReviewRoutes } from '../../src/review/routes.js';
+import { registerNotesRoutes } from '../../src/notes/routes.js';
 import { makeInternalApp, login, cookieHeader, sessionCookieValue } from '../http/_helpers.js';
 import { makeTestConfig } from '../_config.js';
 
@@ -119,6 +120,7 @@ describe('console composition — all surfaces coexist on one app', () => {
     registerStatusRoutes(app, stub({}));
     registerKnowledgeRoutes(app, stub({}));
     registerReviewRoutes(app, stub({ rawPool: {}, keyProvider: {}, runner: {}, queue: {} }));
+    registerNotesRoutes(app, stub({}));
   };
 
   it('registers every surface path on one app with no route collision', async () => {
@@ -136,6 +138,12 @@ describe('console composition — all surfaces coexist on one app', () => {
       { method: 'GET', url: '/review' },
       { method: 'GET', url: '/review/:id' },
       { method: 'POST', url: '/review/:id/reveal-raw' },
+      { method: 'GET', url: '/notes' },
+      { method: 'GET', url: '/notes.json' },
+      { method: 'GET', url: '/notes/:callId' },
+      { method: 'GET', url: '/notes/:callId.json' },
+      { method: 'GET', url: '/notes/:callId/transcript.json' },
+      { method: 'POST', url: '/notes/:callId/feedback' },
     ];
     for (const route of registered) {
       expect(h.app.hasRoute(route), `expected ${route.method} ${route.url}`).toBe(true);

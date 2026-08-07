@@ -97,15 +97,30 @@ export const SURFACES: readonly SurfaceSpec[] = [
     status: 'live',
     sharedFactorySuite: 'internal-surfaces',
     liveSuite: 'internal-surfaces',
-    // Only the home route is NEW here; the mounted status/knowledge/review route literals are
-    // discovered from their own files and registered under their own surfaces.
-    routes: [readOnly('/')],
+    // The home route plus the NOTE-REVIEW routes are registered here. The status/knowledge/review
+    // literals are discovered from their own files and belong to their own surfaces, but the note
+    // surface has NO single-surface service of its own — console-surface.ts is the only file that
+    // mounts it and the only one that binds a listener for it, so this is its surface entry.
+    routes: [
+      readOnly('/'),
+      readOnly('/notes'),
+      readOnly('/notes.json'),
+      readOnly('/notes/:callId'),
+      readOnly('/notes/:callId.json'),
+      readOnly('/notes/:callId/transcript.json'),
+      stateChanging('/notes/:callId/feedback'),
+    ],
     authMode: 'session',
     surfaceChecks: [
-      'single entry point — mounts status + knowledge-base + review on one app under one session',
+      'single entry point — mounts status + knowledge-base + review + notes on one app under one session',
       'home page (GET /) is read-only, self-contained HTML — no PII, no external assets',
       'logout is CSRF-protected (POST /auth/logout via embedded per-session token)',
       'inherits the shared createInternalApp hardening — no self-rolled protection',
+      'notes: reads ONLY technician_notes + structured_knowledge + clean_transcripts — never raw_transcripts, the vault, or the key provider (module-graph guard)',
+      'notes transcript: residual-PII hit withholds the WHOLE body (fail closed); absent/soft/hard-deleted all answer the same 200 so ids cannot be enumerated',
+      'notes feedback: CSRF-protected, append-only, never mutates technician_notes; off-vocabulary field_path/enum → REQUEST_MALFORMED before any write',
+      'notes: note_prompt_version comes from the note, never the request (.strict() rejects a supplied one)',
+      'notes: no free-text input anywhere — the 18 free-text field paths admit no correction value',
     ],
   },
   {

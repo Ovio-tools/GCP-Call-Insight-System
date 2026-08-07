@@ -19,6 +19,7 @@ import {
   type ReviewHarness,
 } from '../review/_harness.js';
 import { makeKnowledgeHarness, seedKnowledge } from '../knowledge/_harness.js';
+import { makeNotesHarness, seedCleanTranscript, seedNote } from '../notes/_harness.js';
 import { makeTestConfig } from '../_config.js';
 import {
   ALL_PII_SEEDS,
@@ -32,7 +33,7 @@ import {
 
 /**
  * The REAL internal-surface `liveSuite` (Task 9.1): status (7.3), review (6.2), and knowledge-base
- * (10.1) — all three `createInternalApp` surfaces — driven through the cross-cutting matrix against
+ * (10.1), and note-review (ADR 0009) — all `createInternalApp` surfaces — driven through the cross-cutting matrix against
  * their ACTUAL routes + DB side effects. Reuses the surfaces' own harnesses (never rebuilt).
  *
  * The `shared internal factory contract` block is DB-less and ALWAYS runs: it proves the body/CSRF/
@@ -531,6 +532,140 @@ describe.skipIf(!hasTestDb)('knowledge-base surface (10.1) — security matrix',
     // Static backstop mirroring test/db/restricted-import-guard.test.ts: no knowledge module may
     // touch raw_transcripts / token_vault / match_keys in a SQL clause.
     const dir = fileURLToPath(new URL('../../src/knowledge/', import.meta.url));
+    const files = readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter((f) =>
+      f.endsWith('.ts'),
+    );
+    const forbidden =
+      /\b(?:from|into|update|join)\s+(?:"?\w+"?\.)?"?(?:raw_transcripts|token_vault|match_keys)\b/i;
+    const offenders = files.filter((f) => forbidden.test(readFileSync(`${dir}${f}`, 'utf8')));
+    expect(offenders).toEqual([]);
+  });
+});
+
+/* =================================================================================================
+ * Note-review surface (ADR 0009) — the only internal surface with BOTH a read matrix and a real
+ * state-changing route of its own, so it exercises the full hardening set: oversized body, malformed
+ * JSON, wrong content type, missing CSRF, malicious payloads, and the tier-1 rate limit.
+ * ============================================================================================== */
+
+describe.skipIf(!hasTestDb)('note-review surface (ADR 0009) — security matrix', () => {
+  let owner: Pool;
+  let app: Pool;
+  const PATTERN = 'test-sec-notes-%';
+  const NOTED = 'test-sec-notes-benign';
+
+  beforeAll(async () => {
+    await migrate('up');
+    owner = makePool();
+    app = makeAppPool();
+  });
+  beforeEach(() => cleanupCalls(owner, PATTERN));
+  afterAll(async () => {
+    await cleanupCalls(owner, PATTERN);
+    await owner.end();
+    await app.end();
+  });
+
+  /** A benign, PII-free note + transcript so the read matrix has real content to render. */
+  async function seedBenign(): Promise<void> {
+    await seedNote(owner, app, {
+      callId: NOTED,
+      createdAt: '2026-06-01T00:00:00.000Z',
+      dispatchSummary: 'Tank water heater, no hot water. Supply is shut off.',
+      accessNotes: 'side gate unlocked',
+    });
+    await seedCleanTranscript(owner, NOTED, 'Agent: hello\nCaller: no hot water');
+  }
+
+  const noteFeedbackCount = async (): Promise<number> => {
+    const r = await owner.query<{ n: string }>(
+      `SELECT count(*)::text AS n FROM note_feedback WHERE call_id LIKE $1`,
+      [PATTERN],
+    );
+    return Number(r.rows[0]?.n ?? '0');
+  };
+
+  describe('shared read matrix', () => {
+    let harness: InternalHarness;
+    beforeEach(async () => {
+      await seedBenign();
+      harness = await makeNotesHarness(app, { config: {} });
+    });
+    afterEach(() => harness.app.close());
+
+    runReadPathMatrix({
+      getApp: () => harness.app,
+      login: () => login(harness),
+      readPaths: [
+        { path: '/notes', kind: 'html' },
+        { path: '/notes.json', kind: 'json' },
+        { path: `/notes/${NOTED}`, kind: 'html' },
+        { path: `/notes/${NOTED}.json`, kind: 'json' },
+        { path: `/notes/${NOTED}/transcript.json`, kind: 'json' },
+      ],
+      rateLimit: { makeApp: makeRateLimitProbeApp, path: '/probe', max: 3 },
+    });
+  });
+
+  describe('state-path hardening on the feedback POST', () => {
+    let harness: InternalHarness;
+    beforeEach(async () => {
+      await seedBenign();
+      harness = await makeNotesHarness(app, { config: {} });
+    });
+    afterEach(() => harness.app.close());
+
+    runStatePathHardening({
+      label: 'POST /notes/:callId/feedback',
+      getApp: () => harness.app,
+      path: `/notes/${NOTED}/feedback`,
+      session: () => login(harness),
+      rejectCode: 'REQUEST_MALFORMED',
+      assertNoSideEffect: async () => {
+        expect(await noteFeedbackCount(), 'a rejected request wrote a verdict').toBe(0);
+      },
+    });
+  });
+
+  it('never leaks PII from the note or the transcript into any response', async () => {
+    // Plant the corpus seeds in the note's free-text fields AND in the transcript, then read every
+    // route. The note serializer scrubs per field; the transcript serializer withholds outright.
+    await seedNote(owner, app, {
+      callId: 'test-sec-notes-pii',
+      createdAt: '2026-06-02T00:00:00.000Z',
+      dispatchSummary: `caller ${PII_SEEDS.name} said`,
+      accessNotes: PII_SEEDS.address,
+      symptomVerbatim: PII_SEEDS.customerLanguage,
+      hazards: [PII_SEEDS.phone],
+      urgencyContext: [PII_SEEDS.email],
+    });
+    await seedCleanTranscript(
+      owner,
+      'test-sec-notes-pii',
+      `Agent: hello\nCaller: I am ${PII_SEEDS.name} on ${PII_SEEDS.phone}`,
+    );
+    const harness = await makeNotesHarness(app, { denyTerms: [...ALL_PII_SEEDS] });
+    const { cookie } = await login(harness);
+
+    for (const url of [
+      '/notes',
+      '/notes.json',
+      '/notes/test-sec-notes-pii',
+      '/notes/test-sec-notes-pii.json',
+      '/notes/test-sec-notes-pii/transcript.json',
+    ]) {
+      const res = await harness.app.inject({ method: 'GET', url, headers: { cookie } });
+      expect(res.statusCode, url).toBe(200);
+      assertNoPii(res.payload, url);
+    }
+    assertNoPii(harness.lines.join('\n'), 'note surface logs');
+    await harness.app.close();
+  });
+
+  it('reads ONLY its own de-identified tables — the source never references restricted ones', () => {
+    // Static backstop mirroring the knowledge check above. The exhaustive proof is the transitive
+    // module-graph walk in test/notes/module-graph.test.ts; this is the SQL-clause counterpart.
+    const dir = fileURLToPath(new URL('../../src/notes/', import.meta.url));
     const files = readdirSync(dir, { recursive: true, encoding: 'utf8' }).filter((f) =>
       f.endsWith('.ts'),
     );

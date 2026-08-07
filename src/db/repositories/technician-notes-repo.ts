@@ -149,3 +149,188 @@ export async function getTechnicianNote(
   );
   return rows[0] ? parseOrThrow(TABLE, technicianNoteRowSchema, rows[0]) : undefined;
 }
+
+// --- Note-review surface read model (ADR 0009) ---
+//
+// Read-only, parameterized queries for the authenticated note-review surface (`src/notes/`). An
+// EXPLICIT column allowlist, never a wildcard select — `getTechnicianNote` above keeps its
+// `SELECT *` because it is the GENERATOR's read (it round-trips the full row it just wrote); this
+// section is the SURFACE's, and `test/notes/module-graph.test.ts` asserts no `SELECT *` and no
+// raw/vault table name appears below this marker.
+//
+// Both readers join `structured_knowledge` for the call's category/urgency/date. All filters go
+// through the single {@link buildNoteWhere} so a page and its total can never disagree about which
+// notes matched.
+
+/** The allowlisted note columns the surface reads (order = the detail DTO's field order). */
+const NOTE_READ_COLS =
+  'tn.call_id, tn.prompt_version, tn.scope_signal, tn.equipment, tn.system_context, ' +
+  'tn.water_status, tn.payer_authority, tn.prior_work, tn.location_on_property, ' +
+  'tn.symptom_verbatim, tn.prior_attempts_detail, tn.access_notes, tn.hazards, ' +
+  'tn.urgency_context, tn.commitments_made, tn.occupancy, tn.not_established, tn.dispatch_summary';
+
+/**
+ * Which verdicts a note has drawn, as the list filter expresses it:
+ *  - `unreviewed`    — no verdict at all at the note's CURRENT prompt version
+ *  - `has_verdicts`  — at least one
+ *  - `has_wrong`     — at least one STANDING verdict that is not `correct`
+ */
+export type NoteReviewState = 'unreviewed' | 'has_verdicts' | 'has_wrong';
+
+/** The repo's parameterized filter contract. Date bounds are pre-resolved UTC instants (the
+ * date-only parsing rules live in `src/notes/query.ts`). */
+export interface NoteQueryFilters {
+  serviceCategory?: string;
+  urgency?: string;
+  reviewState?: NoteReviewState;
+  fromInclusive?: Date;
+  toExclusive?: Date;
+}
+
+/** One note as the LIST renders it. `created_at` is the CALL's date (`structured_knowledge`), not
+ * the note's: a reviewer moving between /knowledge and /notes must see one date per call, and
+ * `technician_notes.created_at` is a batch-scheduling artifact. */
+export interface NoteListReadRow {
+  call_id: string;
+  created_at: Date;
+  service_category: string;
+  urgency: string;
+  dispatch_summary: string | null;
+  not_established: string[];
+  review_state: NoteReviewState;
+}
+
+/** One note as the DETAIL renders it: every note column plus the joined call facts. */
+export interface NoteDetailReadRow {
+  call_id: string;
+  prompt_version: string;
+  created_at: Date;
+  service_category: string;
+  urgency: string;
+  scope_signal: string;
+  equipment: Record<string, string | null>;
+  system_context: Record<string, string | null>;
+  water_status: Record<string, boolean | null>;
+  payer_authority: Record<string, boolean | null>;
+  prior_work: Record<string, boolean | null>;
+  location_on_property: string | null;
+  symptom_verbatim: string | null;
+  prior_attempts_detail: string | null;
+  access_notes: string | null;
+  hazards: string[];
+  urgency_context: string[];
+  commitments_made: Record<string, boolean | null>;
+  occupancy: string;
+  not_established: string[];
+  dispatch_summary: string | null;
+}
+
+/**
+ * The review-state EXISTS clauses, scoped to the note's OWN `prompt_version`.
+ *
+ * Version scoping is the point: a note regenerated under a new prompt version reads as unreviewed
+ * again, because a verdict given against v1 says nothing about the v2 note that replaced it. The
+ * `has_wrong` variant resolves the STANDING verdict per (field_path, reviewer_actor) first — a
+ * reviewer who marked a field wrong and then corrected themselves to `correct` must not keep the
+ * note in the "has wrong" bucket forever.
+ */
+const HAS_ANY_VERDICT = `EXISTS (
+  SELECT 1 FROM note_feedback nf
+   WHERE nf.call_id = tn.call_id AND nf.note_prompt_version = tn.prompt_version)`;
+
+const HAS_WRONG_VERDICT = `EXISTS (
+  SELECT 1 FROM (
+    SELECT DISTINCT ON (nf.field_path, nf.reviewer_actor) nf.verdict
+      FROM note_feedback nf
+     WHERE nf.call_id = tn.call_id AND nf.note_prompt_version = tn.prompt_version
+     ORDER BY nf.field_path, nf.reviewer_actor, nf.created_at DESC, nf.id DESC
+  ) standing
+   WHERE standing.verdict <> 'correct')`;
+
+/** Build the shared WHERE clause + ordered params. `$1..$n` positional; no value interpolation. */
+function buildNoteWhere(filters: NoteQueryFilters): { clause: string; params: unknown[] } {
+  // Superseded (duplicate-leg) rows are hidden, matching every other knowledge reader: one
+  // conversation can arrive as several Dialpad legs, and showing a note per leg would ask the
+  // reviewer to judge the same job twice.
+  const clauses: string[] = ['sk.superseded_by_call_id IS NULL'];
+  const params: unknown[] = [];
+  const add = (sql: (n: number) => string, value: unknown): void => {
+    params.push(value);
+    clauses.push(sql(params.length));
+  };
+
+  if (filters.serviceCategory !== undefined)
+    add((n) => `sk.service_category = $${n}`, filters.serviceCategory);
+  if (filters.urgency !== undefined) add((n) => `sk.urgency = $${n}`, filters.urgency);
+  if (filters.fromInclusive !== undefined)
+    add((n) => `sk.created_at >= $${n}`, filters.fromInclusive);
+  if (filters.toExclusive !== undefined) add((n) => `sk.created_at < $${n}`, filters.toExclusive);
+
+  if (filters.reviewState === 'unreviewed') clauses.push(`NOT ${HAS_ANY_VERDICT}`);
+  else if (filters.reviewState === 'has_verdicts') clauses.push(HAS_ANY_VERDICT);
+  else if (filters.reviewState === 'has_wrong') clauses.push(HAS_WRONG_VERDICT);
+
+  return { clause: `WHERE ${clauses.join(' AND ')}`, params };
+}
+
+/** One page of matching notes, deterministically ordered (newest call first). */
+export async function searchTechnicianNotes(
+  db: Queryable,
+  filters: NoteQueryFilters,
+  page: { limit: number; offset: number },
+): Promise<NoteListReadRow[]> {
+  const { clause, params } = buildNoteWhere(filters);
+  const limitPos = params.length + 1;
+  const offsetPos = params.length + 2;
+  return query<NoteListReadRow>(
+    db,
+    `SELECT tn.call_id, sk.created_at, sk.service_category, sk.urgency,
+            tn.dispatch_summary, tn.not_established,
+            CASE WHEN ${HAS_WRONG_VERDICT} THEN 'has_wrong'
+                 WHEN ${HAS_ANY_VERDICT} THEN 'has_verdicts'
+                 ELSE 'unreviewed' END AS review_state
+       FROM technician_notes tn
+       JOIN structured_knowledge sk ON sk.call_id = tn.call_id
+       ${clause}
+      ORDER BY sk.created_at DESC, tn.call_id DESC
+      LIMIT $${limitPos} OFFSET $${offsetPos}`,
+    [...params, page.limit, page.offset],
+  );
+}
+
+/** How many notes match the filters — same WHERE as {@link searchTechnicianNotes}. */
+export async function countTechnicianNotes(
+  db: Queryable,
+  filters: NoteQueryFilters,
+): Promise<number> {
+  const { clause, params } = buildNoteWhere(filters);
+  const rows = await query<{ count: string }>(
+    db,
+    `SELECT count(*)::text AS count
+       FROM technician_notes tn
+       JOIN structured_knowledge sk ON sk.call_id = tn.call_id
+       ${clause}`,
+    params,
+  );
+  return Number(rows[0]?.count ?? '0');
+}
+
+/**
+ * One note for the detail view, or `undefined`. Joined to `structured_knowledge` on the same
+ * `superseded_by_call_id IS NULL` terms as the list, so a call reachable from the list is
+ * reachable here and a superseded leg is reachable from neither.
+ */
+export async function getTechnicianNoteDetail(
+  db: Queryable,
+  callId: string,
+): Promise<NoteDetailReadRow | undefined> {
+  const rows = await query<NoteDetailReadRow>(
+    db,
+    `SELECT ${NOTE_READ_COLS}, sk.created_at, sk.service_category, sk.urgency
+       FROM technician_notes tn
+       JOIN structured_knowledge sk ON sk.call_id = tn.call_id
+      WHERE tn.call_id = $1 AND sk.superseded_by_call_id IS NULL`,
+    [callId],
+  );
+  return rows[0];
+}

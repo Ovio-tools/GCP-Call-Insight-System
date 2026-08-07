@@ -168,6 +168,8 @@ describe('security conformance — every route is registered', () => {
     expect(paths).toContain('POST /review/:id/reveal-raw');
     expect(paths).toContain('GET /knowledge/export.csv');
     expect(paths).toContain('POST /webhooks/dialpad');
+    expect(paths).toContain('GET /notes/:callId/transcript.json');
+    expect(paths).toContain('POST /notes/:callId/feedback');
   });
 
   it('every discovered route path/method appears in SURFACES.routes', () => {

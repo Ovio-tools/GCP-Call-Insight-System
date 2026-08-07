@@ -829,6 +829,17 @@ export const configObjectSchema = z.object({
    * rows matching the filters up to this cap and signals truncation (CSV `X-Export-*` headers /
    * JSON `truncated`). Bounds the response size of an all-rows export. */
   KNOWLEDGE_MAX_EXPORT_ROWS: z.coerce.number().int().positive().default(5000),
+
+  // --- Note-review surface (ADR 0009) ---
+
+  /** Default page size for the paginated technician-note review list (`/notes`, `/notes.json`)
+   * when a request omits `page_size`. Clamped to `[1, NOTES_PAGE_SIZE_MAX]`; the cross-field
+   * superRefine enforces `DEFAULT <= MAX`. Smaller than the knowledge default on purpose: a note
+   * card carries a dispatch-summary line, so fewer fit a screen before scrolling stops helping. */
+  NOTES_PAGE_SIZE_DEFAULT: z.coerce.number().int().positive().default(25),
+
+  /** Upper bound for the note-review list `page_size`; a request asking for more is clamped. */
+  NOTES_PAGE_SIZE_MAX: z.coerce.number().int().positive().default(100),
 });
 
 /**
@@ -911,6 +922,15 @@ export const configSchema = configObjectSchema.superRefine((cfg, ctx) => {
       code: z.ZodIssueCode.custom,
       path: ['KNOWLEDGE_PAGE_SIZE_DEFAULT'],
       message: `KNOWLEDGE_PAGE_SIZE_DEFAULT (${cfg.KNOWLEDGE_PAGE_SIZE_DEFAULT}) must be <= KNOWLEDGE_PAGE_SIZE_MAX (${cfg.KNOWLEDGE_PAGE_SIZE_MAX})`,
+    });
+  }
+
+  // Note-review list pagination (ADR 0009): same clamp reasoning as the knowledge view above.
+  if (cfg.NOTES_PAGE_SIZE_DEFAULT > cfg.NOTES_PAGE_SIZE_MAX) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['NOTES_PAGE_SIZE_DEFAULT'],
+      message: `NOTES_PAGE_SIZE_DEFAULT (${cfg.NOTES_PAGE_SIZE_DEFAULT}) must be <= NOTES_PAGE_SIZE_MAX (${cfg.NOTES_PAGE_SIZE_MAX})`,
     });
   }
 });

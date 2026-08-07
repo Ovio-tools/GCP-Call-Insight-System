@@ -37,6 +37,11 @@ const TILES: readonly SurfaceTile[] = [
     title: 'Review queue',
     blurb: 'Resolve the calls the pipeline held for a human decision.',
   },
+  {
+    href: '/notes',
+    title: 'Technician notes',
+    blurb: 'Read the note a technician would get, and say whether it is right.',
+  },
 ];
 
 const STYLE =
