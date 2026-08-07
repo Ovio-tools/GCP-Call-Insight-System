@@ -1,0 +1,65 @@
+{
+  "name": "adversarial-planted-pii-symptom",
+  "redactedTranscript": "Agent: What is happening?\nCaller: The toilet keeps running. Call me back on my cell.\nAgent: I have your number on the account.",
+  "modelResponse": {
+    "text": "{\"scope_signal\":\"single_fixture\",\"occupancy\":\"owner\",\"equipment\":{\"type\":\"toilet\",\"brand\":null,\"model\":null,\"capacity\":null,\"approximate_age\":null,\"fuel_type\":null},\"system_context\":{\"waste_system\":null,\"water_source\":null,\"foundation_type\":null,\"property_age\":null},\"water_status\":{\"actively_running\":true,\"supply_shut_off\":null,\"shutoff_location_known\":null,\"active_damage\":false},\"payer_authority\":{\"can_approve_work\":true,\"home_warranty\":null,\"insurance_claim\":null,\"third_party_payer\":null},\"prior_work\":{\"is_repeat_visit\":null,\"is_warranty_claim\":null,\"prior_work_by_others\":null},\"commitments_made\":{\"price_quoted\":null,\"dispatch_fee_mentioned\":null,\"arrival_window_given\":null,\"technician_named\":null,\"scope_described\":null},\"location_on_property\":\"bathroom\",\"symptom_verbatim\":\"the toilet keeps running, call back on 5551234567\",\"prior_attempts_detail\":null,\"access_notes\":\"knock loudly, doorbell is broken\",\"hazards\":[],\"urgency_context\":[],\"dispatch_summary\":\"Toilet is running continuously in the bathroom. Homeowner is on site and can approve work. Knock loudly, the doorbell is broken. Not confirmed on this call: whether the supply is shut off.\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "scope_signal": "single_fixture",
+      "occupancy": "owner",
+      "equipment": {
+        "type": "toilet",
+        "brand": null,
+        "model": null,
+        "capacity": null,
+        "approximate_age": null,
+        "fuel_type": null
+      },
+      "system_context": {
+        "waste_system": null,
+        "water_source": null,
+        "foundation_type": null,
+        "property_age": null
+      },
+      "water_status": {
+        "actively_running": true,
+        "supply_shut_off": null,
+        "shutoff_location_known": null,
+        "active_damage": false
+      },
+      "payer_authority": {
+        "can_approve_work": true,
+        "home_warranty": null,
+        "insurance_claim": null,
+        "third_party_payer": null
+      },
+      "prior_work": {
+        "is_repeat_visit": null,
+        "is_warranty_claim": null,
+        "prior_work_by_others": null
+      },
+      "commitments_made": {
+        "price_quoted": null,
+        "dispatch_fee_mentioned": null,
+        "arrival_window_given": null,
+        "technician_named": null,
+        "scope_described": null
+      },
+      "location_on_property": "bathroom",
+      "symptom_verbatim": "the toilet keeps running, call back on 5551234567",
+      "prior_attempts_detail": null,
+      "access_notes": "knock loudly, doorbell is broken",
+      "hazards": [],
+      "urgency_context": [],
+      "dispatch_summary": "Toilet is running continuously in the bathroom. Homeowner is on site and can approve work. Knock loudly, the doorbell is broken. Not confirmed on this call: whether the supply is shut off."
+    }
+  },
+  "expectedResidual": {
+    "fieldsNulled": ["symptom_verbatim"],
+    "categories": ["digit_run"]
+  },
+  "expectedNotEstablished": ["water_status.supply_shut_off"]
+}

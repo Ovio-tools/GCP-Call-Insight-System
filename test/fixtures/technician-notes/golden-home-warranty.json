@@ -1,0 +1,61 @@
+{
+  "name": "golden-home-warranty",
+  "redactedTranscript": "Agent: What is the issue?\nCaller: My garbage disposal quit. This is going through my home warranty company.\nAgent: Do they need to approve the work first?\nCaller: They do, I cannot authorize anything myself.\nAgent: Understood, we will work with them.",
+  "modelResponse": {
+    "text": "{\"scope_signal\":\"single_fixture\",\"occupancy\":\"owner\",\"equipment\":{\"type\":\"garbage disposal\",\"brand\":null,\"model\":null,\"capacity\":null,\"approximate_age\":null,\"fuel_type\":null},\"system_context\":{\"waste_system\":null,\"water_source\":null,\"foundation_type\":null,\"property_age\":null},\"water_status\":{\"actively_running\":false,\"supply_shut_off\":null,\"shutoff_location_known\":null,\"active_damage\":false},\"payer_authority\":{\"can_approve_work\":false,\"home_warranty\":true,\"insurance_claim\":null,\"third_party_payer\":true},\"prior_work\":{\"is_repeat_visit\":null,\"is_warranty_claim\":null,\"prior_work_by_others\":null},\"commitments_made\":{\"price_quoted\":null,\"dispatch_fee_mentioned\":null,\"arrival_window_given\":null,\"technician_named\":null,\"scope_described\":null},\"location_on_property\":\"kitchen\",\"symptom_verbatim\":\"my garbage disposal quit\",\"prior_attempts_detail\":null,\"access_notes\":null,\"hazards\":[],\"urgency_context\":[],\"dispatch_summary\":\"Garbage disposal has stopped working in the kitchen. Job is going through a home warranty company and the caller cannot authorize work themselves, so get approval before doing anything billable. Not confirmed on this call: whether the supply is shut off and access details.\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "scope_signal": "single_fixture",
+      "occupancy": "owner",
+      "equipment": {
+        "type": "garbage disposal",
+        "brand": null,
+        "model": null,
+        "capacity": null,
+        "approximate_age": null,
+        "fuel_type": null
+      },
+      "system_context": {
+        "waste_system": null,
+        "water_source": null,
+        "foundation_type": null,
+        "property_age": null
+      },
+      "water_status": {
+        "actively_running": false,
+        "supply_shut_off": null,
+        "shutoff_location_known": null,
+        "active_damage": false
+      },
+      "payer_authority": {
+        "can_approve_work": false,
+        "home_warranty": true,
+        "insurance_claim": null,
+        "third_party_payer": true
+      },
+      "prior_work": {
+        "is_repeat_visit": null,
+        "is_warranty_claim": null,
+        "prior_work_by_others": null
+      },
+      "commitments_made": {
+        "price_quoted": null,
+        "dispatch_fee_mentioned": null,
+        "arrival_window_given": null,
+        "technician_named": null,
+        "scope_described": null
+      },
+      "location_on_property": "kitchen",
+      "symptom_verbatim": "my garbage disposal quit",
+      "prior_attempts_detail": null,
+      "access_notes": null,
+      "hazards": [],
+      "urgency_context": [],
+      "dispatch_summary": "Garbage disposal has stopped working in the kitchen. Job is going through a home warranty company and the caller cannot authorize work themselves, so get approval before doing anything billable. Not confirmed on this call: whether the supply is shut off and access details."
+    }
+  },
+  "expectedNotEstablished": ["water_status.supply_shut_off", "access_notes"]
+}

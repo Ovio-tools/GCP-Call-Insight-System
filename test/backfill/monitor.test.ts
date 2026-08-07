@@ -47,6 +47,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     expect(() =>
       createBackfillMonitor({
         signals: { ...SIGNALS, progress: SIGNALS.success },
+        component: 'backfill',
         ping,
         scheduler: fakeScheduler().scheduler,
         now: () => 0,
@@ -61,6 +62,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     const { ping, urls } = pings();
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping,
       scheduler: fakeScheduler().scheduler,
       now: () => 0,
@@ -78,6 +80,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     let clock = 0;
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping,
       scheduler: fake.scheduler,
       now: () => clock,
@@ -100,6 +103,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     let clock = 0;
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping,
       scheduler: fake.scheduler,
       now: () => clock,
@@ -120,6 +124,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     let clock = 0;
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping,
       scheduler: fake.scheduler,
       now: () => clock,
@@ -140,6 +145,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     const fake = fakeScheduler();
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping,
       scheduler: fake.scheduler,
       now: () => 0,
@@ -161,6 +167,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     const { ping, urls } = pings();
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping,
       scheduler: fakeScheduler().scheduler,
       now: () => 0,
@@ -178,6 +185,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     const { ping, urls } = pings();
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping,
       scheduler: fakeScheduler().scheduler,
       now: () => 0,
@@ -198,6 +206,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     const pinged: string[] = [];
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping: (url: string) => {
         pinged.push(url);
         return gate;
@@ -227,6 +236,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     });
     const m2 = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping: (url: string) => (url === SIGNALS.success ? gate2 : Promise.resolve()),
       scheduler: fakeScheduler().scheduler,
       now: () => 0,
@@ -253,6 +263,7 @@ describe('createBackfillMonitor (four-signal job monitor)', () => {
     });
     const m = createBackfillMonitor({
       signals: SIGNALS,
+      component: 'backfill',
       ping: (url: string) => (url === SIGNALS.fail ? gate : Promise.resolve()),
       scheduler: fakeScheduler().scheduler,
       now: () => 0,

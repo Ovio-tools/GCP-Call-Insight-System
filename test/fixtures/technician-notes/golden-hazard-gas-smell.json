@@ -1,0 +1,61 @@
+{
+  "name": "golden-hazard-gas-smell",
+  "redactedTranscript": "Agent: What are you noticing?\nCaller: There is a gas smell near the furnace in the basement.\nAgent: Have you opened a window and stepped outside?\nCaller: Doing that now. I own the house and I am here.\nAgent: Good. I am flagging this as urgent.",
+  "modelResponse": {
+    "text": "{\"scope_signal\":\"single_fixture\",\"occupancy\":\"owner\",\"equipment\":{\"type\":\"furnace\",\"brand\":null,\"model\":null,\"capacity\":null,\"approximate_age\":null,\"fuel_type\":\"gas\"},\"system_context\":{\"waste_system\":null,\"water_source\":null,\"foundation_type\":null,\"property_age\":null},\"water_status\":{\"actively_running\":false,\"supply_shut_off\":null,\"shutoff_location_known\":null,\"active_damage\":false},\"payer_authority\":{\"can_approve_work\":true,\"home_warranty\":null,\"insurance_claim\":null,\"third_party_payer\":null},\"prior_work\":{\"is_repeat_visit\":null,\"is_warranty_claim\":null,\"prior_work_by_others\":null},\"commitments_made\":{\"price_quoted\":null,\"dispatch_fee_mentioned\":null,\"arrival_window_given\":null,\"technician_named\":null,\"scope_described\":true},\"location_on_property\":\"basement\",\"symptom_verbatim\":\"there is a gas smell near the furnace in the basement\",\"prior_attempts_detail\":null,\"access_notes\":null,\"hazards\":[\"reported gas odour near the furnace\"],\"urgency_context\":[\"possible gas leak reported\"],\"dispatch_summary\":\"Reported gas odour near a gas furnace in the basement. Treat as a possible gas leak on arrival. Caller was told to ventilate and step outside. Homeowner is on site and can approve work. Not confirmed on this call: whether the supply is shut off and access details.\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "scope_signal": "single_fixture",
+      "occupancy": "owner",
+      "equipment": {
+        "type": "furnace",
+        "brand": null,
+        "model": null,
+        "capacity": null,
+        "approximate_age": null,
+        "fuel_type": "gas"
+      },
+      "system_context": {
+        "waste_system": null,
+        "water_source": null,
+        "foundation_type": null,
+        "property_age": null
+      },
+      "water_status": {
+        "actively_running": false,
+        "supply_shut_off": null,
+        "shutoff_location_known": null,
+        "active_damage": false
+      },
+      "payer_authority": {
+        "can_approve_work": true,
+        "home_warranty": null,
+        "insurance_claim": null,
+        "third_party_payer": null
+      },
+      "prior_work": {
+        "is_repeat_visit": null,
+        "is_warranty_claim": null,
+        "prior_work_by_others": null
+      },
+      "commitments_made": {
+        "price_quoted": null,
+        "dispatch_fee_mentioned": null,
+        "arrival_window_given": null,
+        "technician_named": null,
+        "scope_described": true
+      },
+      "location_on_property": "basement",
+      "symptom_verbatim": "there is a gas smell near the furnace in the basement",
+      "prior_attempts_detail": null,
+      "access_notes": null,
+      "hazards": ["reported gas odour near the furnace"],
+      "urgency_context": ["possible gas leak reported"],
+      "dispatch_summary": "Reported gas odour near a gas furnace in the basement. Treat as a possible gas leak on arrival. Caller was told to ventilate and step outside. Homeowner is on site and can approve work. Not confirmed on this call: whether the supply is shut off and access details."
+    }
+  },
+  "expectedNotEstablished": ["water_status.supply_shut_off", "access_notes"]
+}

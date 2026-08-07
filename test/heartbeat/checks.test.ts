@@ -14,6 +14,7 @@ const URLS = {
   'retention-cron': 'https://checks.example.com/ping/retention',
   'evaluation-cron': 'https://checks.example.com/ping/evaluation',
   backfill: 'https://checks.example.com/ping/backfill',
+  'technician-notes': 'https://checks.example.com/ping/technician-notes',
 } as const;
 
 const VARS = {
@@ -22,6 +23,7 @@ const VARS = {
   'retention-cron': 'RETENTION_CHECK_URL',
   'evaluation-cron': 'EVALUATION_CHECK_URL',
   backfill: 'BACKFILL_CHECK_URL',
+  'technician-notes': 'TECHNICIAN_NOTES_CHECK_URL',
 } as const;
 
 const COMPONENTS: readonly HeartbeatComponent[] = [
@@ -30,6 +32,7 @@ const COMPONENTS: readonly HeartbeatComponent[] = [
   'retention-cron',
   'evaluation-cron',
   'backfill',
+  'technician-notes',
 ];
 
 describe('checkUrlFor / checkUrlVar', () => {

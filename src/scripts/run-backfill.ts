@@ -135,6 +135,7 @@ export async function main(): Promise<void> {
   const pool = createAppPool(config.DATABASE_URL);
   const monitor = createBackfillMonitor({
     signals: deriveSignals(base),
+    component: 'backfill',
     ping: httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
     scheduler: realScheduler,
     now: () => Date.now(),

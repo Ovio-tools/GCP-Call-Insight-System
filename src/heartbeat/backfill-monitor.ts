@@ -1,12 +1,19 @@
 import type { Logger } from 'pino';
+import { type HeartbeatComponent } from './checks.js';
 import { type IntervalScheduler } from './emit.js';
 import { type HeartbeatPinger, sanitizePingError } from './ping.js';
 
 /**
- * Job-style backfill monitor (Task 11.2, §6). Unlike a periodic-liveness heartbeat, a backfill run
- * is a bounded JOB: it signals START, periodic PROGRESS while alive, and exactly one terminal
- * SUCCESS or FAIL — on FOUR DISTINCT external check URLs, so a progress ping can never satisfy the
- * terminal-success monitor (R1 #2) and a stall is a genuine missing-progress alert (R1 #11).
+ * Job-style monitor (Task 11.2, §6), first built for backfill and since shared with any bounded
+ * JOB. Unlike a periodic-liveness heartbeat, a job run signals START, periodic PROGRESS while
+ * alive, and exactly one terminal SUCCESS or FAIL — on FOUR DISTINCT external check URLs, so a
+ * progress ping can never satisfy the terminal-success monitor (R1 #2) and a stall is a genuine
+ * missing-progress alert (R1 #11).
+ *
+ * The owning component is a PARAMETER, not a constant: every log line here is scoped by it, so the
+ * technician-note job's stall warning can never be misread as a backfill stall. Names keep the
+ * `Backfill` prefix because backfill remains the reference consumer and renaming the type would
+ * churn every call site for no behavioral gain.
  *
  * Layered on the shared {@link HeartbeatPinger} + {@link sanitizePingError}, so the check URL and
  * any secret never leak into a log line.
@@ -42,6 +49,9 @@ export interface BackfillMonitor {
 
 export interface CreateBackfillMonitorDeps {
   signals: BackfillSignalUrls;
+  /** The job that owns this monitor. Scopes every log line so one job's stall warning is never
+   * attributed to another's. */
+  component: HeartbeatComponent;
   ping: HeartbeatPinger;
   scheduler: IntervalScheduler;
   now: () => number;
@@ -55,19 +65,20 @@ export interface CreateBackfillMonitorDeps {
 }
 
 /** Throw if any two of the four signal URLs collide — enforced BEFORE any ping (R2 #5). */
-function assertDistinctSignals(s: BackfillSignalUrls): void {
+function assertDistinctSignals(component: HeartbeatComponent, s: BackfillSignalUrls): void {
   const urls = [s.start, s.progress, s.success, s.fail];
   const unique = new Set(urls);
   if (unique.size !== urls.length) {
     throw new Error(
-      'backfill monitor: the four signal URLs (start/progress/success/fail) must be pairwise distinct',
+      `${component} monitor: the four signal URLs (start/progress/success/fail) must be pairwise distinct`,
     );
   }
 }
 
 export function createBackfillMonitor(deps: CreateBackfillMonitorDeps): BackfillMonitor {
-  assertDistinctSignals(deps.signals);
-  const { signals, ping, scheduler, now, logger, progressIntervalMs, stallThresholdMs } = deps;
+  assertDistinctSignals(deps.component, deps.signals);
+  const { signals, component, ping, scheduler, now, logger, progressIntervalMs, stallThresholdMs } =
+    deps;
 
   let handle: unknown;
   let lastProgressAt = 0;
@@ -82,7 +93,7 @@ export function createBackfillMonitor(deps: CreateBackfillMonitorDeps): Backfill
     try {
       await ping(url);
     } catch (err) {
-      logger.warn({ component: 'backfill' }, `backfill ping failed: ${sanitizePingError(err)}`);
+      logger.warn({ component }, `${component} ping failed: ${sanitizePingError(err)}`);
     }
   };
 
@@ -96,8 +107,8 @@ export function createBackfillMonitor(deps: CreateBackfillMonitorDeps): Backfill
       // Withhold the progress ping so the external monitor's missing-progress window fires. Log
       // sanitized context (counts only, no PII, no URL).
       logger.warn(
-        { component: 'backfill', ...lastCounts },
-        'backfill stalled: no terminal progress within the stall threshold — withholding progress ping',
+        { component, ...lastCounts },
+        `${component} stalled: no progress within the stall threshold — withholding progress ping`,
       );
     }
   };

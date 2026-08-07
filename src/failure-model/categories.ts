@@ -72,6 +72,12 @@ export const ROOT_CAUSE_CATEGORIES = [
   // Key lifecycle (Task 8.2). An emergency DEK/KEK revocation aborted before the material was
   // confirmed unrecoverable. Affected rows may still be readable; re-run the finalizer / investigate.
   'KEY_REVOCATION_FAILED',
+  // Technician notes (ADR 0009). A batch note run finished with a failure rate above its
+  // configured threshold. A note is DERIVED and OPTIONAL: nothing is held, retried, or dropped,
+  // no call processing is affected, and structured_knowledge is untouched — the notes are simply
+  // missing until the next run. Deliberately NOT a model-failure code: the interesting fact is
+  // "this job stopped being worth trusting", not which single call's response was malformed.
+  'TECHNICIAN_NOTE_RUN_DEGRADED',
 ] as const;
 
 export const rootCauseCategorySchema = z.enum(ROOT_CAUSE_CATEGORIES);
@@ -116,6 +122,10 @@ export const COMPONENT = [
   // Evaluation cron (Task 6.3): the label-sync duty + the weekly accuracy check. Its sanitized
   // `component` context key on evaluation logs/alerts.
   'evaluation-cron',
+  // Technician-note batch generator (ADR 0009). Not a pipeline stage, so its alerts are scoped by
+  // `component` rather than `stage` — sanitizeContext validates `stage` against isPipelineStage
+  // and would silently drop a non-stage value.
+  'technician-notes',
 ] as const;
 export const componentSchema = z.enum(COMPONENT);
 export type Component = z.infer<typeof componentSchema>;

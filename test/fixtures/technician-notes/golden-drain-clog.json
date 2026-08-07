@@ -1,0 +1,61 @@
+{
+  "name": "golden-drain-clog",
+  "redactedTranscript": "Agent: What can I help with?\nCaller: The kitchen sink will not drain. It backs up when the dishwasher runs.\nAgent: Have you tried anything?\nCaller: I poured a bottle of drain cleaner down it yesterday, no change.\nAgent: Are you the homeowner?\nCaller: Yes. Side door is the easiest way in, and the dog is friendly.",
+  "modelResponse": {
+    "text": "{\"scope_signal\":\"single_fixture\",\"occupancy\":\"owner\",\"equipment\":{\"type\":\"kitchen sink drain\",\"brand\":null,\"model\":null,\"capacity\":null,\"approximate_age\":null,\"fuel_type\":null},\"system_context\":{\"waste_system\":null,\"water_source\":null,\"foundation_type\":null,\"property_age\":null},\"water_status\":{\"actively_running\":false,\"supply_shut_off\":null,\"shutoff_location_known\":null,\"active_damage\":false},\"payer_authority\":{\"can_approve_work\":true,\"home_warranty\":null,\"insurance_claim\":null,\"third_party_payer\":null},\"prior_work\":{\"is_repeat_visit\":null,\"is_warranty_claim\":null,\"prior_work_by_others\":false},\"commitments_made\":{\"price_quoted\":null,\"dispatch_fee_mentioned\":null,\"arrival_window_given\":null,\"technician_named\":null,\"scope_described\":null},\"location_on_property\":\"kitchen\",\"symptom_verbatim\":\"the kitchen sink will not drain and it backs up when the dishwasher runs\",\"prior_attempts_detail\":\"caller poured a bottle of drain cleaner down it with no change\",\"access_notes\":\"side door is the easiest way in, friendly dog on site\",\"hazards\":[],\"urgency_context\":[],\"dispatch_summary\":\"Kitchen sink will not drain and backs up when the dishwasher runs. Chemical drain cleaner was already tried with no change. Homeowner is on site and can approve work. Come to the side door, friendly dog. Not confirmed on this call: whether the supply is shut off.\"}",
+    "stopReason": "end_turn",
+    "usagePresent": true
+  },
+  "expected": {
+    "record": {
+      "scope_signal": "single_fixture",
+      "occupancy": "owner",
+      "equipment": {
+        "type": "kitchen sink drain",
+        "brand": null,
+        "model": null,
+        "capacity": null,
+        "approximate_age": null,
+        "fuel_type": null
+      },
+      "system_context": {
+        "waste_system": null,
+        "water_source": null,
+        "foundation_type": null,
+        "property_age": null
+      },
+      "water_status": {
+        "actively_running": false,
+        "supply_shut_off": null,
+        "shutoff_location_known": null,
+        "active_damage": false
+      },
+      "payer_authority": {
+        "can_approve_work": true,
+        "home_warranty": null,
+        "insurance_claim": null,
+        "third_party_payer": null
+      },
+      "prior_work": {
+        "is_repeat_visit": null,
+        "is_warranty_claim": null,
+        "prior_work_by_others": false
+      },
+      "commitments_made": {
+        "price_quoted": null,
+        "dispatch_fee_mentioned": null,
+        "arrival_window_given": null,
+        "technician_named": null,
+        "scope_described": null
+      },
+      "location_on_property": "kitchen",
+      "symptom_verbatim": "the kitchen sink will not drain and it backs up when the dishwasher runs",
+      "prior_attempts_detail": "caller poured a bottle of drain cleaner down it with no change",
+      "access_notes": "side door is the easiest way in, friendly dog on site",
+      "hazards": [],
+      "urgency_context": [],
+      "dispatch_summary": "Kitchen sink will not drain and backs up when the dishwasher runs. Chemical drain cleaner was already tried with no change. Homeowner is on site and can approve work. Come to the side door, friendly dog. Not confirmed on this call: whether the supply is shut off."
+    }
+  },
+  "expectedNotEstablished": ["water_status.supply_shut_off"]
+}

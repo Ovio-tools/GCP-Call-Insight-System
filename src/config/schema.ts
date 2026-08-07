@@ -581,6 +581,69 @@ export const configObjectSchema = z.object({
   EXTRACT_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(3),
   EXTRACT_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(15),
 
+  // --- Technician notes: batch note generator (ADR 0009) ---
+  //
+  // Two prefixes on purpose. TECHNICIAN_NOTE_* is MODEL/PROMPT scope (one call's worth of
+  // spend); TECHNICIAN_NOTES_* is JOB scope (how the batch run behaves). The split keeps a
+  // model swap from touching the runner's knobs and vice versa.
+
+  /** Kill switch for the whole batch job: explicit string enum, never truthy-coerced (the EXACT
+   * CLASSIFY_ENABLED/EXTRACT_ENABLED pattern). Defaults false. Unlike the model STAGES this is a
+   * RUN-level refusal, not a per-call park — a batch job has no queue to recover parked calls
+   * from, and re-running it after enabling regenerates whatever is missing. */
+  TECHNICIAN_NOTES_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((v) => v === 'true'),
+
+  /** Model ID for the technician-note generator. Never hardcoded outside config. Defaults to the
+   * same Sonnet id as extract, but is INDEPENDENTLY configurable so the note prompt can be moved
+   * to a different model without disturbing the extract stage. */
+  TECHNICIAN_NOTE_MODEL_ID: z.string().min(1).default('claude-sonnet-4-6'),
+
+  /** Max output tokens requested per note call. Lower than extract's: a note is a fixed field set
+   * plus a dispatch summary hard-capped at 800 characters. */
+  TECHNICIAN_NOTE_MAX_TOKENS: z.coerce.number().int().positive().default(2048),
+
+  /** Cost-reservation floor (input tokens): the generator reserves against
+   * max(this ceiling, payload byte-estimate) so a short transcript never under-reserves against
+   * the daily cap. Matches extract's floor — it reads the same clean transcripts. */
+  TECHNICIAN_NOTE_INPUT_TOKENS_CEILING: z.coerce.number().int().positive().default(30_000),
+
+  /** Fixed structured-output/request-scaffolding overhead (tokens) added to the byte-bound
+   * payload estimate when reserving against the daily cost cap. */
+  TECHNICIAN_NOTE_RESERVATION_OVERHEAD_TOKENS: z.coerce.number().int().nonnegative().default(1_000),
+
+  /** Sonnet list price per million input/output tokens (USD). Deliberately note-scoped, not
+   * shared with extract: the shared cost helper takes explicit rates with no defaults so a
+   * different model can never silently inherit the wrong pricing. */
+  TECHNICIAN_NOTE_COST_USD_PER_MTOK_INPUT: z.coerce.number().nonnegative().default(3),
+  TECHNICIAN_NOTE_COST_USD_PER_MTOK_OUTPUT: z.coerce.number().nonnegative().default(15),
+
+  /** The note job's OWN external check URL (Task 7.1 per-component rule). Four signals are
+   * derived from it (start/progress/success/fail); a shared check would stay green off another
+   * component and defeat the switch. Required in staging/production by requireCheckUrl. */
+  TECHNICIAN_NOTES_CHECK_URL: z.string().url().optional(),
+
+  /** Candidate page size for the keyset scan over eligible calls. */
+  TECHNICIAN_NOTES_BATCH_SIZE: z.coerce.number().int().positive().default(100),
+
+  /** Cadence (ms) of the run's progress pings while it is alive. */
+  TECHNICIAN_NOTES_PROGRESS_INTERVAL_MS: z.coerce.number().int().positive().default(60_000),
+
+  /** Max ms without progress before progress pings are WITHHELD so the external monitor's
+   * missing-progress window fires. */
+  TECHNICIAN_NOTES_STALL_THRESHOLD_MS: z.coerce.number().int().positive().default(21_600_000),
+
+  /** Fraction of ATTEMPTED calls that may fail before a run emits TECHNICIAN_NOTE_RUN_DEGRADED.
+   * A note is derived and optional, so some failures are tolerable — this is the level at which
+   * the job stops being worth trusting. */
+  TECHNICIAN_NOTES_FAILURE_RATE_ALERT_THRESHOLD: z.coerce.number().gt(0).lte(1).default(0.2),
+
+  /** Minimum attempts before the failure-rate alert can fire at all: without a floor a single
+   * failure in a one-call run is a 100% failure rate and would page someone over nothing. */
+  TECHNICIAN_NOTES_FAILURE_ALERT_MIN_ATTEMPTS: z.coerce.number().int().positive().default(20),
+
   // --- Status surface + alert delivery (Task 7.3) ---
 
   /** Auto-refresh cadence (seconds) for the server-rendered `/status` page via a plain
