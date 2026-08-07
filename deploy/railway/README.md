@@ -41,6 +41,22 @@ bootstrap on that volume, and the five §0.2 consent gates recorded in `consent_
 `restartPolicyType: NEVER` makes it a run-to-completion job — you "trigger" a run by redeploying /
 restarting the service, and the PII-free report prints to the service logs.
 
+## One-off: generate technician notes for a set of service categories
+
+`technician-notes-dry-run.json` and `technician-notes.json` run the ADR 0009 note batch generator
+as a one-off, scoped to the categories named in `TECHNICIAN_NOTE_CATEGORIES` (comma-separated, e.g.
+`grinder_pump,water_heater`). A scoped run is how a note prompt gets tried on one slice of the
+corpus before the model budget is spent on all of it; an unknown category name is refused before
+the job touches config, a pool, or the model, so "0 eligible" always means the corpus and never a
+typo. Leaving the variable unset fails the same way rather than quietly noting everything.
+
+Run the dry-run config FIRST — it counts eligible / no-transcript calls with zero model calls, zero
+writes, and zero pings — then swap to `technician-notes.json` for the real pass. The real run needs
+`TECHNICIAN_NOTES_ENABLED=true`, `TECHNICIAN_NOTES_CHECK_URL`, the alert webhook, and the Anthropic
+key; the dry run needs none of those. It is not a pipeline stage: a failure never holds a call, and
+a re-run picks up whatever is missing (calls already noted at the current prompt version are
+skipped). Afterwards, restore the borrowed service's config path.
+
 ## One-off: re-home file-keystore keys into the worker's Railway secrets
 
 `rehome-keys.json` + `rehome-keys.cjs` are a **one-off** migration for an environment first set up
