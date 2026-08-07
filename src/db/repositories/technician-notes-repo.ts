@@ -140,8 +140,9 @@ export async function listNoteCandidateCallIds(
        FROM structured_knowledge sk
        LEFT JOIN technician_notes tn ON tn.call_id = sk.call_id
       WHERE sk.superseded_by_call_id IS NULL
-        -- ::text casts because both columns are Postgres ENUMs; comparing one to a text[]
-        -- parameter without the cast fails with "operator does not exist: call_intent = text".
+        -- call_intent is a native pg ENUM, so comparing it to a text[] parameter without the
+        -- cast fails with "operator does not exist: call_intent = text". service_category is a
+        -- text column with a CHECK, so its cast is a harmless no-op kept for symmetry.
         AND NOT (sk.call_intent::text = ANY($5::text[]) AND sk.service_category::text = 'other')
         AND ($1 OR tn.call_id IS NULL OR tn.prompt_version <> $2)
         AND ($3::text IS NULL OR sk.call_id > $3::text)
