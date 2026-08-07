@@ -334,3 +334,24 @@ export async function getTechnicianNoteDetail(
   );
   return rows[0];
 }
+
+/**
+ * Every visible note's gap list, for the technician-note quality report (Task 6.3).
+ *
+ * Two columns and nothing else — `not_established` is a list of controlled note FIELD PATHS, and
+ * `prompt_version` is a code constant, so the report can be assembled without any note text ever
+ * being read. Superseded duplicate legs are hidden on the same terms as every other knowledge
+ * reader: one conversation arriving as several Dialpad legs must not count its gaps twice.
+ */
+export async function listNoteGapRows(
+  db: Queryable,
+): Promise<{ prompt_version: string; not_established: string[] }[]> {
+  return query<{ prompt_version: string; not_established: string[] }>(
+    db,
+    `SELECT tn.prompt_version, tn.not_established
+       FROM technician_notes tn
+       JOIN structured_knowledge sk ON sk.call_id = tn.call_id
+      WHERE sk.superseded_by_call_id IS NULL
+      ORDER BY tn.call_id`,
+  );
+}

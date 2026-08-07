@@ -66,14 +66,31 @@ function extractFixture(row: LabeledExampleRow): unknown {
   };
 }
 
-/** Write one dir's fixtures: mkdir, remove orphan `reviewed-*.json`, write files + MANIFEST. */
-function writeDir(dir: string, entries: { file: string; body: unknown }[]): string[] {
+/** The generated-file prefix this module manages. Clean-before-write only ever touches these. */
+const REVIEWED_PREFIX = 'reviewed-';
+
+/**
+ * Write one dir's fixtures: mkdir, remove orphan `<prefix>*.json`, write files + MANIFEST.
+ *
+ * Shared with the technician-note fixture export (`note-fixtures.ts`), which passes its own
+ * prefix — one clean-before-write implementation, so the two projections cannot drift on the
+ * rule that matters: a generated file no longer in the current set is REMOVED, and nothing
+ * outside the prefix is ever touched.
+ *
+ * Deterministic by construction: no timestamps, sorted MANIFEST, stable `JSON.stringify` shape.
+ * Re-running over unchanged rows rewrites byte-identical files.
+ */
+export function writeFixtureDir(
+  dir: string,
+  entries: { file: string; body: unknown }[],
+  prefix: string = REVIEWED_PREFIX,
+): string[] {
   mkdirSync(dir, { recursive: true });
   const wanted = new Set(entries.map((e) => e.file));
   // Clean-before-write: drop any generated file not in the current accepted set. Only touches the
-  // `reviewed-*.json` projection, never curated fixtures (which live in the parent dir).
+  // prefixed projection, never curated fixtures (which live in the parent dir).
   for (const existing of readdirSync(dir)) {
-    if (existing.startsWith('reviewed-') && existing.endsWith('.json') && !wanted.has(existing)) {
+    if (existing.startsWith(prefix) && existing.endsWith('.json') && !wanted.has(existing)) {
       rmSync(join(dir, existing));
     }
   }
@@ -99,7 +116,7 @@ export async function exportReviewedFixtures(pool: Pool, dirs: ExportDirs): Prom
     }
   }
   return {
-    classify: writeDir(dirs.classifyDir, classify),
-    extract: writeDir(dirs.extractDir, extract),
+    classify: writeFixtureDir(dirs.classifyDir, classify),
+    extract: writeFixtureDir(dirs.extractDir, extract),
   };
 }

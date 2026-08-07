@@ -13,6 +13,19 @@ export const EVAL_SET_VERSION = 1;
 export const PII_GATE_VERSION = 1;
 
 /**
+ * The same idea for the technician-note label set (`note_feedback` → field-level assertions), kept
+ * in its OWN namespace because the two derivations move independently: a change to how a review
+ * action becomes a classify/extract label says nothing about how a note verdict becomes an
+ * assertion. Bumping it changes every exported note-fixture filename, so a rebuild replaces the
+ * old set rather than shadowing it.
+ *
+ * There is no note equivalent of `PII_GATE_VERSION`: note labels are not persisted (both inputs
+ * are never-purged stores, so they stay derivable), so there is no stored row whose gate version
+ * could go stale — the gate runs fresh on every export.
+ */
+export const NOTE_EVAL_SET_VERSION = 1;
+
+/**
  * Hard cap on the number of per-example failures a single `evaluation_reports` row persists in its
  * `failures` sample (finding R3-5). A code constant, not config: a bad model version could mismatch
  * every example, and the row must not grow unbounded. Aggregate failure counts always live in

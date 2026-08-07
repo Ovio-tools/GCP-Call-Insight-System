@@ -24,6 +24,8 @@
     "requeue:extract": "node dist/scripts/requeue-parked-extract.js",
     "record-consent": "node dist/scripts/record-consent.js",
     "notes:generate": "node dist/scripts/generate-technician-notes.js",
+    "notes:report": "node dist/scripts/note-quality-report.js",
+    "notes:export": "node dist/scripts/export-note-fixtures.js",
     "eval:sync": "node dist/scripts/sync-labeled-examples.js",
     "eval:export": "node dist/scripts/export-reviewed-fixtures.js",
     "eval:run": "node dist/scripts/run-evaluation.js",

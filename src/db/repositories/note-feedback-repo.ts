@@ -78,6 +78,29 @@ export async function getLatestNoteFeedback(
   return rows.map((r) => parseOrThrow(TABLE, noteFeedbackRowSchema, r));
 }
 
+/**
+ * EVERY verdict ever recorded, oldest first — the input to the note-quality report and the note
+ * fixture export (Task 6.3).
+ *
+ * Deliberately unfiltered and un-aggregated: the standing-verdict resolution happens in PURE code
+ * (`resolveStanding`), so the rule that decides which of a reviewer's verdicts counts is unit-
+ * testable without a database and is written once rather than repeated in every SQL reader. The
+ * ordering matches the tie-break those readers use (`created_at`, then `id`).
+ *
+ * Rows are NOT scoped to a prompt version: an agreement-by-prompt-version comparison needs the old
+ * version's verdicts to survive a regeneration, which is the entire point of the comparison.
+ */
+export async function listNoteFeedbackForEvaluation(db: Queryable): Promise<NoteFeedbackRow[]> {
+  const rows = await query<NoteFeedbackRow>(
+    db,
+    `SELECT id, call_id, note_prompt_version, reviewer_actor, field_path, verdict,
+            corrected_enum_value, created_at
+       FROM note_feedback
+      ORDER BY call_id, note_prompt_version, field_path, reviewer_actor, created_at, id`,
+  );
+  return rows.map((r) => parseOrThrow(TABLE, noteFeedbackRowSchema, r));
+}
+
 /** One reviewer's running tally at one note prompt version. */
 export interface ReviewerTally {
   /** Distinct (call_id, field_path) pairs this reviewer has a standing verdict on. */

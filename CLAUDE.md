@@ -111,9 +111,23 @@ ping contract but NOT `backfill_runs` (window-keyed, no job-kind discriminator),
 migration and no `--resume`: a re-run skips calls already noted at the current prompt version,
 and `--regenerate` rolls a new `TECHNICIAN_NOTE_PROMPT_VERSION` over the corpus. Its alerts are
 scoped by `component: 'technician-notes'`, because `sanitizeContext` validates `stage` against
-`isPipelineStage` and silently DROPS a non-stage value. The
-remaining work (the ServiceTitan write-back Phase 12, and the note-feedback review surface that
-fills `note_feedback`) does not yet exist. ADR 0008 Move 2 (raw-store DB isolation) moved `raw_transcripts` +
+`isPipelineStage` and silently DROPS a non-stage value. The note-feedback EVALUATION layer now
+exists too (Task 6.3 extended to `note_feedback`: `src/evaluation/note-label.ts` +
+`note-fixtures.ts` + `note-report.ts`, `npm run notes:report` / `notes:export`; see
+`docs/evaluation.md`). A note label is a set of FIELD-LEVEL ASSERTIONS, never a full expected
+record — a field with no verdict is ABSENT from the expected output, never assumed correct — and
+everything counts the STANDING verdict (latest row per
+`(call_id, note_prompt_version, field_path, reviewer_actor)`, the `getLatestNoteFeedback`
+resolution, done in PURE code so it is testable without a DB). There is NO table and NO migration:
+both inputs are never-purged stores, so a label stays derivable and a fixture is a byte-stable
+projection of stored rows with NO live model call (the `modelResponse` is rebuilt by
+`noteRecordFromRow`). Version drift cuts both ways on purpose — the report still counts verdicts
+under the version they were given against (that comparison is the point), while the fixture export
+skips them, because a note regenerated in place took its text with it. The report is PII-free by
+construction (field paths, verdict names, prompt versions, counts; unrecognized `not_established`
+entries are counted, never printed) and its renderer obeys two scanner-safety invariants: a label
+word between every pair of numbers, and no single number past six digits. The
+remaining work (the ServiceTitan write-back Phase 12) does not yet exist. ADR 0008 Move 2 (raw-store DB isolation) moved `raw_transcripts` +
 `token_vault` out of the main DB (DB-A) into a separate backups-off Postgres (DB-B),
 reached via `RAW_DATABASE_URL` with its own pool family (`src/db/raw-store.ts`) and
 migration set (`migrations-raw/`); see

@@ -93,3 +93,107 @@ Only hand-authored **synthetic** reviewed-format fixtures live under
 `test/fixtures/{classify,extract}/reviewed/`, and they load through the same parse suites via the
 shared `test/support/fixture-loader.ts`. An export-to-temp-dir test proves generated files load
 identically without committing them. The DB table is the source of truth for the eval runner.
+
+---
+
+# Technician-note evaluation (`note_feedback`)
+
+The same machinery, pointed at the technician notes (ADR 0009). Reviewers judge individual note
+FIELDS in the note-review surface; those verdicts land in the append-only `note_feedback` table and
+become (a) a labeled corpus of field-level assertions and (b) the note-quality report.
+
+## Why a note label is not a full expected record
+
+A `correct_extraction` review action carries a whole corrected record, so an extract label can pin
+all four controlled enums at once. A note verdict is **per field**: a reviewer marks
+`equipment.type` wrong and says nothing at all about the other thirty-five fields. So a note label
+is a set of **field-level assertions**:
+
+```json
+{
+  "assertions": [
+    {
+      "field_path": "equipment.type",
+      "verdict": "correct",
+      "corrected_enum_value": null,
+      "contested": false
+    },
+    {
+      "field_path": "occupancy",
+      "verdict": "wrong",
+      "corrected_enum_value": "tenant",
+      "contested": false
+    }
+  ]
+}
+```
+
+**A field with no verdict is absent, not assumed correct.** Treating silence as agreement would
+invent ground truth nobody gave and inflate every accuracy number the reviewers exist to measure.
+`corrected_enum_value` is present only where the controlled vocabulary allows one — free-text
+fields admit no correction at all, which is what keeps reviewer prose out of the system.
+`contested` marks a field two reviewers disagree about; the latest standing verdict wins, but the
+disagreement is surfaced rather than averaged away.
+
+**Standing verdicts.** `note_feedback` is append-only: a revision is a new row. Everything here
+counts the STANDING verdict — the latest row per `(call_id, note_prompt_version, field_path,
+reviewer_actor)`, the same resolution `getLatestNoteFeedback` applies in SQL. A revised verdict
+counts once, at its latest value.
+
+## No table, no migration
+
+`labeled_examples` exists because its input (`clean_transcripts`) is purgeable, so a label must be
+captured before its source disappears. Both note inputs — `technician_notes` and `note_feedback` —
+are **never purged** (ADR 0009), so a note label stays derivable from stored rows forever.
+Persisting a copy would only add a second source of truth to keep in sync. This is also what makes
+the fixtures reproducible: **no live model call is ever made**, and re-running the export over
+unchanged rows rewrites byte-identical files.
+
+## Commands
+
+- `npm run notes:report` — the note-quality report (read-only; writes nothing, calls no model).
+  Flags: `--json` (the report object instead of the rendered text), `--out <file>`.
+- `npm run notes:export -- --out <dir>` — project the verdicts into golden-fixture files
+  (`note-feedback-*.json`, clean-before-write, deterministic filenames, a `MANIFEST.json`).
+  Defaults to the gitignored `var/evaluation/note-fixtures`.
+
+## What the report says
+
+1. **What the phone intake keeps failing to establish** — the most frequent `not_established`
+   entries across all stored notes. This is the highest-value output of the whole feature and the
+   one that is not about the model at all: `not_established` is computed in code from
+   `REQUIRED_FOR_DISPATCH`, so a field high on this list means the CALL SCRIPT keeps failing to ask
+   that question. Fixing the script is worth more to the business than the notes are.
+2. **Agreement per field path, worst first** — which fields the model actually gets wrong. "The
+   notes are 82% right" is unactionable; "we get `occupancy` wrong two times in three" is a fix.
+3. **Agreement by note prompt version** — so a prompt change can be _shown_ to have helped. Verdicts
+   stay attached to the version they were given against, which is why regenerating a note never
+   invalidates the previous version's numbers.
+
+## Version drift, and what it costs
+
+A note is regenerated **in place** (PK `call_id`), so once a call is re-noted the note the verdicts
+were given against is gone. Consequences, deliberately different per output:
+
+- the **report** still counts those verdicts, grouped by the version they were given against — that
+  comparison is the whole point;
+- the **fixture export** skips them (`version_drift`), because a fixture needs the note text and
+  that text no longer exists.
+
+## Privacy posture
+
+Both inputs are de-identified stores; raw transcripts and the vault live in DB-B and are
+unreachable from here. On top of that:
+
+- the fixture export re-runs the generator's own `scanNoteForResidual` over the note's free-text
+  fields (a hit rejects the fixture **content-free**, categories only) and the residual gate over
+  the redacted transcript (a hit **withholds** the text; the assertions are still exported, since a
+  purged or withheld transcript does not invalidate them);
+- the **report** carries no free text at all — field paths, verdict names, prompt versions, and
+  counts. `not_established` entries are re-checked against `NOTE_FIELD_PATHS` and anything
+  unrecognized is counted, never printed. Call ids and reviewer identities never appear.
+- the rendered report obeys two formatting invariants so it cannot trip the very scanner the
+  pipeline relies on: every number is preceded by a label word (adjacent numeric columns would
+  concatenate into a false `digit_run`), and no single number ever reaches seven digits (counts past
+  a million are scaled, `9.88M`). `test/evaluation/note-report.test.ts` runs `residualScan` over the
+  fully rendered output.
