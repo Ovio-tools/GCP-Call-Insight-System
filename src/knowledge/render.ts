@@ -19,8 +19,11 @@ const CENTRAL_TIME_FORMAT = new Intl.DateTimeFormat('en-US', {
   hourCycle: 'h23',
 });
 
-/** Format a strict ISO-8601 timestamp as `MM-DD-YYYY HH:MM:SS CT`; leaves any unparseable string untouched. */
-function fmtCreatedCt(iso: string): string {
+/** Format a strict ISO-8601 timestamp as `MM-DD-YYYY HH:MM:SS CT`; leaves any unparseable string
+ * untouched. Exported for the note-review surface, which shows the SAME call date on its own
+ * screens — one call must not read as two different times depending on which page you opened, the
+ * same reason `src/notes/query.ts` imports this surface's date-bound parser rather than copying it. */
+export function fmtCreatedCt(iso: string): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return iso;
   const parts: Record<string, string> = {};

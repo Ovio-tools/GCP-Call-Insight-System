@@ -77,3 +77,44 @@ export async function getLatestNoteFeedback(
   );
   return rows.map((r) => parseOrThrow(TABLE, noteFeedbackRowSchema, r));
 }
+
+/** One reviewer's running tally at one note prompt version. */
+export interface ReviewerTally {
+  /** Distinct (call_id, field_path) pairs this reviewer has a standing verdict on. */
+  fieldsChecked: number;
+  /** How many of those standing verdicts are `correct`. */
+  markedRight: number;
+}
+
+/**
+ * The signed-in reviewer's own tally across every note at one prompt version — what the review
+ * surface shows as "fields you've checked".
+ *
+ * Scoped to ONE reviewer deliberately: the number is a count of what that person chose to look at,
+ * not a sample of anything, so blending reviewers would invite reading it as an accuracy rate.
+ *
+ * The inner `DISTINCT ON` resolves the STANDING verdict per (call_id, field_path) with the same
+ * tie-break as {@link getLatestNoteFeedback}, so a reviewer who revised a verdict is counted once,
+ * at its latest value — never twice, and never at the superseded value.
+ */
+export async function getReviewerTally(
+  db: Queryable,
+  opts: { reviewerActor: string; notePromptVersion: string },
+): Promise<ReviewerTally> {
+  const rows = await query<{ fields_checked: string; marked_right: string }>(
+    db,
+    `SELECT count(*)::text AS fields_checked,
+            count(*) FILTER (WHERE standing.verdict = 'correct')::text AS marked_right
+       FROM (
+         SELECT DISTINCT ON (call_id, field_path) verdict
+           FROM note_feedback
+          WHERE reviewer_actor = $1 AND note_prompt_version = $2
+          ORDER BY call_id, field_path, created_at DESC, id DESC
+       ) standing`,
+    [opts.reviewerActor, opts.notePromptVersion],
+  );
+  return {
+    fieldsChecked: Number(rows[0]?.fields_checked ?? '0'),
+    markedRight: Number(rows[0]?.marked_right ?? '0'),
+  };
+}

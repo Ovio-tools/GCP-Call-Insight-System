@@ -18,13 +18,21 @@ import { registerConsoleHomeRoute } from '../console/routes.js';
 import { registerStatusRoutes } from '../status/routes.js';
 import { registerKnowledgeRoutes } from '../knowledge/routes.js';
 import { registerReviewRoutes } from '../review/routes.js';
+import { registerNotesRoutes } from '../notes/routes.js';
 
 /**
  * Combined console surface — the single sign-in entry point that mounts every internal surface on
- * ONE app under ONE session: the `GET /` home page plus the status, knowledge-base, and review
- * routes. Because all three surfaces build on the same `createInternalApp` factory, share the same
- * auth/session/CSRF/rate-limit stack, and declare fully disjoint route paths (no module registers a
- * decorator/plugin/hook), they coexist here with no collision — proven by `test/console/routes.test.ts`.
+ * ONE app under ONE session: the `GET /` home page plus the status, knowledge-base, review, and
+ * note-review routes. Because all of them build on the same `createInternalApp` factory, share the
+ * same auth/session/CSRF/rate-limit stack, and declare fully disjoint route paths (no module
+ * registers a decorator/plugin/hook), they coexist here with no collision — proven by
+ * `test/console/routes.test.ts`.
+ *
+ * The note-review surface (`/notes`) is mounted ONLY here: it has no single-surface service of its
+ * own, so this file is its boot file (which is why its routes are registered under the `console`
+ * surface in `test/security/_registry.ts`). It adds no dependency — it takes the same four the
+ * knowledge surface does, and deliberately takes neither the raw pool, the key provider, the
+ * restricted runner, nor the queue.
  *
  * It boots the UNION of the individual surfaces' dependencies: the primary pool (DB-A), the raw
  * store (DB-B), Redis (sessions + rate limits), the pipeline queue (review reprocess re-entry), the
@@ -77,6 +85,7 @@ async function main(): Promise<void> {
     queue,
     denyTerms,
   });
+  registerNotesRoutes(app, { pool, config, denyTerms, logger });
 
   await app.listen({ host: '0.0.0.0', port: config.PORT });
   logger.info({ node_env: config.NODE_ENV, port: config.PORT }, 'console-surface listening');

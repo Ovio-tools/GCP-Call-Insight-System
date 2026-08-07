@@ -19,7 +19,7 @@ describe('console home render', () => {
   });
 
   it('links to every internal surface', () => {
-    for (const path of ['/status', '/calls', '/knowledge', '/review']) {
+    for (const path of ['/status', '/calls', '/knowledge', '/review', '/notes']) {
       expect(html, `missing link to ${path}`).toContain(`href="${path}"`);
     }
   });
