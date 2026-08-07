@@ -17,4 +17,5 @@ export {
   type BackfillProgressCounts,
   type CreateBackfillMonitorDeps,
   createBackfillMonitor,
+  deriveJobSignalUrls,
 } from './backfill-monitor.js';

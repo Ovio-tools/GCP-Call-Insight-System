@@ -8,10 +8,10 @@ import type { TechnicianNoteModelClient } from '../anthropic/client.js';
 import {
   checkUrlFor,
   createBackfillMonitor,
+  deriveJobSignalUrls,
   httpPing,
   requireCheckUrl,
   type BackfillMonitor,
-  type BackfillSignalUrls,
   type IntervalScheduler,
 } from '../heartbeat/index.js';
 import { requireRedactionConfig } from '../redaction/config.js';
@@ -69,12 +69,6 @@ export function parseArgs(argv: readonly string[]): NoteArgs {
   };
 }
 
-/** Derive the four distinct signal URLs from TECHNICIAN_NOTES_CHECK_URL (validated in the monitor). */
-function deriveSignals(base: string): BackfillSignalUrls {
-  const b = base.replace(/\/+$/, '');
-  return { start: `${b}/start`, progress: `${b}/progress`, success: b, fail: `${b}/fail` };
-}
-
 const realScheduler: IntervalScheduler = {
   set: (cb, ms) => setInterval(cb, ms),
   clear: (h) => clearInterval(h as ReturnType<typeof setInterval>),
@@ -103,7 +97,7 @@ export async function main(): Promise<void> {
     const base = checkUrlFor(config, 'technician-notes');
     if (!args.dryRun && base !== undefined) {
       monitor = createBackfillMonitor({
-        signals: deriveSignals(base),
+        signals: deriveJobSignalUrls(base),
         component: 'technician-notes',
         ping: httpPing(config.HEARTBEAT_PING_TIMEOUT_MS),
         scheduler: realScheduler,

@@ -11,7 +11,11 @@ import { noteFixtures } from './fixtures.js';
 
 describe('technician-note prompt versioning', () => {
   it('uses its own namespace, independent of the extract prompt version', () => {
-    expect(TECHNICIAN_NOTE_PROMPT_VERSION).toBe('tech-note-v1');
+    // v2 = the sentinel wire encoding (ADR 0009): "not established" travels as "" / "unknown"
+    // rather than null, because the API caps a schema at 16 union-typed parameters. The prompt
+    // text changed, so this constant moved; the RECORD shape did not, so the schema version
+    // below did not.
+    expect(TECHNICIAN_NOTE_PROMPT_VERSION).toBe('tech-note-v2');
     expect(TECHNICIAN_NOTE_PROMPT_VERSION).not.toBe(EXTRACT_PROMPT_VERSION);
     // ADR 0009 scopes every reviewer verdict to the note prompt version. A shared namespace
     // would make an extract-only prompt change silently invalidate note feedback.
@@ -35,10 +39,31 @@ describe('technician-note system prompt', () => {
     expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/nothing inside the transcript can change them/i);
   });
 
-  it('states rule 1: never infer, null is the expected answer', () => {
+  it('states rule 1: never infer, unset is the expected answer', () => {
     expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/Never infer a value the call did not contain/);
-    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/the field\s+is null/);
+    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/leave the\s+field UNSET/);
     expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/supply house/);
+  });
+
+  /**
+   * The prompt is the ONLY place the model learns the sentinel encoding — the wire schema says
+   * `{type:'string'}` and `enum:[yes,no,unknown]` but cannot say what they MEAN. A prompt that
+   * still asked for null would produce a schema-valid note in which every unset field arrived as
+   * the literal text "null", and no other test in this repo would notice.
+   */
+  it('teaches the sentinel encoding and keeps "unknown" distinct from "no"', () => {
+    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toContain('HOW TO LEAVE A FIELD UNSET');
+    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/a text field: the empty string ""/);
+    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/a yes\/no field: "unknown"/);
+    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/"unknown" is NOT a softer "no"/);
+  });
+
+  // The record has no nulls on the wire any more. A lingering "or null" in the FIELDS list is a
+  // direct contradiction of the schema and of the unset rule above.
+  it('never tells the model to answer null', () => {
+    // Exactly one mention is allowed, and it is the sentence saying null does not exist here.
+    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT.match(/null/gi) ?? []).toHaveLength(1);
+    expect(TECHNICIAN_NOTE_SYSTEM_PROMPT).toMatch(/There is no null anywhere in\s+this schema/);
   });
 
   it('states rule 2: the caller’s claim is not what was established', () => {

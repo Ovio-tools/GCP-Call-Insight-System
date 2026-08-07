@@ -128,8 +128,13 @@ backfill list calls together — not per-process.
 ## Job-style monitor — four distinct signals
 
 `createBackfillMonitor` derives **four distinct** URLs from `BACKFILL_CHECK_URL`:
-`start=${base}/start`, `progress=${base}/progress`, `success=${base}`, `fail=${base}/fail`. A pairwise
+`start=${base}/start`, `progress=${base}/log`, `success=${base}`, `fail=${base}/fail`. A pairwise
 collision after derivation fails at construction, before any ping.
+
+> The progress signal is `/log` because Healthchecks.io only accepts `/start`, `/fail` and `/log`;
+> a `/progress` suffix is rejected with `400 invalid url format`. `/log` records an event without
+> changing the check's pass/fail state — exactly what a progress ping needs, since only `success`
+> may turn the check green.
 
 - `start()` — one start ping; arm the progress interval.
 - progress — a periodic ping every `BACKFILL_PROGRESS_INTERVAL_MS` **while** `now - lastProgressAt <=

@@ -3,6 +3,7 @@ import type { Logger } from 'pino';
 import type { IntervalScheduler } from '../../src/heartbeat/index.js';
 import {
   createBackfillMonitor,
+  deriveJobSignalUrls,
   type BackfillSignalUrls,
 } from '../../src/heartbeat/backfill-monitor.js';
 
@@ -40,6 +41,40 @@ function pings(): { ping: (url: string) => Promise<void>; urls: string[] } {
   const urls: string[] = [];
   return { ping: (url) => (urls.push(url), Promise.resolve()), urls };
 }
+
+/**
+ * The suffixes are a CONTRACT with the external monitor, not a formatting detail. Until
+ * 2026-08-07 the progress signal was `/progress`, which Healthchecks.io rejects with
+ * `400 invalid url format` — so every progress ping from every job was silently refused and the
+ * stall signal this monitor is built around never existed. Nothing failed loudly, because a
+ * progress ping is fire-and-forget by design. These assertions are what makes that visible.
+ */
+describe('deriveJobSignalUrls', () => {
+  it('derives the four documented suffixes', () => {
+    expect(deriveJobSignalUrls('https://hc.example/abc')).toEqual({
+      start: 'https://hc.example/abc/start',
+      progress: 'https://hc.example/abc/log',
+      success: 'https://hc.example/abc',
+      fail: 'https://hc.example/abc/fail',
+    });
+  });
+
+  it('never emits /progress — the suffix the monitor rejects', () => {
+    const urls = deriveJobSignalUrls('https://hc.example/abc');
+    expect(Object.values(urls).join(' ')).not.toContain('/progress');
+  });
+
+  it('tolerates trailing slashes rather than producing a double slash', () => {
+    expect(deriveJobSignalUrls('https://hc.example/abc///').start).toBe(
+      'https://hc.example/abc/start',
+    );
+  });
+
+  it('produces four pairwise-distinct URLs, which the monitor requires at construction', () => {
+    const urls = Object.values(deriveJobSignalUrls('https://hc.example/abc'));
+    expect(new Set(urls).size).toBe(urls.length);
+  });
+});
 
 describe('createBackfillMonitor (four-signal job monitor)', () => {
   it('rejects a pairwise URL collision at construction, before any ping', () => {

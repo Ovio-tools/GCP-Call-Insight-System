@@ -243,6 +243,40 @@ export const NOTE_FEEDBACK_VERDICTS = [
 ] as const;
 
 /**
+ * WIRE-ONLY encoding for a technician-note field the call did not establish. These two constants
+ * never reach the database: `src/technician-notes/parse.ts` normalizes both back to SQL NULL
+ * before a record exists, so every store, gate, and surface downstream sees exactly the nulls it
+ * always saw.
+ *
+ * They exist because structured outputs cap a schema at 16 union-typed (nullable) parameters and
+ * the note has 31 fields that can legitimately be unset — the note's whole purpose is recording
+ * what a call did NOT settle. Encoding "unset" as a value rather than as `null` takes the note
+ * schema to zero unions, which is both under the limit and clear of it by a wide margin.
+ *
+ * Shared here rather than defined twice because the wire schema (`src/anthropic/client.ts`) and
+ * the parser must agree on them exactly; that is the same reason the key tuples below are shared.
+ */
+export const NOTE_UNSET_TEXT = '';
+export const NOTE_TRISTATE = ['yes', 'no', 'unknown'] as const;
+
+/**
+ * Call intents that never put a technician in a driveway: a general enquiry and a billing matter.
+ * A note for one of those is a model call spent to produce an empty gap list that then sits on the
+ * review surface looking like a failure.
+ *
+ * This is HALF a rule. A call is excluded only when its intent is on this list AND `extract` could
+ * not name a plumbing topic for it (`service_category = 'other'`) — see
+ * `listNoteCandidateCallIds`. The conjunction is deliberate and fail-safe: 10 of the 42
+ * general/billing calls in the first corpus DID name a real topic (a water heater, a toilet, a
+ * repipe), and a call misfiled under the wrong intent must still get its note. Excluding on intent
+ * alone would silently lose those; the cost of being wrong the other way is about two cents.
+ */
+export const NOTE_NON_DISPATCH_INTENTS = [
+  'general',
+  'billing',
+] as const satisfies readonly CallIntent[];
+
+/**
  * The keys of each `technician_notes` jsonb object. These drive the zod object shapes in
  * `src/db/schemas/technician-notes.ts` AND appear dotted in {@link NOTE_FIELD_PATHS};
  * `test/db/note-vocabulary-parity.test.ts` asserts the two agree, so a key added here without a

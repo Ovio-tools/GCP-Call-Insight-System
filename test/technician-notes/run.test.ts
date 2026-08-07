@@ -6,9 +6,11 @@ import {
   upsertCleanTranscript,
 } from '../../src/db/repositories/clean-transcripts-repo.js';
 import {
+  countNonDispatchableCandidates,
   listNoteCandidateCallIds,
   upsertTechnicianNote,
 } from '../../src/db/repositories/technician-notes-repo.js';
+import type { CallIntent, ServiceCategory } from '../../src/db/enums.js';
 import {
   setStructuredKnowledgeSuperseded,
   upsertStructuredKnowledge,
@@ -56,7 +58,10 @@ describe.skipIf(!hasTestDb)('technician-note batch runner', () => {
   let app!: Pool;
   const logger = createRootLogger({ level: 'silent' });
 
-  const seed = async (callId: string, opts: { transcript?: boolean } = {}): Promise<void> => {
+  const seed = async (
+    callId: string,
+    opts: { transcript?: boolean; callIntent?: CallIntent; serviceCategory?: ServiceCategory } = {},
+  ): Promise<void> => {
     await upsertCallState(app, {
       callId,
       source: 'test',
@@ -72,8 +77,8 @@ describe.skipIf(!hasTestDb)('technician-note batch runner', () => {
     }
     await upsertStructuredKnowledge(app, {
       callId,
-      callIntent: 'new_booking',
-      serviceCategory: 'drain_blockage',
+      callIntent: opts.callIntent ?? 'new_booking',
+      serviceCategory: opts.serviceCategory ?? 'drain_blockage',
       urgency: 'routine',
       sentiment: 'neutral',
       schemaVersion: 1,
@@ -227,6 +232,71 @@ describe.skipIf(!hasTestDb)('technician-note batch runner', () => {
         limit: 50,
       });
       expect(candidates).toContain('test-noterun-notx');
+    });
+
+    /**
+     * A technician is never sent to a general enquiry or a billing question, so a note for one is
+     * a model call spent to produce an empty gap list that then sits on the review surface looking
+     * like a failure. The rule is deliberately a CONJUNCTION — intent AND no plumbing topic — so
+     * a real job filed under the wrong intent keeps its note. These four cases pin both halves.
+     */
+    describe('non-dispatchable exclusion', () => {
+      it('excludes a general or billing call with no plumbing topic', async () => {
+        await seed('test-noterun-general', { callIntent: 'general', serviceCategory: 'other' });
+        await seed('test-noterun-billing', { callIntent: 'billing', serviceCategory: 'other' });
+        const { generate, seen } = fakeGenerator(() => ({ outcome: 'generated' }));
+
+        await run({ generate });
+
+        expect(seen).not.toContain('test-noterun-general');
+        expect(seen).not.toContain('test-noterun-billing');
+      });
+
+      it('KEEPS a general or billing call that named a real plumbing topic', async () => {
+        await seed('test-noterun-genwh', {
+          callIntent: 'general',
+          serviceCategory: 'water_heater',
+        });
+        await seed('test-noterun-billwh', { callIntent: 'billing', serviceCategory: 'toilet' });
+        const { generate, seen } = fakeGenerator(() => ({ outcome: 'generated' }));
+
+        await run({ generate });
+
+        expect(seen).toContain('test-noterun-genwh');
+        expect(seen).toContain('test-noterun-billwh');
+      });
+
+      it('KEEPS a real job whose topic could not be categorised', async () => {
+        await seed('test-noterun-jobother', {
+          callIntent: 'existing_job',
+          serviceCategory: 'other',
+        });
+        const { generate, seen } = fakeGenerator(() => ({ outcome: 'generated' }));
+
+        await run({ generate });
+
+        expect(seen).toContain('test-noterun-jobother');
+      });
+
+      it('reports the excluded count on the summary without spending a model call', async () => {
+        await seed('test-noterun-x1', { callIntent: 'general', serviceCategory: 'other' });
+        await seed('test-noterun-x2', { callIntent: 'billing', serviceCategory: 'other' });
+        await seed('test-noterun-keep');
+        const { generate, seen } = fakeGenerator(() => ({ outcome: 'generated' }));
+
+        const summary = await run({ generate });
+
+        expect(summary.nonDispatchableExcluded).toBe(2);
+        expect(summary.eligible).toBe(1);
+        expect(seen).toEqual(['test-noterun-keep']);
+
+        expect(
+          await countNonDispatchableCandidates(app, {
+            promptVersion: TECHNICIAN_NOTE_PROMPT_VERSION,
+            regenerate: false,
+          }),
+        ).toBe(2);
+      });
     });
   });
 

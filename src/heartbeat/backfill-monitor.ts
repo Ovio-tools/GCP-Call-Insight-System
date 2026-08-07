@@ -28,6 +28,23 @@ export interface BackfillSignalUrls {
   fail: string;
 }
 
+/**
+ * Derive the four signal URLs from a job's single check URL.
+ *
+ * The progress signal is `/log`. Healthchecks.io accepts `/start`, `/fail` and `/log` and rejects
+ * anything else with `400 invalid url format` — the `/progress` suffix used here until 2026-08-07
+ * meant EVERY progress ping from EVERY job was silently refused, so the stall signal this monitor
+ * is built around never existed. `/log` records an event without changing the check's pass/fail
+ * state, which is exactly the contract: only `success` may turn a check green.
+ *
+ * Shared rather than copied per entrypoint — two copies is how the backfill job and the
+ * technician-note job came to carry the same bug. Verified against a live check, not inferred.
+ */
+export function deriveJobSignalUrls(base: string): BackfillSignalUrls {
+  const b = base.replace(/\/+$/, '');
+  return { start: `${b}/start`, progress: `${b}/log`, success: b, fail: `${b}/fail` };
+}
+
 /** Progress counters, carried for the sanitized progress/stall log line (never PII). */
 export type BackfillProgressCounts = Record<string, number>;
 
