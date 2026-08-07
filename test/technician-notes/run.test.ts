@@ -235,6 +235,69 @@ describe.skipIf(!hasTestDb)('technician-note batch runner', () => {
     });
 
     /**
+     * A category-scoped run: the way to note ONE part of the corpus (a new prompt tried on grinder
+     * pumps and water heaters first) without spending a model call on the rest of it. The scope is
+     * a filter on the candidate query, so every other rule — prompt-version skip, superseded legs,
+     * the non-dispatchable exclusion — still applies inside it.
+     */
+    describe('the --categories scope', () => {
+      it('generates only for calls in the named categories', async () => {
+        await seed('test-noterun-cat-gp', { serviceCategory: 'grinder_pump' });
+        await seed('test-noterun-cat-wh', { serviceCategory: 'water_heater' });
+        await seed('test-noterun-cat-toilet', { serviceCategory: 'toilet' });
+        const { generate, seen } = fakeGenerator(() => ({ outcome: 'generated' }));
+
+        const summary = await run({ generate, categories: ['grinder_pump', 'water_heater'] });
+
+        expect(seen.sort()).toEqual(['test-noterun-cat-gp', 'test-noterun-cat-wh']);
+        expect(summary.eligible).toBe(2);
+      });
+
+      it('still skips a scoped call that already has a note at the current version', async () => {
+        await seed('test-noterun-cat-done', { serviceCategory: 'grinder_pump' });
+        await seedNote('test-noterun-cat-done', TECHNICIAN_NOTE_PROMPT_VERSION);
+        const { generate, seen } = fakeGenerator(() => ({ outcome: 'generated' }));
+
+        await run({ generate, categories: ['grinder_pump'] });
+
+        expect(seen).toEqual([]);
+      });
+
+      it('filters the candidate query itself, so no model call is ever reserved', async () => {
+        await seed('test-noterun-cat-q1', { serviceCategory: 'grinder_pump' });
+        await seed('test-noterun-cat-q2', { serviceCategory: 'drain_blockage' });
+
+        const candidates = await listNoteCandidateCallIds(app, {
+          promptVersion: TECHNICIAN_NOTE_PROMPT_VERSION,
+          regenerate: false,
+          limit: 50,
+          categories: ['grinder_pump'],
+        });
+
+        expect(candidates).toContain('test-noterun-cat-q1');
+        expect(candidates).not.toContain('test-noterun-cat-q2');
+      });
+
+      it('counts the non-dispatchable exclusion inside the scope, not across the corpus', async () => {
+        await seed('test-noterun-cat-gen', { callIntent: 'general', serviceCategory: 'other' });
+        await seed('test-noterun-cat-keep', { serviceCategory: 'grinder_pump' });
+        const { generate } = fakeGenerator(() => ({ outcome: 'generated' }));
+
+        const summary = await run({ generate, categories: ['grinder_pump'] });
+
+        // The excluded call is out of scope, so it is not this run's business to report it.
+        expect(summary.nonDispatchableExcluded).toBe(0);
+        expect(
+          await countNonDispatchableCandidates(app, {
+            promptVersion: TECHNICIAN_NOTE_PROMPT_VERSION,
+            regenerate: false,
+            categories: ['grinder_pump'],
+          }),
+        ).toBe(0);
+      });
+    });
+
+    /**
      * A technician is never sent to a general enquiry or a billing question, so a note for one is
      * a model call spent to produce an empty gap list that then sits on the review surface looking
      * like a failure. The rule is deliberately a CONJUNCTION — intent AND no plumbing topic — so

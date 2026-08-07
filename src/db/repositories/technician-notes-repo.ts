@@ -129,11 +129,23 @@ export async function upsertTechnicianNote(
  * `regenerate` false (the default re-run) skips calls that already have a note at
  * `promptVersion`, which is what makes the job cheaply re-runnable. `regenerate` true returns
  * them anyway so a new prompt version can be rolled over an existing corpus.
+ *
+ * `categories` scopes the run to a set of `service_category` values — how a prompt gets tried on
+ * one part of the corpus before the model budget is spent on the rest. Absent means the whole
+ * corpus; an EMPTY array is treated the same way, because the caller that wants no calls at all
+ * simply does not run the job.
  */
 export async function listNoteCandidateCallIds(
   db: Queryable,
-  opts: { promptVersion: string; regenerate: boolean; limit: number; cursor?: string },
+  opts: {
+    promptVersion: string;
+    regenerate: boolean;
+    limit: number;
+    cursor?: string;
+    categories?: readonly string[];
+  },
 ): Promise<string[]> {
+  const categories = opts.categories ?? [];
   const rows = await query<{ call_id: string }>(
     db,
     `SELECT sk.call_id
@@ -146,6 +158,7 @@ export async function listNoteCandidateCallIds(
         AND NOT (sk.call_intent::text = ANY($5::text[]) AND sk.service_category::text = 'other')
         AND ($1 OR tn.call_id IS NULL OR tn.prompt_version <> $2)
         AND ($3::text IS NULL OR sk.call_id > $3::text)
+        ${categories.length > 0 ? 'AND sk.service_category::text = ANY($6::text[])' : ''}
       ORDER BY sk.call_id
       LIMIT $4`,
     [
@@ -154,6 +167,7 @@ export async function listNoteCandidateCallIds(
       opts.cursor ?? null,
       opts.limit,
       [...NOTE_NON_DISPATCH_INTENTS],
+      ...(categories.length > 0 ? [[...categories]] : []),
     ],
   );
   return rows.map((r) => r.call_id);
@@ -172,8 +186,9 @@ export async function listNoteCandidateCallIds(
  */
 export async function countNonDispatchableCandidates(
   db: Queryable,
-  opts: { promptVersion: string; regenerate: boolean },
+  opts: { promptVersion: string; regenerate: boolean; categories?: readonly string[] },
 ): Promise<number> {
+  const categories = opts.categories ?? [];
   const rows = await query<{ n: string }>(
     db,
     `SELECT count(*)::text AS n
@@ -182,8 +197,14 @@ export async function countNonDispatchableCandidates(
       WHERE sk.superseded_by_call_id IS NULL
         AND sk.call_intent::text = ANY($3::text[])
         AND sk.service_category::text = 'other'
-        AND ($1 OR tn.call_id IS NULL OR tn.prompt_version <> $2)`,
-    [opts.regenerate, opts.promptVersion, [...NOTE_NON_DISPATCH_INTENTS]],
+        AND ($1 OR tn.call_id IS NULL OR tn.prompt_version <> $2)
+        ${categories.length > 0 ? 'AND sk.service_category::text = ANY($4::text[])' : ''}`,
+    [
+      opts.regenerate,
+      opts.promptVersion,
+      [...NOTE_NON_DISPATCH_INTENTS],
+      ...(categories.length > 0 ? [[...categories]] : []),
+    ],
   );
   return Number(rows[0]?.n ?? 0);
 }

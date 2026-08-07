@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { NOTE_FIELD_PATHS } from '../../src/db/enums.js';
-import { renderNoteDetailPage } from '../../src/notes/render.js';
-import { makeNoteDetail, makeTally } from './_fixture.js';
+import { renderNoteDetailPage, renderNotesListPage } from '../../src/notes/render.js';
+import { makeNoteDetail, makeNoteList, makeTally } from './_fixture.js';
 
 /**
  * Absence is the finding on this surface, so a null field must RENDER — not be omitted the way
@@ -115,14 +115,35 @@ describe('the running tally is labelled as a count, never as an accuracy score',
     expect(html).not.toMatch(/accuracy score of|accuracy rate|% accurate/i);
   });
 
-  it('does not divide by zero before the reviewer has checked anything', () => {
+  it('says nothing at all before the reviewer has checked anything', () => {
     const html = renderNoteDetailPage(
       makeNoteDetail((d) => (d.tally = makeTally({ fields_checked: 0, marked_right: 0 }))),
       {},
     );
-    expect(html).toContain('You haven&#39;t checked any fields yet at this note version.');
+    // An empty scoreboard is noise on a page whose whole job is the note. It stays in the markup
+    // hidden, so the first verdict can reveal it without a reload, but nothing reads as text.
+    expect(html).not.toContain('haven&#39;t checked');
     expect(html).not.toContain('NaN');
-    // The caveat travels with the figure even when there is no figure yet.
+    expect(html).toContain('<div class="tally" hidden>');
+  });
+
+  it('reveals that hidden tally, caveat and all, as soon as a verdict lands', () => {
+    const html = renderNoteDetailPage(
+      makeNoteDetail((d) => (d.tally = makeTally({ fields_checked: 0, marked_right: 0 }))),
+      {},
+    );
+    // The caveat travels with the figure — it must already be inside the block that gets revealed.
     expect(html).toContain('not an accuracy score');
+    const scripts = (html.match(/<script\b[^>]*>[\s\S]*?<\/script>/g) ?? []).join('\n');
+    expect(scripts).toContain("removeAttribute('hidden')");
+  });
+
+  it('hides the empty tally on the list page too', () => {
+    const html = renderNotesListPage(
+      makeNoteList((l) => (l.tally = makeTally({ fields_checked: 0, marked_right: 0 }))),
+      {},
+    );
+    expect(html).not.toContain('haven&#39;t checked');
+    expect(html).toContain('<div class="tally" hidden>');
   });
 });
