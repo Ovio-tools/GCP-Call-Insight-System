@@ -173,7 +173,13 @@ describe('technicianNoteRecordSchema strictness', () => {
     expect(parseOf({ ...goodRecord(), occupancy: 'landlord' }).ok).toBe(false);
   });
 
-  it('accepts null for every nullable member — the expected answer on most calls', () => {
+  /**
+   * A literal null is no longer what the model sends — the wire schema has no nulls at all — but
+   * the parser still accepts one. That tolerance is deliberate: the wire schema is the enforcement
+   * point, so a parser that rejected the older encoding would turn a schema regression into a
+   * confusing retry loop instead of the 400 it actually is.
+   */
+  it('still accepts a literal null in every unset-able field (older encoding)', () => {
     const record = goodRecord();
     record.equipment = {
       type: null,
