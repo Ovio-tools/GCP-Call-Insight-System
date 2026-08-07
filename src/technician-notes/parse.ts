@@ -5,6 +5,7 @@ import {
   NOTE_PAYER_AUTHORITY_KEYS,
   NOTE_PRIOR_WORK_KEYS,
   NOTE_SYSTEM_CONTEXT_KEYS,
+  NOTE_UNSET_TEXT,
   NOTE_WATER_STATUS_KEYS,
   noteOccupancySchema,
   noteScopeSignalSchema,
@@ -18,17 +19,42 @@ import { DISPATCH_SUMMARY_MAX_LENGTH } from '../db/schemas/technician-notes.js';
  * either a validated note record or an exact failure kind. It never logs.
  */
 
-/** A `.strict()` object over a fixed key tuple, every member nullable. */
-function nullableGroup<K extends readonly [string, ...string[]], V extends z.ZodTypeAny>(
+/** A `.strict()` object over a fixed key tuple, every member the same schema. */
+function noteGroup<K extends readonly [string, ...string[]], V extends z.ZodTypeAny>(
   keys: K,
   value: V,
-): z.ZodObject<Record<K[number], z.ZodNullable<V>>, 'strict'> {
-  const shape = Object.fromEntries(keys.map((k) => [k, value.nullable()])) as Record<
-    K[number],
-    z.ZodNullable<V>
-  >;
+): z.ZodObject<Record<K[number], V>, 'strict'> {
+  const shape = Object.fromEntries(keys.map((k) => [k, value])) as Record<K[number], V>;
   return z.object(shape).strict();
 }
+
+/**
+ * The wire → record boundary for "the call did not establish this" (ADR 0009).
+ *
+ * The model cannot answer `null`: the wire schema encodes unset as a VALUE, because structured
+ * outputs cap a schema at 16 union-typed parameters and this note has 31 fields that can be
+ * unset (see the comment on TECHNICIAN_NOTE_OUTPUT_FORMAT in `src/anthropic/client.ts`). These
+ * two preprocessors are where that transport detail STOPS: everything downstream of this module
+ * — the gap list, the residual scan, `technician_notes`, the review surface — sees the same
+ * nulls it always saw, and no other module needs to know the sentinels exist.
+ *
+ * Anything that is not a sentinel is passed through untouched, so a literal `null` or a real
+ * boolean still validates. That tolerance is deliberate: the wire schema is the enforcement
+ * point, and a parser that rejected the older encoding would turn a schema regression into a
+ * confusing `schema_invalid` retry loop instead of the 400 it actually is.
+ */
+function unsetTextToNull<V extends z.ZodTypeAny>(
+  value: V,
+): z.ZodEffects<z.ZodNullable<V>, z.output<V> | null, unknown> {
+  return z.preprocess((raw) => (raw === NOTE_UNSET_TEXT ? null : raw), value.nullable());
+}
+
+const tristate = z.preprocess((raw) => {
+  if (raw === 'yes') return true;
+  if (raw === 'no') return false;
+  if (raw === 'unknown') return null;
+  return raw;
+}, z.boolean().nullable());
 
 const shortText = z.string().min(1).max(300);
 const mediumText = z.string().min(1).max(500);
@@ -50,19 +76,19 @@ export const technicianNoteRecordSchema = z
   .object({
     scope_signal: noteScopeSignalSchema,
     occupancy: noteOccupancySchema,
-    equipment: nullableGroup(NOTE_EQUIPMENT_KEYS, shortText),
-    system_context: nullableGroup(NOTE_SYSTEM_CONTEXT_KEYS, shortText),
-    water_status: nullableGroup(NOTE_WATER_STATUS_KEYS, z.boolean()),
-    payer_authority: nullableGroup(NOTE_PAYER_AUTHORITY_KEYS, z.boolean()),
-    prior_work: nullableGroup(NOTE_PRIOR_WORK_KEYS, z.boolean()),
-    commitments_made: nullableGroup(NOTE_COMMITMENTS_MADE_KEYS, z.boolean()),
-    location_on_property: mediumText.nullable(),
-    symptom_verbatim: mediumText.nullable(),
-    prior_attempts_detail: mediumText.nullable(),
-    access_notes: mediumText.nullable(),
+    equipment: noteGroup(NOTE_EQUIPMENT_KEYS, unsetTextToNull(shortText)),
+    system_context: noteGroup(NOTE_SYSTEM_CONTEXT_KEYS, unsetTextToNull(shortText)),
+    water_status: noteGroup(NOTE_WATER_STATUS_KEYS, tristate),
+    payer_authority: noteGroup(NOTE_PAYER_AUTHORITY_KEYS, tristate),
+    prior_work: noteGroup(NOTE_PRIOR_WORK_KEYS, tristate),
+    commitments_made: noteGroup(NOTE_COMMITMENTS_MADE_KEYS, tristate),
+    location_on_property: unsetTextToNull(mediumText),
+    symptom_verbatim: unsetTextToNull(mediumText),
+    prior_attempts_detail: unsetTextToNull(mediumText),
+    access_notes: unsetTextToNull(mediumText),
     hazards: z.array(shortText).max(20),
     urgency_context: z.array(shortText).max(20),
-    dispatch_summary: z.string().min(1).max(DISPATCH_SUMMARY_MAX_LENGTH).nullable(),
+    dispatch_summary: unsetTextToNull(z.string().min(1).max(DISPATCH_SUMMARY_MAX_LENGTH)),
   })
   .strict();
 

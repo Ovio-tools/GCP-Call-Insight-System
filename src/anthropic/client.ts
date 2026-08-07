@@ -10,6 +10,7 @@ import {
   NOTE_PRIOR_WORK_KEYS,
   NOTE_SCOPE_SIGNALS,
   NOTE_SYSTEM_CONTEXT_KEYS,
+  NOTE_TRISTATE,
   NOTE_WATER_STATUS_KEYS,
   SERVICE_CATEGORIES,
   SENTIMENTS,
@@ -348,13 +349,13 @@ export function createAnthropicExtractClient(
   };
 }
 
-/** A jsonb sub-object of the note: a fixed key set, every member nullable, nothing else. */
-function noteGroup(
+/** A jsonb sub-object of the note: a fixed key set, one member shape, nothing else. */
+function noteGroup<M>(
   keys: readonly string[],
-  member: { readonly type: readonly string[] },
+  member: M,
 ): {
   type: 'object';
-  properties: Record<string, { readonly type: readonly string[] }>;
+  properties: Record<string, M>;
   required: readonly string[];
   additionalProperties: false;
 } {
@@ -366,8 +367,21 @@ function noteGroup(
   };
 }
 
-const NULLABLE_STRING = { type: ['string', 'null'] } as const;
-const NULLABLE_BOOLEAN = { type: ['boolean', 'null'] } as const;
+/**
+ * "Not established" is encoded as a VALUE here, not as `null` (ADR 0009).
+ *
+ * Structured outputs cap a schema at 16 union-typed parameters — a limit the API enforces with a
+ * 400 before generating anything ("exponential compilation cost"). Written the obvious way, with
+ * every unset-able field nullable, this schema has 31, so every note request failed outright. The
+ * encoding below has zero unions and therefore ample headroom for future fields. It is purely a
+ * transport concern: `src/technician-notes/parse.ts` maps both sentinels back to `null` before a
+ * record exists, so the stored note, the `not_established` gate, and every reader are unchanged.
+ *
+ * `test/anthropic/output-format-wire-limits.test.ts` counts the unions in every exported format
+ * offline, so a nullable field added here fails in CI rather than in production.
+ */
+const NOTE_TEXT = { type: 'string' } as const;
+const NOTE_TRISTATE_FLAG = { type: 'string', enum: NOTE_TRISTATE } as const;
 
 /**
  * Structured-output format sent on every technician-note request (ADR 0009).
@@ -395,19 +409,19 @@ export const TECHNICIAN_NOTE_OUTPUT_FORMAT = {
     properties: {
       scope_signal: { type: 'string', enum: NOTE_SCOPE_SIGNALS },
       occupancy: { type: 'string', enum: NOTE_OCCUPANCIES },
-      equipment: noteGroup(NOTE_EQUIPMENT_KEYS, NULLABLE_STRING),
-      system_context: noteGroup(NOTE_SYSTEM_CONTEXT_KEYS, NULLABLE_STRING),
-      water_status: noteGroup(NOTE_WATER_STATUS_KEYS, NULLABLE_BOOLEAN),
-      payer_authority: noteGroup(NOTE_PAYER_AUTHORITY_KEYS, NULLABLE_BOOLEAN),
-      prior_work: noteGroup(NOTE_PRIOR_WORK_KEYS, NULLABLE_BOOLEAN),
-      commitments_made: noteGroup(NOTE_COMMITMENTS_MADE_KEYS, NULLABLE_BOOLEAN),
-      location_on_property: NULLABLE_STRING,
-      symptom_verbatim: NULLABLE_STRING,
-      prior_attempts_detail: NULLABLE_STRING,
-      access_notes: NULLABLE_STRING,
+      equipment: noteGroup(NOTE_EQUIPMENT_KEYS, NOTE_TEXT),
+      system_context: noteGroup(NOTE_SYSTEM_CONTEXT_KEYS, NOTE_TEXT),
+      water_status: noteGroup(NOTE_WATER_STATUS_KEYS, NOTE_TRISTATE_FLAG),
+      payer_authority: noteGroup(NOTE_PAYER_AUTHORITY_KEYS, NOTE_TRISTATE_FLAG),
+      prior_work: noteGroup(NOTE_PRIOR_WORK_KEYS, NOTE_TRISTATE_FLAG),
+      commitments_made: noteGroup(NOTE_COMMITMENTS_MADE_KEYS, NOTE_TRISTATE_FLAG),
+      location_on_property: NOTE_TEXT,
+      symptom_verbatim: NOTE_TEXT,
+      prior_attempts_detail: NOTE_TEXT,
+      access_notes: NOTE_TEXT,
       hazards: { type: 'array', items: { type: 'string' } },
       urgency_context: { type: 'array', items: { type: 'string' } },
-      dispatch_summary: NULLABLE_STRING,
+      dispatch_summary: NOTE_TEXT,
     },
     required: [
       'scope_signal',

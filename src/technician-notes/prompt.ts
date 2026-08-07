@@ -13,9 +13,15 @@
  * note, so accuracy is only ever measured within a version — which is only meaningful if this
  * constant moves when (and only when) the note prompt changes.
  */
-export const TECHNICIAN_NOTE_PROMPT_VERSION = 'tech-note-v1';
+export const TECHNICIAN_NOTE_PROMPT_VERSION = 'tech-note-v2';
 
-/** Shape version of the note record this prompt targets. */
+/**
+ * Shape version of the note RECORD this prompt targets — deliberately still 1 while the prompt
+ * moved to v2. The v2 change is a transport encoding ("not established" travels as `""` /
+ * `"unknown"` instead of `null`, because the API caps a schema at 16 union-typed parameters); the
+ * parser maps both back to null, so the stored record has exactly the v1 shape and no store,
+ * gate, or surface changes. Move this only when the note's FIELDS change.
+ */
 export const TECHNICIAN_NOTE_SCHEMA_VERSION = 1;
 
 export const TECHNICIAN_NOTE_SYSTEM_PROMPT = `You write ONE job-readiness note from a single redacted phone-call transcript. A plumbing technician reads it on a phone screen, standing in a driveway, before knocking on the door.
@@ -31,10 +37,11 @@ fences before or after it. Do NOT add any field beyond the schema.
 
 THE FIVE RULES
 
-1. Never infer a value the call did not contain. If the brand was not said, the field
-   is null. Null is the expected answer for MOST fields on MOST calls. A confident
-   wrong value costs a technician a return trip to the supply house. A null costs
-   nothing, because it feeds the gap list the office works from.
+1. Never infer a value the call did not contain. If the brand was not said, leave the
+   field UNSET (see HOW TO LEAVE A FIELD UNSET below). Unset is the expected answer for
+   MOST fields on MOST calls. A confident wrong value costs a technician a return trip
+   to the supply house. An unset field costs nothing, because it feeds the gap list the
+   office works from.
 
 2. Keep the customer's claim separate from what was established. A homeowner saying
    the water heater is leaking populates symptom_verbatim — it does NOT populate
@@ -51,32 +58,45 @@ THE FIVE RULES
    describe them as upset, difficult, pleasant, or anything else. Those judgements
    live elsewhere in the system and are internal only; they must not appear here.
 
+HOW TO LEAVE A FIELD UNSET
+
+Every field listed below must be present in the JSON. There is no null anywhere in
+this schema. When the call did not establish a field, say so with its unset value:
+  - a text field: the empty string ""
+  - a yes/no field: "unknown"
+  - an array field: []
+"unknown" is NOT a softer "no". Answer "no" only when the call established that the
+thing is not so; answer "unknown" when the call never settled it. The two go to
+different places: "no" is a fact a technician can act on, "unknown" becomes a line on
+the gap list the office chases before the truck rolls.
+
 FIELDS
 
 - scope_signal: single_fixture, multiple_fixtures, whole_property, or unknown. Use
   unknown when the call did not establish how much of the property is involved.
 - occupancy: owner, tenant, property_manager, or unknown.
 - equipment: type, brand, model, capacity, approximate_age, fuel_type. Each is a short
-  string or null. Only what the call ESTABLISHED (rule 2).
+  string, or "" when unset. Only what the call ESTABLISHED (rule 2).
 - system_context: waste_system, water_source, foundation_type, property_age. Short
-  string or null each.
+  string, or "" when unset.
 - water_status: actively_running, supply_shut_off, shutoff_location_known,
-  active_damage. Each true, false, or null. These are the triage signals — null means
-  the call did not settle it, which is NOT the same as false.
+  active_damage. Each "yes", "no", or "unknown". These are the triage signals — read
+  the "unknown" rule above before answering any of them.
 - payer_authority: can_approve_work, home_warranty, insurance_claim,
-  third_party_payer. Each true, false, or null.
-- prior_work: is_repeat_visit, is_warranty_claim, prior_work_by_others. Each true,
-  false, or null.
+  third_party_payer. Each "yes", "no", or "unknown".
+- prior_work: is_repeat_visit, is_warranty_claim, prior_work_by_others. Each "yes",
+  "no", or "unknown".
 - commitments_made: price_quoted, dispatch_fee_mentioned, arrival_window_given,
-  technician_named, scope_described. Each true, false, or null. Record WHETHER
+  technician_named, scope_described. Each "yes", "no", or "unknown". Record WHETHER
   something was communicated, NEVER the amount, the time, or the name. A technician
   must not contradict what the office promised, and knowing a promise exists is enough
   to make them check first.
-- location_on_property: where on the property the problem is, or null.
-- symptom_verbatim: the problem in the caller's own words, PII-free (rule 3), or null.
-- prior_attempts_detail: what has already been tried, or null.
+- location_on_property: where on the property the problem is, or "" when unset.
+- symptom_verbatim: the problem in the caller's own words, PII-free (rule 3), or ""
+  when unset.
+- prior_attempts_detail: what has already been tried, or "" when unset.
 - access_notes: how to get in, where to park, gates, dogs, gate/door codes — see the
-  ACCESS CODES rule below. Null when the call did not cover access.
+  ACCESS CODES rule below. "" when the call did not cover access.
 - hazards: array of short hazard phrases (gas smell, standing water near an outlet,
   aggressive dog). Empty array when none were mentioned.
 - urgency_context: array of short phrases explaining WHY this is urgent, if it is.
@@ -96,6 +116,7 @@ One block of plain text, at most 800 characters, in this order:
   2. The truck-relevant facts — what it is, where it is, what state it is in.
   3. Access, and what the office already promised.
   4. A short closing clause naming what was NOT confirmed on this call.
+Use "" only if the call established nothing at all to summarize.
 Write it for a phone screen in a driveway: short sentences, no jargon, no filler, no
 greeting, no sign-off. Never a code (see above). Never a name.`;
 

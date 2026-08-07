@@ -6,10 +6,26 @@ import {
   EXTRACT_OUTPUT_FORMAT,
   EXTRACT_OUTPUT_FORMAT_JSON,
   ModelApiError,
+  TECHNICIAN_NOTE_OUTPUT_FORMAT,
+  TECHNICIAN_NOTE_OUTPUT_FORMAT_JSON,
   createAnthropicClassifyClient,
   createAnthropicExtractClient,
 } from '../../src/anthropic/client.js';
-import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY, SENTIMENTS } from '../../src/db/enums.js';
+import {
+  CALL_INTENT,
+  NOTE_COMMITMENTS_MADE_KEYS,
+  NOTE_EQUIPMENT_KEYS,
+  NOTE_OCCUPANCIES,
+  NOTE_PAYER_AUTHORITY_KEYS,
+  NOTE_PRIOR_WORK_KEYS,
+  NOTE_SCOPE_SIGNALS,
+  NOTE_SYSTEM_CONTEXT_KEYS,
+  NOTE_TRISTATE,
+  NOTE_WATER_STATUS_KEYS,
+  SERVICE_CATEGORIES,
+  URGENCY,
+  SENTIMENTS,
+} from '../../src/db/enums.js';
 import { makeTestConfig } from '../_config.js';
 
 /**
@@ -626,5 +642,96 @@ describe('EXTRACT_OUTPUT_FORMAT — structural pins', () => {
   it('exports a JSON string form that round-trips to the same object', () => {
     expect(EXTRACT_OUTPUT_FORMAT_JSON).toBe(JSON.stringify(EXTRACT_OUTPUT_FORMAT));
     expect(JSON.parse(EXTRACT_OUTPUT_FORMAT_JSON)).toEqual(EXTRACT_OUTPUT_FORMAT);
+  });
+});
+
+describe('TECHNICIAN_NOTE_OUTPUT_FORMAT — structural pins', () => {
+  const GROUPS = {
+    equipment: NOTE_EQUIPMENT_KEYS,
+    system_context: NOTE_SYSTEM_CONTEXT_KEYS,
+    water_status: NOTE_WATER_STATUS_KEYS,
+    payer_authority: NOTE_PAYER_AUTHORITY_KEYS,
+    prior_work: NOTE_PRIOR_WORK_KEYS,
+    commitments_made: NOTE_COMMITMENTS_MADE_KEYS,
+  } as const;
+
+  const schema = TECHNICIAN_NOTE_OUTPUT_FORMAT.schema;
+
+  /** One member of a jsonb group, widened for inspection (the const shape differs per group). */
+  function memberOf(group: keyof typeof GROUPS, key: string): { type?: unknown; enum?: unknown } {
+    const properties: Record<string, { type?: unknown; enum?: unknown }> =
+      schema.properties[group].properties;
+    const member = properties[key];
+    if (member === undefined) throw new Error(`${group}.${key} is missing from the wire schema`);
+    return member;
+  }
+
+  it('requires every property and allows no others, at the top level and in every group', () => {
+    expect([...schema.required].sort()).toEqual(Object.keys(schema.properties).sort());
+    expect(schema.additionalProperties).toBe(false);
+    for (const [name, keys] of Object.entries(GROUPS)) {
+      const group = schema.properties[name as keyof typeof GROUPS];
+      expect(Object.keys(group.properties), name).toEqual([...keys]);
+      expect([...group.required], name).toEqual([...keys]);
+      expect(group.additionalProperties, name).toBe(false);
+    }
+  });
+
+  /**
+   * The whole point of the sentinel encoding: not one union-typed parameter anywhere. The
+   * union-count gate in output-format-wire-limits.test.ts enforces the API's ceiling of 16; this
+   * pins the note schema at the stricter target it was rewritten to hit, so re-introducing a
+   * single nullable field here fails immediately rather than eating the shared headroom silently.
+   */
+  it('carries no nullable field at all — unset is a value, not a union', () => {
+    expect(JSON.stringify(schema)).not.toContain('null');
+    for (const [name, keys] of Object.entries(GROUPS)) {
+      for (const key of keys) {
+        expect(typeof memberOf(name as keyof typeof GROUPS, key).type, `${name}.${key}`).toBe(
+          'string',
+        );
+      }
+    }
+  });
+
+  it('gives every flag group the yes/no/unknown vocabulary and every text field a bare string', () => {
+    for (const name of [
+      'water_status',
+      'payer_authority',
+      'prior_work',
+      'commitments_made',
+    ] as const) {
+      for (const key of GROUPS[name]) {
+        expect(memberOf(name, key), `${name}.${key}`).toEqual({
+          type: 'string',
+          enum: NOTE_TRISTATE,
+        });
+      }
+    }
+    for (const name of ['equipment', 'system_context'] as const) {
+      for (const key of GROUPS[name]) {
+        expect(memberOf(name, key), `${name}.${key}`).toEqual({ type: 'string' });
+      }
+    }
+    for (const field of [
+      'location_on_property',
+      'symptom_verbatim',
+      'prior_attempts_detail',
+      'access_notes',
+      'dispatch_summary',
+    ] as const) {
+      expect(schema.properties[field], field).toEqual({ type: 'string' });
+    }
+  });
+
+  it('mirrors the imported enum tuples and never offers not_established', () => {
+    expect(schema.properties.scope_signal.enum).toEqual(NOTE_SCOPE_SIGNALS);
+    expect(schema.properties.occupancy.enum).toEqual(NOTE_OCCUPANCIES);
+    expect(Object.keys(schema.properties)).not.toContain('not_established');
+  });
+
+  it('exports a JSON string form that round-trips to the same object', () => {
+    expect(TECHNICIAN_NOTE_OUTPUT_FORMAT_JSON).toBe(JSON.stringify(TECHNICIAN_NOTE_OUTPUT_FORMAT));
+    expect(JSON.parse(TECHNICIAN_NOTE_OUTPUT_FORMAT_JSON)).toEqual(TECHNICIAN_NOTE_OUTPUT_FORMAT);
   });
 });
