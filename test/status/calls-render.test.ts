@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderCallsPage } from '../../src/status/calls-render.js';
+import { filtersScript } from '../../src/ui/filters.js';
 import type { CallListItem, CallsPage } from '../../src/status/calls.js';
 
 /**
@@ -71,6 +72,25 @@ function mobileRules(html: string): string {
   }
   throw new Error('unbalanced media query');
 }
+
+describe('outcome filter applies on selection', () => {
+  // The behaviour itself is proven in test/ui/filters.test.ts by executing the script; all this
+  // page owes is to actually carry it. Matching the whole emitted script (not a fragment of it)
+  // means dropping the call here fails, and so does dropping the nonce it is rendered with.
+  it('carries the shared auto-apply script, nonce and all', () => {
+    const html = renderCallsPage(page(), { nonce: 'N1', csrfToken: 'C1' });
+    expect(html).toContain(filtersScript({ nonce: 'N1' }));
+  });
+
+  it('emits the script after the filter form, which is the only order that works', () => {
+    // The script wires the form the moment it runs. Hoisted into <head> it finds nothing to wire
+    // and the drop-down silently goes back to needing the button, with no error anywhere.
+    const html = renderCallsPage(page(), { nonce: 'N1', csrfToken: 'C1' });
+    expect(html.indexOf(filtersScript({ nonce: 'N1' }))).toBeGreaterThan(
+      html.lastIndexOf('<form class="filters"'),
+    );
+  });
+});
 
 describe('all-calls mobile cards', () => {
   it('renders every field of a call on the card', () => {

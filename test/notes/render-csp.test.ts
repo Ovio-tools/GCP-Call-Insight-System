@@ -4,6 +4,7 @@ import {
   renderNoteMissingPage,
   renderNotesListPage,
 } from '../../src/notes/render.js';
+import { filtersScript } from '../../src/ui/filters.js';
 import { makeNoteDetail, makeNoteList } from './_fixture.js';
 
 /**
@@ -53,6 +54,22 @@ describe('note-review pages are CSP-safe', () => {
       });
     });
   }
+
+  it('carries the shared auto-apply filter script on the list page only', () => {
+    // The behaviour itself is proven in test/ui/filters.test.ts by executing the script; the list
+    // page owes only that it actually carries it, with the nonce. The detail and missing pages have
+    // no filter bar, so shipping the script there would be dead weight on every note view.
+    const script = filtersScript({ nonce: 'N1' });
+    const byName = Object.fromEntries(PAGES.map((p) => [p.name, p.html]));
+    expect(byName['list']).toContain(script);
+    expect(byName['detail']).not.toContain(script);
+    expect(byName['missing']).not.toContain(script);
+
+    // The script wires the forms the moment it runs, so it must come after BOTH of them (the
+    // desktop copy and the mobile one). Hoisted above either, it silently wires nothing.
+    const list = byName['list'] ?? '';
+    expect(list.indexOf(script)).toBeGreaterThan(list.lastIndexOf('<form class="filters"'));
+  });
 
   it('the inline-handler regex actually matches a handler (self-test)', () => {
     // Without this the assertion above could pass on a broken regex rather than on clean markup.

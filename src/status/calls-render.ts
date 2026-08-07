@@ -5,6 +5,7 @@ import {
   type CallsPage,
 } from './calls.js';
 import { THEME, siteHeader, logoutScript, fmtTs, type Chrome } from '../ui/chrome.js';
+import { filtersScript } from '../ui/filters.js';
 import { CARD_STYLE, cardField } from '../ui/cards.js';
 
 /**
@@ -189,6 +190,7 @@ export function renderCallsPage(dto: CallsPage, chrome: Chrome = {}): string {
     `<p class="foot">Read-only. Call outcomes only — no transcript content or PII.</p>` +
     `</main>` +
     logoutScript(chrome) +
+    filtersScript(chrome) +
     `</body></html>`
   );
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { renderKnowledgePage } from '../../src/knowledge/render.js';
+import { filtersScript } from '../../src/ui/filters.js';
 import type { KnowledgeRecord, KnowledgeView } from '../../src/knowledge/dto.js';
 
 /**
@@ -299,6 +300,26 @@ describe('layout switch', () => {
     expect(anchor).toBeGreaterThanOrEqual(0);
     expect(shared).toBeGreaterThanOrEqual(0);
     expect(shared).toBeGreaterThan(anchor);
+  });
+});
+
+describe('filters apply on selection', () => {
+  // The behaviour itself is proven in test/ui/filters.test.ts by executing the script; all this
+  // page owes is to actually carry it. Matching the whole emitted script (not a fragment of it)
+  // means dropping the call here fails, and so does dropping the nonce it is rendered with.
+  it('carries the shared auto-apply script, nonce and all', () => {
+    const html = renderKnowledgePage(view(), { nonce: 'N1', csrfToken: 'C1' });
+    expect(html).toContain(filtersScript({ nonce: 'N1' }));
+  });
+
+  it('emits the script after BOTH filter forms, which is the only order that works', () => {
+    // The script wires the forms the moment it runs. Hoisted into <head> — or merely above the
+    // mobile copy — it finds nothing to wire and every drop-down silently goes back to needing the
+    // button, with no error anywhere. Nothing else in this suite would notice.
+    const html = renderKnowledgePage(view(), { nonce: 'N1', csrfToken: 'C1' });
+    expect(html.indexOf(filtersScript({ nonce: 'N1' }))).toBeGreaterThan(
+      html.lastIndexOf('<form class="filters"'),
+    );
   });
 });
 

@@ -2,6 +2,7 @@ import { CALL_INTENT, SERVICE_CATEGORIES, URGENCY, type Urgency } from '../db/en
 import type { KnowledgeFilters, KnowledgeRecord, KnowledgeView } from './dto.js';
 import { humanizeLabel } from './summary.js';
 import { THEME, siteHeader, logoutScript, type Chrome } from '../ui/chrome.js';
+import { filtersScript } from '../ui/filters.js';
 import { CARD_STYLE, cardField } from '../ui/cards.js';
 
 /**
@@ -336,6 +337,7 @@ export function renderKnowledgePage(dto: KnowledgeView, chrome: Chrome = {}): st
     `<p class="foot">Read-only. De-identified records only.</p>` +
     `</main>` +
     logoutScript(chrome) +
+    filtersScript(chrome) +
     `</body></html>`
   );
 }

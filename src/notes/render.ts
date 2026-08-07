@@ -8,6 +8,7 @@ import {
   type Urgency,
 } from '../db/enums.js';
 import { THEME, esc, jsonForScript, logoutScript, siteHeader, type Chrome } from '../ui/chrome.js';
+import { filtersScript } from '../ui/filters.js';
 import { CARD_STYLE, cardField } from '../ui/cards.js';
 import { humanizeLabel } from '../knowledge/summary.js';
 import { fmtCreatedCt } from '../knowledge/render.js';
@@ -625,6 +626,7 @@ export function renderNotesListPage(dto: NoteList, chrome: Chrome = {}): string 
     `<p class="foot">Verdicts are recorded against note version ${esc(dto.tally.note_prompt_version)}. Notes are never changed by a review.</p>` +
     `</main>` +
     logoutScript(chrome) +
+    filtersScript(chrome) +
     `</body></html>`
   );
 }
