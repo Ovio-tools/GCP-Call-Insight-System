@@ -1,0 +1,10 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "buildCommand": "npm ci && npm run build"
+  },
+  "deploy": {
+    "startCommand": "node dist/scripts/generate-technician-notes.js --dry-run --categories=\"${TECHNICIAN_NOTE_CATEGORIES}\"",
+    "restartPolicyType": "NEVER"
+  }
+}

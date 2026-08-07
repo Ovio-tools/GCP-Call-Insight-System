@@ -69,6 +69,12 @@ export interface RunTechnicianNotesDeps {
   dryRun?: boolean;
   /** `--limit <n>`: stop after this many eligible calls (a bounded first run). */
   limit?: number;
+  /**
+   * `--categories=a,b`: scope the run to these `service_category` values. Absent = the whole
+   * corpus. A scoped run is how a prompt gets tried on one slice before the budget is spent on
+   * everything; every other eligibility rule still applies inside the slice.
+   */
+  categories?: readonly string[];
 }
 
 export async function runTechnicianNotes(
@@ -129,6 +135,7 @@ export async function runTechnicianNotes(
     summary.nonDispatchableExcluded = await countNonDispatchableCandidates(pool, {
       promptVersion: TECHNICIAN_NOTE_PROMPT_VERSION,
       regenerate,
+      ...(deps.categories !== undefined ? { categories: deps.categories } : {}),
     });
 
     await monitor?.start();
@@ -148,6 +155,7 @@ export async function runTechnicianNotes(
           regenerate,
           limit: pageSize,
           ...(cursor !== undefined ? { cursor } : {}),
+          ...(deps.categories !== undefined ? { categories: deps.categories } : {}),
         });
         if (callIds.length === 0) break;
 

@@ -95,7 +95,7 @@ const VERDICT_HINTS = {
  * `dispatch_summary` are rendered separately (the gap list and the headline artifact). */
 const FIELD_GROUPS: readonly { heading: string; paths: readonly NoteFieldPath[] }[] = [
   {
-    heading: "What's on the truck",
+    heading: 'The equipment and the property',
     paths: [
       'scope_signal',
       'equipment.type',
@@ -256,16 +256,21 @@ function verdictMap(dto: NoteDetail): VerdictMap {
  * not one — a reviewer picks which fields to look at, so it is a self-selected sample of nothing.
  * Keeping the sentence in the same function as the figure means the two cannot drift apart in a
  * later edit, and `test/notes/` asserts both strings together.
+ *
+ * A tally of nothing says nothing, so at zero the block ships HIDDEN rather than announcing an
+ * empty scoreboard on a page whose job is the note. It ships hidden rather than omitted so the
+ * first verdict can reveal it in place — `detailScript` unhides it — instead of the figure only
+ * appearing after a reload.
  */
 function tallyBlock(tally: NoteTally): string {
   const { fields_checked: checked, marked_right: right } = tally;
   const headline =
     checked === 0
-      ? `You haven't checked any fields yet at this note version.`
+      ? ''
       : `You've checked ${checked} ${checked === 1 ? 'field' : 'fields'} across all notes at this version. ` +
         `You marked ${right} of them right (${Math.round((right / checked) * 100)}%).`;
   return (
-    `<div class="tally">` +
+    `<div class="tally"${checked === 0 ? ' hidden' : ''}>` +
     `<p class="tally-line">${esc(headline)}</p>` +
     `<p class="tally-caveat">This is a count of what you chose to look at, not an accuracy score.</p>` +
     `</div>`
@@ -654,11 +659,15 @@ function detailScript(dto: NoteDetail, chrome: Chrome): string {
     `var closeBtn=document.getElementById('close-transcript');` +
     `var lastTrigger=null;var loaded=false;` +
     // --- verdicts -------------------------------------------------------------------------
-    `function tallyText(t){` +
-    `if(!t||t.fields_checked===0){return "You haven't checked any fields yet at this note version.";}` +
+    // The zero case has no sentence: the block stays hidden until there is a figure to show, the
+    // same rule `tallyBlock` applies server-side. One idea, two places, deliberately identical.
+    `function applyTally(t){var line=document.querySelector('.tally-line');if(!line){return;}` +
+    `var box=line.closest('.tally');` +
+    `if(!t||t.fields_checked===0){line.textContent='';if(box){box.setAttribute('hidden','');}return;}` +
     `var pct=Math.round((t.marked_right/t.fields_checked)*100);` +
-    `return "You've checked "+t.fields_checked+" "+(t.fields_checked===1?"field":"fields")+` +
-    `" across all notes at this version. You marked "+t.marked_right+" of them right ("+pct+"%).";}` +
+    `line.textContent="You've checked "+t.fields_checked+" "+(t.fields_checked===1?"field":"fields")+` +
+    `" across all notes at this version. You marked "+t.marked_right+" of them right ("+pct+"%).";` +
+    `if(box){box.removeAttribute('hidden');}}` +
     `document.querySelectorAll('button.verdict').forEach(function(b){` +
     `b.addEventListener('click',async function(){` +
     `var path=b.dataset.field;var row=document.querySelector('[data-field-row="'+path+'"]');` +
@@ -672,7 +681,7 @@ function detailScript(dto: NoteDetail, chrome: Chrome): string {
     `var j=await r.json();` +
     `if(row){row.querySelectorAll('button.verdict').forEach(function(o){` +
     `o.setAttribute('aria-pressed',o.dataset.verdict===j.verdict.verdict?'true':'false');});}` +
-    `var line=document.querySelector('.tally-line');if(line){line.textContent=tallyText(j.tally);}` +
+    `applyTally(j.tally);` +
     `out.textContent='Saved.';` +
     `}catch(e){out.textContent='Network error \\u2014 nothing was recorded. Please try again.';}});});` +
     // --- transcript modal -----------------------------------------------------------------
@@ -776,11 +785,14 @@ export function renderNoteDetailPage(dto: NoteDetail, chrome: Chrome = {}): stri
     `<span class="mono" title="${esc(dto.created_at)}">${esc(fmtCreatedCt(dto.created_at))}</span>` +
     `<span class="mono" title="${esc(dto.call_id)}">${esc(dto.call_id)}</span></p>` +
     summaryCard +
+    // Directly under the summary, not at the foot of the page: judging the summary means checking
+    // it against the call, so the way to hear the call belongs beside it rather than forty
+    // judgeable fields away.
+    `<button type="button" class="transcript-open" id="open-transcript">View full transcript</button>` +
     tallyBlock(dto.tally) +
     `<div id="result" aria-live="polite"></div>` +
     groups +
     gapsBlock(dto, verdicts) +
-    `<button type="button" class="transcript-open" id="open-transcript">View full transcript</button>` +
     `<p class="foot">Judging note version ${esc(dto.prompt_version)}. A verdict is recorded against that version and never changes the note.</p>` +
     `</main>` +
     modal +

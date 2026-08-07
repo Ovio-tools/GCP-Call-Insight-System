@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url';
 import { createBootLogger } from '../boot/logger.js';
 import { loadConfig } from '../config/index.js';
 import { createAppPool } from '../db/index.js';
+import { SERVICE_CATEGORIES } from '../db/enums.js';
 import { httpPostAlert, requireAlertWebhookUrl, emitAlert } from '../alerting/index.js';
 import { createAnthropicTechnicianNoteClient } from '../anthropic/client.js';
 import type { TechnicianNoteModelClient } from '../anthropic/client.js';
@@ -34,22 +35,27 @@ import {
  * generator → runTechnicianNotes.
  *
  * Usage:
- *   generate-technician-notes [--dry-run] [--regenerate] [--limit <n>]
+ *   generate-technician-notes [--dry-run] [--regenerate] [--limit <n>] [--categories=a,b]
  *
- *   --dry-run     count eligible / skipped-no-transcript / would-generate. Zero model calls,
- *                 zero writes, zero pings.
- *   --regenerate  rewrite notes that already exist at the current prompt version (the version
- *                 comparison the ADR 0009 feedback loop depends on).
- *   --limit <n>   stop after n eligible calls.
+ *   --dry-run         count eligible / skipped-no-transcript / would-generate. Zero model calls,
+ *                     zero writes, zero pings.
+ *   --regenerate      rewrite notes that already exist at the current prompt version (the version
+ *                     comparison the ADR 0009 feedback loop depends on).
+ *   --limit <n>       stop after n eligible calls.
+ *   --categories=a,b  note ONLY calls in these service categories (a scoped run — try a prompt on
+ *                     one slice of the corpus before spending the budget on all of it).
  */
 interface NoteArgs {
   dryRun: boolean;
   regenerate: boolean;
   limit?: number;
+  categories?: readonly string[];
 }
 
 export function parseArgs(argv: readonly string[]): NoteArgs {
   const get = (flag: string): string | undefined => {
+    const eq = argv.find((a) => a.startsWith(`${flag}=`));
+    if (eq !== undefined) return eq.slice(flag.length + 1);
     const i = argv.indexOf(flag);
     return i >= 0 ? argv[i + 1] : undefined;
   };
@@ -62,10 +68,34 @@ export function parseArgs(argv: readonly string[]): NoteArgs {
     }
     limit = parsed;
   }
+
+  // Validated here, before config, pool, or model client: an unknown category would otherwise
+  // match no rows, and "0 eligible" reads like an answer about the corpus rather than a typo.
+  let categories: readonly string[] | undefined;
+  const categoriesRaw = get('--categories');
+  if (categoriesRaw !== undefined) {
+    const named = categoriesRaw
+      .split(',')
+      .map((c) => c.trim())
+      .filter((c) => c.length > 0);
+    if (named.length === 0) {
+      throw new Error('--categories needs at least one service category');
+    }
+    const unknown = named.filter((c) => !(SERVICE_CATEGORIES as readonly string[]).includes(c));
+    if (unknown.length > 0) {
+      throw new Error(
+        `--categories: unknown service category ${unknown.join(', ')} ` +
+          `(known: ${SERVICE_CATEGORIES.join(', ')})`,
+      );
+    }
+    categories = named;
+  }
+
   return {
     dryRun: argv.includes('--dry-run'),
     regenerate: argv.includes('--regenerate'),
     ...(limit !== undefined ? { limit } : {}),
+    ...(categories !== undefined ? { categories } : {}),
   };
 }
 
@@ -137,6 +167,7 @@ export async function main(): Promise<void> {
       regenerate: args.regenerate,
       dryRun: args.dryRun,
       ...(args.limit !== undefined ? { limit: args.limit } : {}),
+      ...(args.categories !== undefined ? { categories: args.categories } : {}),
     });
   } finally {
     monitor?.stop();
