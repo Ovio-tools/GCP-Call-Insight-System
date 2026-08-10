@@ -22,6 +22,16 @@ export const slaStateSchema = z.enum(['ok', 'due_soon', 'breached']);
 export const reviewListItemSchema = z.object({
   id: z.string(),
   call_id: z.string(),
+  /**
+   * The call's length in milliseconds, or null when it was never recorded. Read from
+   * `call_state.source_metadata` through the narrow single-key projection `getCallDurationsMs` —
+   * never the metadata object itself. It is here so a reviewer can tell a two-second non-call from
+   * a genuine four-minute `missing_transcript` hold. Nullable but not optional: "unknown" is a
+   * value the surface must state, not a field it may omit. No `.int()` — this schema is a hard
+   * `parse` at serialize time, and a fractional upstream value must not 500 the whole queue page;
+   * the read-boundary projection is what rejects unusable values.
+   */
+  call_duration_ms: z.number().nonnegative().nullable(),
   held_reason: heldReasonSchema,
   explanation: z.string(),
   status: reviewStatusSchema,

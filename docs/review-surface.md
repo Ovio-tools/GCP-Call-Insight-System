@@ -129,6 +129,19 @@ preflights use `rawTranscriptRevealAllowed`; the `fetch-transcript` preflight us
   decrypt (`tokenExistsForCall`, no-decrypt). If the window is closed / raw purged / transcript
   missing → `{raw_available:false}` with **no** audit row (redacted-only resolution still works).
 
+- **Call length.** List and detail both carry `call_duration_ms` (milliseconds, `null` when the
+  length was never recorded), rendered as `call length 3 min 42 sec` / `call length unknown` via the
+  shared `formatDurationMs` in `src/ui/chrome.ts`. It exists so a reviewer can tell a two-second
+  non-call from a genuine four-minute `missing_transcript` hold — the one hold a person often cannot
+  resolve, where the call's length is the whole judgement. It is the **only** value read out of
+  `call_state.source_metadata`, and it is read through `getCallDurationsMs`
+  (`src/db/repositories/call-state-repo.ts`): one batched query selecting the single jsonb key —
+  never `source_metadata` itself, never `getCallState`'s `SELECT *` — behind a zod projection that
+  admits a finite non-negative number and nulls everything else. That free-form jsonb can carry raw
+  call metadata (the same reason `src/status/calls.ts` refuses to read it at all), so the narrowness
+  is the de-identification argument, and `test/review/detail.test.ts` asserts a hostile metadata
+  value never reaches the response.
+
 No PII or transcript content ever appears in a log line, an unauthenticated or error response, or an
 `operator_actions` row.
 

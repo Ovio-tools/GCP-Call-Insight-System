@@ -51,6 +51,13 @@ export interface SeedHeldOpts {
   /** Override review_queue.created_at (for retention-cap tests). */
   createdAt?: Date;
   rawPurgedAt?: Date | null;
+  /**
+   * Seeds `call_state.source_metadata`, e.g. `{ duration: 222_400 }` for the call-length tests.
+   * Deliberately the whole object rather than a `durationMs?: number` shortcut — only this form
+   * can seed a hostile/drifted value (`{ duration: 'oops' }`) and prove the reader projects it
+   * away. Omitted leaves an existing row's metadata untouched.
+   */
+  sourceMetadata?: Record<string, unknown>;
 }
 
 export interface ReviewHarness {
@@ -142,11 +149,19 @@ export async function makeReviewHarness(
     async seedHeld(callId, opts = {}): Promise<string> {
       const reason = opts.reason ?? 'redaction_failed';
       const stage = opts.stage ?? 'redact';
+      // COALESCE on both sides keeps the omitted case behaving exactly as before: a fresh row gets
+      // '{}', and a conflicting row keeps whatever metadata it already had.
       await owner.query(
-        `INSERT INTO call_state (call_id, source, current_stage, status)
-         VALUES ($1, 'test', $2, 'held')
-         ON CONFLICT (call_id) DO UPDATE SET current_stage = EXCLUDED.current_stage, status = 'held', drop_reason = NULL`,
-        [callId, stage],
+        `INSERT INTO call_state (call_id, source, source_metadata, current_stage, status)
+         VALUES ($1, 'test', COALESCE($3::jsonb, '{}'::jsonb), $2, 'held')
+         ON CONFLICT (call_id) DO UPDATE SET current_stage = EXCLUDED.current_stage,
+           source_metadata = COALESCE($3::jsonb, call_state.source_metadata),
+           status = 'held', drop_reason = NULL`,
+        [
+          callId,
+          stage,
+          opts.sourceMetadata === undefined ? null : JSON.stringify(opts.sourceMetadata),
+        ],
       );
       const rq = await owner.query<{ id: string }>(
         `INSERT INTO review_queue (call_id, held_reason, status, sla_due_at, created_at, raw_purged_at)

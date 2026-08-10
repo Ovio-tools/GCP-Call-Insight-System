@@ -1,5 +1,12 @@
 import type { ReviewDetail, ReviewList } from './dto.js';
-import { THEME, siteHeader, logoutScript, humanizeReason, type Chrome } from '../ui/chrome.js';
+import {
+  THEME,
+  siteHeader,
+  logoutScript,
+  humanizeReason,
+  formatDurationMs,
+  type Chrome,
+} from '../ui/chrome.js';
 
 /**
  * Server-rendered, self-contained review pages (Task 6.2). READ-ONLY HTML: the shared middleware
@@ -96,6 +103,7 @@ export function renderReviewListPage(list: ReviewList, chrome: Chrome = {}): str
               `<span class="reason">${esc(humanizeReason(i.held_reason))}</span>${slaPill(i)}` +
               `<div class="meta">${esc(i.explanation)}</div>` +
               `<div class="meta">status ${esc(i.status)} · held ${esc(i.created_at)}` +
+              ` · call length ${esc(formatDurationMs(i.call_duration_ms))}` +
               `${i.escalated ? ' · escalated' : ''}${i.raw_purged ? ' · raw purged' : ''}</div>` +
               `</a></li>`,
           )
@@ -196,6 +204,7 @@ export function renderReviewDetailPage(detail: ReviewDetail, opts: RenderDetailO
     `<h1>${esc(humanizeReason(detail.held_reason))}</h1>${slaPill(detail)}` +
     `<p>${esc(detail.explanation)}</p>` +
     `<div class="meta">call ${esc(detail.call_id)} · status ${esc(detail.status)} · ` +
+    `call length ${esc(formatDurationMs(detail.call_duration_ms))} · ` +
     `assignee ${esc(detail.assignee ?? 'unassigned')} · raw ${detail.raw_available ? 'available' : 'unavailable'}</div>` +
     `<h2>Redacted content</h2>${content}` +
     enums +

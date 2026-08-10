@@ -132,6 +132,23 @@ export function fmtTs(iso: string): string {
   return m ? `${m[1]} ${m[2]}` : iso;
 }
 
+/**
+ * A call's length in plain words for a reviewer ("3 min 42 sec"). Null, non-finite, and negative
+ * inputs read as "unknown" — never a fabricated zero, which a reviewer would misread as a fact.
+ * FLOORS rather than rounds, so the number can never overstate how long a call was (and 59,999 ms
+ * cannot print a self-contradicting "60 sec"). Sub-second is special-cased so the floor does not
+ * report a real 800 ms call as "0 sec"; at the hour scale the seconds are dropped as noise.
+ */
+export function formatDurationMs(ms: number | null): string {
+  if (ms === null || !Number.isFinite(ms) || ms < 0) return 'unknown';
+  if (ms > 0 && ms < 1000) return 'under 1 sec';
+  const totalSeconds = Math.floor(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds} sec`;
+  const minutes = Math.floor(totalSeconds / 60);
+  if (minutes < 60) return `${minutes} min ${totalSeconds % 60} sec`;
+  return `${Math.floor(minutes / 60)} hr ${minutes % 60} min`;
+}
+
 /** Plain-language names for the machine `held_reason` codes shown to reviewers. */
 const REASON_LABELS: Record<string, string> = {
   classifier_uncertain: 'Classifier unsure',

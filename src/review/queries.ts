@@ -1,6 +1,7 @@
 import type { Pool } from 'pg';
 import type { Config } from '../config/schema.js';
 import { getReview, listOpen } from '../db/repositories/review-queue-repo.js';
+import { getCallDurationsMs } from '../db/repositories/call-state-repo.js';
 import { getCleanTranscript } from '../db/repositories/clean-transcripts-repo.js';
 import { getStructuredKnowledge } from '../db/repositories/structured-knowledge-repo.js';
 import { transcriptExists } from '../db/repositories/raw-transcripts-repo.js';
@@ -15,11 +16,16 @@ import { serializeReviewDetail, serializeReviewList } from './serialize.js';
 
 const iso = (d: Date | null): string | null => (d === null ? null : d.toISOString());
 
-/** Map a review row to its safe list-item DTO. */
-function toListItem(row: ReviewQueueRow, now: Date): ReviewListItem {
+/**
+ * Map a review row to its safe list-item DTO. `callDurationMs` is passed in rather than fetched
+ * here so the list can resolve a whole page of calls in ONE query (see {@link getCallDurationsMs});
+ * null means the call's length was never recorded.
+ */
+function toListItem(row: ReviewQueueRow, now: Date, callDurationMs: number | null): ReviewListItem {
   return {
     id: row.id,
     call_id: row.call_id,
+    call_duration_ms: callDurationMs,
     held_reason: row.held_reason,
     explanation: explanationFor(row.held_reason),
     status: row.status,
@@ -36,8 +42,14 @@ function toListItem(row: ReviewQueueRow, now: Date): ReviewListItem {
 /** The open-review list (safe fields only), serialized through the no-egress backstop. */
 export async function buildReviewList(pool: Pool, now: Date): Promise<ReviewList> {
   const rows = await listOpen(pool);
+  // One batched lookup for the whole page — never a per-row getCallState (which would also be a
+  // SELECT * over source_metadata, the thing this surface must not do).
+  const durations = await getCallDurationsMs(
+    pool,
+    rows.map((r) => r.call_id),
+  );
   return serializeReviewList({
-    items: rows.map((r) => toListItem(r, now)),
+    items: rows.map((r) => toListItem(r, now, durations.get(r.call_id) ?? null)),
     generated_at: now.toISOString(),
   });
 }
@@ -60,6 +72,7 @@ export async function buildReviewDetail(
   if (!review) return undefined;
   const callId = review.call_id;
   const isActive = review.status === 'open' || review.status === 'in_review';
+  const durations = await getCallDurationsMs(pool, [callId]);
 
   // raw_transcripts lives in the isolated raw store (DB-B); its presence check reads DB-B.
   const present = await transcriptExists(rawPool, callId);
@@ -96,7 +109,7 @@ export async function buildReviewDetail(
     : null;
 
   const dto: ReviewDetail = {
-    ...toListItem(review, now),
+    ...toListItem(review, now, durations.get(callId) ?? null),
     raw_available: rawAvailable,
     redacted_content_available: redactedAvailable,
     redacted_content: redactedContent,
