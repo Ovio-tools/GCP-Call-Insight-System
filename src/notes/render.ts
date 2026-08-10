@@ -400,6 +400,19 @@ main { max-width: var(--content); }
 .summary-card .summary-body.is-empty { color: var(--muted); font-style: italic; font-size: 1rem; }
 .callmeta { margin: 0; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
   font-size: 0.85rem; color: var(--muted); }
+/* ---- The three collapsible field groups. display:list-item is load-bearing: summary defaults to
+   it, and overriding display suppresses the disclosure triangle, which on a touch device is the
+   only cue the row is tappable (cursor:pointer does nothing there). The heading is forced inline
+   with no margin because the base h2 rule above would otherwise drop it onto the line below the
+   triangle and split one control into two. ---- */
+.dsection { border-top: 1px solid var(--border); }
+.dsection > summary { cursor: pointer; min-height: 44px; padding: 12px 0; display: list-item;
+  list-style-position: inside; }
+.dsection > summary h2 { display: inline; margin: 0; }
+.dsection > summary:hover h2 { color: var(--accent); }
+.dfields { margin: 0 0 16px; }
+/* The section's own border-top already closes the group off, so the last field skips its rule. */
+.dfields > .dfield:last-child { border-bottom: 0; }
 .dfield { padding: 12px 0; border-bottom: 1px solid var(--border); }
 .dfield-head { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; }
 .dfield-head dt { color: var(--muted); font-size: 0.78rem; min-width: 220px; }
@@ -760,10 +773,17 @@ export function renderNoteDetailPage(dto: NoteDetail, chrome: Chrome = {}): stri
     ) +
     `</section>`;
 
+  // Each group collapses, and all three arrive closed. Thirty-four fields, each carrying its own
+  // row of four verdict buttons, made this one unbroken scroll — on a phone the reviewer went past
+  // everything to reach anything. Native <details>, no JavaScript: the page is script-free under a
+  // strict CSP by design (`src/ui/cards.ts`), the same way the list page's "More details" works.
+  // The <h2> stays a real heading INSIDE the summary so the page is still navigable by heading.
   const groups = FIELD_GROUPS.map(
     (g) =>
-      `<h2>${esc(g.heading)}</h2>` +
-      `<dl class="dfields">${g.paths.map((p) => detailField(dto, p, verdicts)).join('')}</dl>`,
+      `<details class="dsection">` +
+      `<summary><h2>${esc(g.heading)}</h2></summary>` +
+      `<dl class="dfields">${g.paths.map((p) => detailField(dto, p, verdicts)).join('')}</dl>` +
+      `</details>`,
   ).join('');
 
   const modal =
