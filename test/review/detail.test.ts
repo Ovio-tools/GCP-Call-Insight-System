@@ -91,6 +91,47 @@ describe.skipIf(!hasTestDb || !hasRawTestDb)(DESC, () => {
     expect((await getDetail(reviewId)).body.raw_available).toBe(false);
   });
 
+  it('a missing_transcript hold reports the call length, so a 2-second non-call is obvious', async () => {
+    const callId = 'test-rvdet-durmissing';
+    const reviewId = await h.seedHeld(callId, {
+      reason: 'missing_transcript',
+      stage: 'fetch-transcript',
+      sourceMetadata: { duration: 222_400 },
+    });
+    expect((await getDetail(reviewId)).body.call_duration_ms).toBe(222_400);
+  });
+
+  it('every other held reason reports the call length too', async () => {
+    const callId = 'test-rvdet-durother';
+    const reviewId = await h.seedHeld(callId, {
+      reason: 'redaction_failed',
+      stage: 'redact',
+      sourceMetadata: { duration: 2_000 },
+    });
+    expect((await getDetail(reviewId)).body.call_duration_ms).toBe(2_000);
+  });
+
+  it('a call whose metadata never carried a duration reports null, not zero', async () => {
+    const callId = 'test-rvdet-durabsent';
+    const reviewId = await h.seedHeld(callId, { reason: 'redaction_failed', stage: 'redact' });
+    expect((await getDetail(reviewId)).body.call_duration_ms).toBeNull();
+  });
+
+  it('a non-numeric duration reports null and never leaks the raw metadata value', async () => {
+    const callId = 'test-rvdet-durgarbage';
+    const reviewId = await h.seedHeld(callId, {
+      reason: 'redaction_failed',
+      stage: 'redact',
+      sourceMetadata: { duration: 'oops', caller_name: 'Jebediah Testperson' },
+    });
+    const { body } = await getDetail(reviewId);
+    expect(body.call_duration_ms).toBeNull();
+    // The privacy proof: source_metadata is free-form and can carry raw call metadata, so it must
+    // be PROJECTED, never passed through. This fails the moment anything but the number ships.
+    expect(JSON.stringify(body)).not.toContain('oops');
+    expect(JSON.stringify(body)).not.toContain('Jebediah');
+  });
+
   it('404s for an unknown review id', async () => {
     const { status } = await getDetail('00000000-0000-0000-0000-000000000000');
     expect(status).toBe(404);

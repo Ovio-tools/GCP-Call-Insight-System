@@ -2,7 +2,7 @@ import type { Pool } from 'pg';
 import { z } from 'zod';
 import { DAL_REVIEW_INVARIANT, DAL_STALE_STAGE, DalError, parseOrThrow } from '../errors.js';
 import { query, toJsonParam, withTransaction } from '../sql.js';
-import { type JsonValue, jsonValueSchema } from '../types.js';
+import { type JsonValue, type Queryable, jsonValueSchema } from '../types.js';
 import {
   type DropReason,
   type HeldReason,
@@ -84,6 +84,52 @@ export async function getCallState(pool: Pool, callId: string): Promise<CallStat
     callId,
   ]);
   return rows[0] ? parseOrThrow(TABLE, callStateRowSchema, rows[0]) : undefined;
+}
+
+/**
+ * The call's length in milliseconds is the ONE value the review surface reads out of
+ * `source_metadata`. That jsonb is free-form and can carry raw call metadata — which is why the
+ * per-call status view refuses to read it at all (see the PII note in `src/status/calls.ts`) — so
+ * this projection admits a single finite, non-negative NUMBER and nulls everything else: a string,
+ * a nested object, a negative, NaN, an absent key. Rejecting at the read boundary (rather than in
+ * the DTO schema, whose `parse` would 500 the whole queue page) means a drifted upstream value
+ * degrades to "unknown" instead of taking the surface down.
+ */
+const durationMsSchema = z.number().finite().nonnegative();
+
+export function callDurationMsFromMetadata(value: unknown): number | null {
+  const parsed = durationMsSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+/**
+ * Batched call-length lookup: ONE query for a whole set of calls, never an N+1 loop. Returns only
+ * the calls with a usable duration, so a caller reads `map.get(id) ?? null` and an absent key, a
+ * JSON null, and an unusable value all collapse to the same "unknown".
+ *
+ * Selects the single jsonb key, never `source_metadata` itself — `getCallState` is deliberately
+ * NOT reused here because its `SELECT *` would pull the entire metadata object into the process.
+ * `->` (not `->>`, not a `::numeric` cast) is what yields a real JS number: pg-types parses jsonb
+ * with `JSON.parse`, while text and numeric/int8 both arrive as strings.
+ */
+export async function getCallDurationsMs(
+  db: Queryable,
+  callIds: readonly string[],
+): Promise<ReadonlyMap<string, number>> {
+  const out = new Map<string, number>();
+  if (callIds.length === 0) return out;
+  const rows = await query<{ call_id: string; duration: unknown }>(
+    db,
+    `SELECT call_id, source_metadata -> 'duration' AS duration
+       FROM call_state
+      WHERE call_id = ANY($1::text[])`,
+    [callIds],
+  );
+  for (const row of rows) {
+    const ms = callDurationMsFromMetadata(row.duration);
+    if (ms !== null) out.set(row.call_id, ms);
+  }
+  return out;
 }
 
 export interface AdvanceStageInput {
