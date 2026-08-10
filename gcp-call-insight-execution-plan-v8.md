@@ -663,14 +663,14 @@ Build the extract stage. For customer calls, send the redacted text to the Anthr
 - acquisition_source, competitor_mentions: for marketing
 Deterministic gates, not model self-scores:
 - schema_valid: malformed output is rejected and the call holds with reason schema_invalid.
-- urgency_flag: a rule flags anything read as emergency for review (emergency_review). When unsure, urgency defaults upward.
-Second PII scan: run the residual-PII scanner over every customer_language phrase before storing. Any hit holds the record with reason residual_pii_detected. No confidence scores are written. Sentiment never leaves the internal store. Record model_invocations with model id and prompt version. Tests: golden fixtures; a schema violation holds with schema_invalid; an emergency trips emergency_review; service_category is always a controlled value; a customer_language phrase containing planted PII is caught and held, and no labeled PII ever appears in a stored marketing phrase.
+- urgency_flag: a rule flags anything read as emergency for review (emergency_review). When unsure, urgency defaults upward. [SUPERSEDED by ADR 0010, 2026-08-10: the rule still sets urgency deterministically and still defaults upward, but it LABELS ONLY — an emergency no longer holds the call. This pipeline runs after the call ended and downstream of the dispatcher, so the hold caught no live emergency. The emergency_review held reason is retained for rows held before the change.]
+Second PII scan: run the residual-PII scanner over every customer_language phrase before storing. Any hit holds the record with reason residual_pii_detected. No confidence scores are written. Sentiment never leaves the internal store. Record model_invocations with model id and prompt version. Tests: golden fixtures; a schema violation holds with schema_invalid; an emergency trips emergency_review [SUPERSEDED by ADR 0010: an emergency is labeled, not held]; service_category is always a controlled value; a customer_language phrase containing planted PII is caught and held, and no labeled PII ever appears in a stored marketing phrase.
 ```
 
 **Tests and QA**
 - Golden fixtures extract as expected.
 - Malformed output holds with `schema_invalid`.
-- An emergency call trips `emergency_review`.
+- An emergency call trips `emergency_review`. [SUPERSEDED by ADR 0010: an emergency call is LABELED `urgency=emergency` and completes to `structured_knowledge`; it is not held.]
 - `service_category` is always controlled.
 - A planted-PII marketing phrase is caught and held. No labeled PII reaches a stored phrase.
 

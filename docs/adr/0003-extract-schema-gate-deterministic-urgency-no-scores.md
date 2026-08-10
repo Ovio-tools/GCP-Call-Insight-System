@@ -1,6 +1,7 @@
 # ADR 0003 — Extract stage: schema-validation gate, deterministic urgency, no confidence scores
 
-Status: accepted (Task 5.2, 2026-07-02)
+Status: accepted (Task 5.2, 2026-07-02); **§3 superseded in part by ADR 0010** (2026-08-10) —
+the deterministic urgency rule stands, but an emergency no longer HOLDS the call.
 
 ## Context
 
@@ -43,6 +44,15 @@ gates are the trust boundary, and a "0.9" would be false precision on a single
 model sample. Uncertainty is expressed by holding, not by annotating.
 
 ### 3. Urgency is set by a deterministic rule, not the model
+
+> **Superseded in part by ADR 0010 (2026-08-10).** Everything below about HOW urgency is
+> decided still holds. What changed: the rule no longer holds the call. `emergencyRule`
+> returns `{ urgency, triggers }` with no `hold`, the `emergency_review` hold is never
+> produced (the enum value and review path are retained only for pre-existing rows), and
+> the triggers are recorded on the extract `processing_log` `continue` row as
+> `urgency_triggers`. Reason: this pipeline runs after the call ended and downstream of the
+> dispatcher, so the hold caught no live emergency — it only withheld good records from the
+> knowledge base and extended PII retention.
 
 `emergencyRule` (`src/pipeline/extract/gates.ts`) — not the model — sets the final
 `urgency` and the emergency hold. It runs two tiers over a normalized haystack
@@ -88,9 +98,10 @@ scan — a hit holds the record rather than storing leaked or fabricated text.
   already sits mid-pipeline (stage `extract`), so the sweep treats them as
   in-flight and skips them. The script is call-id-keyed (idempotent) and safe to
   re-run; a call that already moved past extract is a no-op.
-- Because urgency is deterministic, the emergency safety net does not depend on
+- Because urgency is deterministic, the stored emergency LABEL does not depend on
   the model rating its own output — a model that under-rates a gas-leak call is
-  still caught by the keyword tier, and a keyword false positive costs review time,
-  never a missed emergency.
+  still caught by the keyword tier, and a keyword false positive costs one
+  over-labeled record, never a wrong urgency on the durable asset. (Per ADR 0010 the
+  cost is no longer review time: the call is labeled, not held.)
 - The `EXTRACT_*` config (model id, kill switch, token/cost reservation, Sonnet
   list price) lives in `src/config/schema.ts` and is mirrored in `.env.example`.
