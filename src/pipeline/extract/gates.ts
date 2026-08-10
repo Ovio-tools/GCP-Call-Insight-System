@@ -246,6 +246,11 @@ export function tokenGate(phrases: readonly string[]): { phrases: string[]; drop
  * Deterministic tiered urgency rule (plan §5). `triggers` are CONSTANT snake_case
  * ids ONLY — never matched text. Emergency overrides the model upward; ambiguous
  * upgrades one level from the MODEL's urgency.
+ *
+ * LABELING ONLY (ADR 0010). The rule sets the stored `urgency`; it does NOT hold the
+ * call. This pipeline runs after the call has ended and downstream of the dispatcher,
+ * who already handled anything genuinely urgent live, so an emergency hold bought no
+ * safety and only kept a good record out of the knowledge base.
  */
 const EMERGENCY_KEYWORDS = [
   'gas leak',
@@ -298,21 +303,30 @@ function upgradeOneLevel(urgency: Urgency): Urgency {
   return URGENCY_LADDER[Math.min(idx + 1, URGENCY_LADDER.length - 1)] ?? urgency;
 }
 
-/** The constant trigger ids the rule may emit — M5's handler branches on these. */
+/**
+ * The constant trigger ids the rule may emit. They explain WHY the stored urgency
+ * differs from the model's own rating and are recorded content-free on the extract
+ * stage's `processing_log` row (ADR 0010) — no `review_queue` row is involved.
+ */
 export type EmergencyTrigger =
   'model_urgency' | 'call_intent' | 'emergency_keyword' | 'ambiguous_upgrade';
 
+/**
+ * Returns the FINAL urgency to persist. There is deliberately no `hold` in the return
+ * type: a caller cannot reintroduce the emergency hold without changing this signature
+ * (ADR 0010 supersedes the hold half of ADR 0003 §3).
+ */
 export function emergencyRule(
   record: ExtractionRecord,
   redactedText: string,
-): { urgency: Urgency; hold: boolean; triggers: EmergencyTrigger[] } {
+): { urgency: Urgency; triggers: EmergencyTrigger[] } {
   const haystack = normalizeLight(
     [redactedText, record.problem_statement, ...record.symptoms, ...record.concerns].join(' '),
   );
 
   const triggers: EmergencyTrigger[] = [];
 
-  // --- EMERGENCY tier: any hit overrides the model urgency to emergency + hold. ---
+  // --- EMERGENCY tier: any hit overrides the model urgency UP to emergency. ---
   if (record.urgency === 'emergency') triggers.push('model_urgency');
   if (record.call_intent === 'emergency') triggers.push('call_intent');
   if (EMERGENCY_KEYWORDS.some((k) => haystackContains(haystack, k))) {
@@ -329,15 +343,14 @@ export function emergencyRule(
   if (ambiguousFired) triggers.push('ambiguous_upgrade');
 
   if (emergencyFired) {
-    // Emergency wins: emergency + hold, regardless of any ambiguous match.
-    return { urgency: 'emergency', hold: true, triggers };
+    // Emergency wins outright, regardless of any ambiguous match.
+    return { urgency: 'emergency', triggers };
   }
 
   if (ambiguousFired) {
-    const upgraded = upgradeOneLevel(record.urgency);
-    return { urgency: upgraded, hold: upgraded === 'emergency', triggers };
+    return { urgency: upgradeOneLevel(record.urgency), triggers };
   }
 
   // Neither tier fired — pass the model's urgency through unchanged.
-  return { urgency: record.urgency, hold: false, triggers: [] };
+  return { urgency: record.urgency, triggers: [] };
 }

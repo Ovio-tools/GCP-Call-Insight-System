@@ -245,7 +245,15 @@ webhook or list  ->  metadata pre-filter  ->  fetch transcript  ->  transcript a
   (word-LCS ≥ 0.7 — never the model's text), a fabrication is dropped, and the record
   holds `schema_invalid` only if NOTHING verbatim remains; the second PII scan still
   latches any non-exact PERSISTED phrase. A
-  deterministic rule sets the urgency flag. Sentiment is internal only.
+  deterministic rule (`emergencyRule`) sets the urgency flag — it LABELS ONLY and never
+  holds (ADR 0010): this pipeline runs after the call ended and downstream of the
+  dispatcher, so an `emergency_review` hold caught no live emergency and only withheld a
+  good record while an open review extended PII retention. `emergencyRule` returns
+  `{ urgency, triggers }` with NO `hold` field, so the hold cannot be reintroduced without
+  changing the signature; the triggers land on the extract `processing_log` `continue` row
+  as `urgency_triggers` (constant ids, never matched text). The `emergency_review` held
+  reason is deliberately RETAINED in the enum, SLA config, and review action matrix so rows
+  held before the change stay resolvable. Sentiment is internal only.
 - **second PII scan** — over the verbatim `customer_language` phrases. A hit holds
   the record rather than storing leaked text.
 - **store / mark retention-eligible** — writes the de-identified record, then stamps

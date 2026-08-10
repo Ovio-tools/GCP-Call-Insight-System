@@ -810,7 +810,10 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
 
   // ---- emergency ---------------------------------------------------------------
 
-  it('emergency keyword → held emergency_review, candidate persisted with urgency=emergency, no errorCode', async () => {
+  // ADR 0010: an emergency is a LABEL, not a hold — the call advances like any other. The
+  // end-to-end proof (no review_queue row, record reaches structured_knowledge) lives in
+  // emergency.test.ts, which drives the RUNNER; the runner is what would write the hold row.
+  it('emergency keyword → continue, candidate persisted with urgency=emergency, triggers in detail', async () => {
     const callId = 'test-ext-emergency';
     const redacted = 'Caller: I smell a gas leak in the kitchen and need help now.';
     await seed(callId, redacted);
@@ -825,16 +828,48 @@ describe.skipIf(!hasTestDb)('extract stage handler', () => {
     const { model } = fakeModel(() => Promise.resolve(result({ text: JSON.stringify(rec) })));
     const res = await handler(() => model)(ctx(callId));
 
-    expect(res.action).toBe('hold');
-    if (res.action === 'hold') {
-      expect(res.reason).toBe('emergency_review');
-      expect(res.errorCode).toBeUndefined();
-      expect(res.detail).toMatchObject({ urgency: 'emergency' });
+    expect(res.action).toBe('continue');
+    if (res.action === 'continue') {
+      expect(res.detail).toMatchObject({
+        urgency: 'emergency',
+        urgency_triggers: ['emergency_keyword'],
+      });
+      // Constant ids only — the matched words never ride along.
+      expect(JSON.stringify(res.detail)).not.toContain('gas');
     }
     const cand = await getExtractionCandidate(app, callId);
     expect(cand?.urgency).toBe('emergency');
-    // Routing outcome, not a failure — no alert.
     expect(await alertCount('MODEL_MALFORMED_RESPONSE')).toBe(0);
+  });
+
+  it('model-rated emergency (no keyword) → continue with the model_urgency trigger', async () => {
+    const callId = 'test-ext-emergency-model';
+    await seed(callId);
+    const rec = { ...GOLDEN, urgency: 'emergency' };
+    const { model } = fakeModel(() => Promise.resolve(result({ text: JSON.stringify(rec) })));
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('continue');
+    if (res.action === 'continue') {
+      expect(res.detail).toMatchObject({
+        urgency: 'emergency',
+        urgency_triggers: ['model_urgency'],
+      });
+    }
+    expect((await getExtractionCandidate(app, callId))?.urgency).toBe('emergency');
+  });
+
+  it('a non-escalated call carries NO urgency_triggers key at all', async () => {
+    const callId = 'test-ext-emergency-none';
+    await seed(callId);
+    const { model } = fakeModel(() => Promise.resolve(result()));
+    const res = await handler(() => model)(ctx(callId));
+
+    expect(res.action).toBe('continue');
+    if (res.action === 'continue') {
+      expect(res.detail).toMatchObject({ urgency: 'routine' });
+      expect(res.detail).not.toHaveProperty('urgency_triggers');
+    }
   });
 
   // ---- golden happy path + idempotency -----------------------------------------

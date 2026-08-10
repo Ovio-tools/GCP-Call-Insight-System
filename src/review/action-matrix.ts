@@ -49,8 +49,11 @@ export const APPROVE_FORWARD_STAGE: Partial<Record<HeldReason, PipelineStage>> =
   // approve(classifier_uncertain) writes a reviewer `customer` classify marker, then resumes
   // extract (extract throws unless the latest classify marker is customer).
   classifier_uncertain: 'extract',
-  // emergency_review is held AFTER its candidate is persisted, so it resumes at verbatim-pii-scan
-  // (re-running extract would re-hold on the same emergency rule).
+  // emergency_review is LEGACY (ADR 0010): the pipeline no longer produces this reason — an
+  // emergency is now a label, not a hold. Its entries here (and in REPROCESS_STAGES /
+  // ORIGIN_STAGES / HELD_REASON_EXPLANATIONS) are retained so rows held before that change stay
+  // resolvable. It was held AFTER its candidate was persisted, so approve resumes at
+  // verbatim-pii-scan; re-running extract would simply re-label it the same way.
   emergency_review: 'verbatim-pii-scan',
 };
 

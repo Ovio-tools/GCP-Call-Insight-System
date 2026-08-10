@@ -65,7 +65,7 @@ export interface ExtractHandlerDeps {
  * wrapper, and the prompt/parse/gates modules into the fixed ordered flow: kill-switch →
  * retention preflight → classification guard → load input → reserve → call model → parse →
  * record invocation + settle → malformed route → residual-PII gate → verbatim gate → token
- * gate → emergency rule → persist → route. Mirrors src/pipeline/classify/handler.ts.
+ * gate → urgency rule → persist → advance. Mirrors src/pipeline/classify/handler.ts.
  *
  * Privacy: only the redacted text crosses to Anthropic. No transcript content, no model
  * `reason`, no raw SDK error message, and NO extracted record field (customer_language
@@ -401,14 +401,14 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
     //     Runs on the verbatim-recovered set (exact + snapped source spans).
     const gated = tokenGate(customerLanguage);
 
-    // 14. Deterministic emergency rule (urgency + hold + constant trigger ids).
+    // 14. Deterministic urgency rule (final urgency + constant trigger ids). LABELING ONLY —
+    //     an emergency no longer holds the call (ADR 0010): this pipeline runs after the call
+    //     ended and downstream of the dispatcher, who already handled anything urgent live.
     const decision = emergencyRule(record, row.redacted_text);
 
     // 15. Persist the de-identified candidate (idempotent upsert; resets pii_scan_status to
     //     'pending'). The record uses SNAKE_CASE keys; the insert schema uses CAMELCASE — mapped
-    //     explicitly below. Persisted even when an emergency hold follows: the record is
-    //     clean+validated, review resolves it, and the pipeline later resumes to scan/store
-    //     without re-extracting.
+    //     explicitly below.
     await upsertExtractionCandidate(pool, {
       callId,
       callIntent: record.call_intent,
@@ -429,19 +429,12 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
       modelId: config.EXTRACT_MODEL_ID,
     });
 
-    // 16. Route. An emergency hold is a routing outcome (like classified_spam), NOT a failure:
-    //     no errorCode, no alert — the review_queue row + its SLA is the signal.
-    if (decision.hold) {
-      logger.info(
-        { stage, urgency: 'emergency', triggers: decision.triggers },
-        'extract flagged emergency — holding emergency_review',
-      );
-      return {
-        action: 'hold',
-        reason: 'emergency_review',
-        detail: { urgency: 'emergency', triggers: decision.triggers },
-      };
-    }
+    // 16. Advance. Every extract outcome from here is a `continue` — an emergency is a LABEL,
+    //     not a hold (ADR 0010), so it reaches the knowledge base like any other call. The
+    //     urgency triggers ride along as constant snake_case ids (never matched text) so the
+    //     processing_log row explains why the stored urgency differs from the model's rating.
+    const urgencyTriggers =
+      decision.triggers.length > 0 ? { urgency_triggers: decision.triggers } : {};
     logger.info(
       {
         stage,
@@ -450,6 +443,7 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
         ...(verbatimSnapped ? { customer_language_snapped: verbatimSnapped } : {}),
         ...(verbatimDropped ? { customer_language_dropped: verbatimDropped } : {}),
         urgency: decision.urgency,
+        ...urgencyTriggers,
       },
       'extract completed — advancing',
     );
@@ -461,6 +455,7 @@ export function createExtractHandler(deps: ExtractHandlerDeps): StageHandler {
         ...(verbatimSnapped ? { customer_language_snapped: verbatimSnapped } : {}),
         ...(verbatimDropped ? { customer_language_dropped: verbatimDropped } : {}),
         urgency: decision.urgency,
+        ...urgencyTriggers,
       },
     };
   };

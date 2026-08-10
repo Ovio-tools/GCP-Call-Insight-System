@@ -213,20 +213,22 @@ describe('tokenGate', () => {
 });
 
 describe('emergencyRule', () => {
-  it('model urgency=emergency trips → emergency + hold', () => {
+  // ADR 0010: the rule LABELS, it never holds. Every case here asserts the shape carries no
+  // `hold` key at all — reintroducing one would have to change the signature to compile.
+  it('model urgency=emergency trips → emergency, labeled not held', () => {
     const record = baseRecord({ urgency: 'emergency' });
     const result = emergencyRule(record, 'nothing notable here');
     expect(result.urgency).toBe('emergency');
-    expect(result.hold).toBe(true);
     expect(result.triggers).toContain('model_urgency');
+    expect(result).not.toHaveProperty('hold');
   });
 
-  it('call_intent=emergency with model urgency=routine trips AND upgrades to emergency + hold', () => {
+  it('call_intent=emergency with model urgency=routine trips AND upgrades to emergency', () => {
     const record = baseRecord({ call_intent: 'emergency', urgency: 'routine' });
     const result = emergencyRule(record, 'nothing notable here');
     expect(result.urgency).toBe('emergency');
-    expect(result.hold).toBe(true);
     expect(result.triggers).toContain('call_intent');
+    expect(result).not.toHaveProperty('hold');
   });
 
   describe('emergency keyword classes', () => {
@@ -243,8 +245,8 @@ describe('emergencyRule', () => {
       it(`"${kw}" trips via redactedText`, () => {
         const result = emergencyRule(baseRecord(), `Caller: there is a ${kw} in the kitchen.`);
         expect(result.urgency).toBe('emergency');
-        expect(result.hold).toBe(true);
         expect(result.triggers).toContain('emergency_keyword');
+        expect(result).not.toHaveProperty('hold');
       });
 
       it(`"${kw}" trips via a symptoms[] entry`, () => {
@@ -280,19 +282,18 @@ describe('emergencyRule', () => {
     ];
 
     for (const kw of ambiguous) {
-      it(`"${kw}" upgrades routine → urgent (no hold)`, () => {
+      it(`"${kw}" upgrades routine → urgent`, () => {
         const result = emergencyRule(baseRecord({ urgency: 'routine' }), `Caller: ${kw}.`);
         expect(result.urgency).toBe('urgent');
-        expect(result.hold).toBe(false);
         expect(result.triggers).toEqual(['ambiguous_upgrade']);
       });
     }
 
-    it('ambiguous + model urgency=urgent → emergency + hold', () => {
+    it('ambiguous + model urgency=urgent → emergency', () => {
       const result = emergencyRule(baseRecord({ urgency: 'urgent' }), 'Caller: active leak.');
       expect(result.urgency).toBe('emergency');
-      expect(result.hold).toBe(true);
       expect(result.triggers).toContain('ambiguous_upgrade');
+      expect(result).not.toHaveProperty('hold');
     });
 
     it('a curly apostrophe (U+2019) in "won’t shut off" still triggers the upgrade', () => {
@@ -314,17 +315,18 @@ describe('emergencyRule', () => {
       'Caller: there is a gas leak and an active leak.',
     );
     expect(result.urgency).toBe('emergency');
-    expect(result.hold).toBe(true);
     expect(result.triggers).toContain('emergency_keyword');
     expect(result.triggers).toContain('ambiguous_upgrade');
+    expect(result).not.toHaveProperty('hold');
   });
 
-  it('no signal passes the model urgency through unchanged with no hold', () => {
+  it('no signal passes the model urgency through unchanged', () => {
     const result = emergencyRule(
       baseRecord({ urgency: 'routine' }),
       'Caller: routine maintenance.',
     );
-    expect(result).toEqual({ urgency: 'routine', hold: false, triggers: [] });
+    // Exact shape: urgency + triggers ONLY, so a reintroduced `hold` fails here too.
+    expect(result).toEqual({ urgency: 'routine', triggers: [] });
   });
 
   it('plain "leak" alone does NOT trigger', () => {

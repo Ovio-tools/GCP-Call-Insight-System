@@ -51,7 +51,12 @@ action not permitted for a held call's reason → `409` (`REVIEW_ACTION_CONFLICT
 | missing_transcript      |           –           |   ✓    |         ✓         |     –     |         –          | fetch-transcript,transcript-availability |         ✓         |
 | cost_cap_held           |           –           |   ✓    |         ✓         |     ✓     |         –          | classify,extract                         |         ✓         |
 | weak_servicetitan_match |           –           |   ✓    |         –         |     –     |         –          | –                                        |         ✓         |
-| emergency_review        | ✓→`verbatim-pii-scan` |   ✓    |         ✓         |     ✓     |         –          | verbatim-pii-scan                        |         ✓         |
+| emergency_review ᴸ      | ✓→`verbatim-pii-scan` |   ✓    |         ✓         |     ✓     |         –          | verbatim-pii-scan                        |         ✓         |
+
+ᴸ **`emergency_review` is LEGACY (ADR 0010).** The pipeline no longer produces it — an emergency
+is a label on the record, not a hold. The row above is retained so calls held before that change
+stay resolvable; `weak_servicetitan_match` is likewise not yet produced (ServiceTitan matching is
+Phase 12).
 
 ### Handler template (one transaction, no TOCTOU)
 
