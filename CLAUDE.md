@@ -1,5 +1,8 @@
 # CLAUDE.md — call-insight pipeline
 
+> **Paused since 2026-10-18.** Read [`PAUSED.md`](PAUSED.md) first: what is
+> switched off, how to restart, and the open items.
+
 Call-processing pipeline that ingests Dialpad calls, redacts them, runs staged
 model steps, and exposes authenticated internal surfaces. This file documents the
 architecture, data stores, pipeline stages, the operational failure model, and

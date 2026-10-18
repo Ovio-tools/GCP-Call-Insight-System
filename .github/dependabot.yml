@@ -1,10 +1,13 @@
 version: 2
 updates:
+  # PAUSED (2026-10-18): `open-pull-requests-limit: 0` stops the weekly version-update
+  # PRs while the project is on hold. To resume, set npm back to 10 and delete the
+  # github-actions limit line (its default is 5). See PAUSED.md.
   - package-ecosystem: npm
     directory: /
     schedule:
       interval: weekly
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 0
     groups:
       dev-dependencies:
         dependency-type: development
@@ -13,3 +16,4 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    open-pull-requests-limit: 0
