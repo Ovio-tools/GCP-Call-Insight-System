@@ -90,7 +90,8 @@ Follow [`docs/deployment.md`](docs/deployment.md). The pause-specific order is:
   clean-up is missing, original transcripts are not being deleted on schedule, and
   it should be deployed (`deploy/railway/retention-cron.json`).
 - Confirm the `raw-store` database has **backups turned off** (on purpose; see ADR 0008).
-- Decide whether to stop `console-surface` for the pause.
+- Decide whether to stop `console-surface` for the pause. It runs on `fastify`,
+  one of the libraries with a new high-severity advisory (next section).
 - **GitHub security warnings are off** for this repo: Dependabot alerts are
   disabled and automatic security fixes are paused. With the weekly updates also
   off, nothing is watching the libraries for known vulnerabilities. Turn alerts on
@@ -98,6 +99,13 @@ Follow [`docs/deployment.md`](docs/deployment.md). The pause-specific order is:
 
 **Waiting on GitHub**
 
+- **7 high-severity security advisories** (plus 6 moderate) were published after
+  the last change. CI's `npm audit` step found them on 18 Oct 2026 in `fastify`,
+  `adm-zip`, `sharp`, `fast-uri`, `brace-expansion`, `@vitest/mocker`,
+  `source-map-js` and `sprintf-js`. That step fails on every PR until they are
+  fixed. Some fixes are a plain `npm audit fix`; others need `--force` (major
+  upgrades), so read each advisory before forcing anything, and check with
+  `npm ci`.
 - **12 open Dependabot pull requests.** Two need real migration work: #8 (zod 3 → 4)
   and #98 (node-pg-migrate 8 → 9). The rest (#123, #99, #97, #96, #95, #88, #87,
   #85, #52, #50) need a rebase and green CI.
